@@ -1,0 +1,37 @@
+{
+    "version": 2,
+    "builds": [
+        {
+            "src": "main.py",
+            "use": "@vercel/python",
+            "config": {
+                "maxLambdaSize": "15mb",
+                "runtime": "python3.9"
+            }
+        }
+    ],
+    "routes": [
+        {
+            "src": "/docs",
+            "dest": "main.py"
+        },
+        {
+            "src": "/openapi.json",
+            "dest": "main.py"
+        },
+        {
+            "src": "/redoc",
+            "dest": "main.py"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "main.py"
+        }
+    ],
+    "env": {
+        "APP_ENV": "production",
+        "PYTHON_VERSION": "3.9",
+        "PYTHONPATH": ".",
+        "DEBUG": "0"
+    }
+} 

@@ -1,0 +1,37 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # 1) Checkout code
+      - name: Check out the repository
+        uses: actions/checkout@v3
+      
+      # 2) Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+      
+      # 3) Install dependencies
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      # 4) Run tests
+      - name: Run tests
+        run: |
+          pytest --maxfail=1 --disable-warnings -q
+      
+      # 5) Deploy to Vercel (only if tests pass)
+      - name: Deploy to Vercel
+        run: |
+          npm install -g vercel
+          vercel --token=$VERCEL_TOKEN --confirm --prod
+        
