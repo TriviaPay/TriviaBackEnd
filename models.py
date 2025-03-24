@@ -25,14 +25,12 @@ class User(Base):
     notification_on = Column(Boolean, default=True)
     street_1 = Column(String, nullable=True)
     street_2 = Column(String, nullable=True)
-    # Combine suite + apt_number → single field
     suite_or_apt_number = Column(String, nullable=True)
     city = Column(String, nullable=True)
     state = Column(String, nullable=True)
     zip = Column(String, nullable=True)
     country = Column(String, nullable=True)
 
-    # Additional fields from your diagram
     subscriber_number = Column(String, nullable=True)
     username = Column(String, nullable=True)
     subscription_flag = Column(Boolean, default=False)
@@ -77,7 +75,6 @@ class Winner(Base):
     amount_won = Column(Float, nullable=False)
     win_date = Column(DateTime, nullable=False)
 
-    # Optional extra prize columns shown in your diagram
     first_prize = Column(Float, nullable=True)
     second_prize = Column(Float, nullable=True)
     third_prize = Column(Float, nullable=True)
@@ -107,8 +104,6 @@ class Payment(Base):
     cvv = Column(String, nullable=False)
     autopayment = Column(Boolean, default=False)
 
-    # name_on_card was in your old model; diagram shows potential first/last
-    # but let's keep them both for completeness:
     first_name_on_card = Column(String, nullable=True)
     last_name_on_card = Column(String, nullable=True)
 
@@ -124,8 +119,6 @@ class Payment(Base):
     # Payment tracking
     payment_history = Column(String, nullable=True)  # CSV of dates or JSON
     subscription_date = Column(DateTime, nullable=True)
-
-    # Possibly store the subscription durations
     six_months_subscription = Column(Boolean, default=False)
     twelve_months_subscription = Column(Boolean, default=False)
 
@@ -149,14 +142,11 @@ class Trivia(Base):
     fill_in_answer = Column(String, nullable=True)
     explanation = Column(String, nullable=True)
     category = Column(String, nullable=False)
-    # 'subcategory' and 'region' were stricken out, so omit them:
     country = Column(String, nullable=True)
     difficulty_level = Column(String, nullable=False)
-    # 'status_flag' was stricken out, so remove it:
     picture_url = Column(String, nullable=True)
     created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-    # Add 'Que_displayed_date' from your notes
+    question_done = Column(Boolean, default=False)
     que_displayed_date = Column(DateTime, nullable=True)
 
 
@@ -228,7 +218,6 @@ class Chat(Base):
     message = Column(String, nullable=True)
     sent_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    # request_type: 'friend' or 'message' etc.
     request_type = Column(String, nullable=True)
     # request_status: 'pending', 'accepted', 'declined', 'blocked'
     request_status = Column(String, nullable=True)
