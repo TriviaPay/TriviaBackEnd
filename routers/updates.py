@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from db import get_db
-from models import LiveUpdate
+from models import LiveUpdate, User
+from routers.dependencies import get_current_user
 from datetime import datetime
 from typing import Optional
 
@@ -15,7 +16,7 @@ class LiveUpdateRequest(BaseModel):
     description: Optional[str] = None   # Description is optional
 
 @router.get("/")
-def get_live_update(db: Session = Depends(get_db)):
+def get_live_update(db: Session = Depends(get_db),user: User = Depends(get_current_user)):
     """
     Endpoint to fetch the latest live update.
     Returns the most recent video URL and description.

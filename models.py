@@ -1,9 +1,10 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime
+    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger
 )
 from sqlalchemy.orm import relationship
 from db import Base
 from datetime import datetime
+import random
 
 # =================================
 #  Users Table
@@ -11,15 +12,15 @@ from datetime import datetime
 class User(Base):
     __tablename__ = "users"
 
-    account_id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
-    mobile = Column(String, nullable=False)
-    country_code = Column(String, nullable=False)
-    first_name = Column(String, nullable=False)
-    last_name = Column(String, nullable=False)
+    mobile = Column(String, nullable=True)
+    country_code = Column(String, nullable=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
     middle_name = Column(String, nullable=True)
-    ssn = Column(String, nullable=False)
-    password = Column(String, nullable=False)
+    ssn = Column(String, nullable=True)
+    password = Column(String, nullable=True)
     profile_pic_url = Column(String, nullable=True)
     notification_on = Column(Boolean, default=True)
     street_1 = Column(String, nullable=True)
@@ -36,6 +37,8 @@ class User(Base):
     username = Column(String, nullable=True)
     subscription_flag = Column(Boolean, default=False)
     sign_up_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    refresh_token = Column(String, nullable=True)
+
 
     # Relationships
     winners = relationship("Winner", back_populates="user")
@@ -43,6 +46,10 @@ class User(Base):
     payments = relationship("Payment", back_populates="user")
     # You could add a relationship for Comments, Chats, or Withdrawals if needed
     # (depending on whether they link to a user table).
+
+def generate_account_id():
+    """Generate a 10-digit random unique number."""
+    return int("".join(str(random.randint(0, 9)) for _ in range(10)))
 
 # =================================
 #  Entries Table
@@ -148,7 +155,7 @@ class Trivia(Base):
     # 'status_flag' was stricken out, so remove it:
     picture_url = Column(String, nullable=True)
     created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-
+    question_done = Column(Boolean, default=False)
     # Add 'Que_displayed_date' from your notes
     que_displayed_date = Column(DateTime, nullable=True)
 

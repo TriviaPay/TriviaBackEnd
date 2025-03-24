@@ -11,7 +11,7 @@ def get_trivia_questions(db: Session = Depends(get_db)):
     Endpoint to fetch trivia questions.
     Fetches active trivia questions from the database.
     """
-    questions = db.query(Trivia).filter(Trivia.status_flag == "Active").all()
+    questions = db.query(Trivia).filter(Trivia.question_done == "False").all()
     return {
         "questions": [
             {

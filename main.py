@@ -1,8 +1,9 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, winners, updates, trivia, entries
+from routers import draw, winners, updates, trivia, entries, login, refresh
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
+
 
 # Load environment variables
 load_dotenv()
@@ -30,6 +31,8 @@ app.include_router(winners.router)   # Recent winners endpoints
 app.include_router(updates.router)   # Live updates endpoints
 app.include_router(trivia.router)    # Trivia questions endpoints
 app.include_router(entries.router)   # Entry management endpoints
+app.include_router(login.router)     # Auth0 passwordless or local login
+app.include_router(refresh.router)   # Refresh tokens from DB
 
 @app.get("/")
 async def read_root():
