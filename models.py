@@ -155,7 +155,7 @@ class Trivia(Base):
     # 'status_flag' was stricken out, so remove it:
     picture_url = Column(String, nullable=True)
     created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    question_done = Column(Boolean, default=False)
+
     # Add 'Que_displayed_date' from your notes
     que_displayed_date = Column(DateTime, nullable=True)
 
