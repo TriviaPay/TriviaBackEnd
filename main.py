@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from routers import draw, winners, updates, trivia, entries, login, refresh
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
 from dotenv import load_dotenv
 import os
 
@@ -12,8 +14,59 @@ load_dotenv()
 app = FastAPI(
     title="TriviaPay API",
     description="Backend API for TriviaPay application",
-    version="1.0.0"
+    version="1.0.0",
+    swagger_ui_parameters={
+        "defaultModelsExpandDepth": -1,
+        "defaultModelExpandDepth": -1,
+        "docExpansion": "none",
+        "syntaxHighlight.activate": True,
+        "tryItOutEnabled": True,
+    }
 )
+
+# Add security scheme
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="TriviaPay API",
+        version="1.0.0",
+        description="""
+        TriviaPay Backend API
+
+        ## Authentication
+        - This API requires a Bearer JWT token for authentication
+        - Token must be obtained from Auth0
+        - Format: 'Bearer <your_access_token>'
+        
+        ### How to Authenticate:
+        1. Click the 'Authorize' button
+        2. Enter: 'Bearer <your_access_token>'
+        3. Ensure the token is valid and not expired
+        4. Verify a user exists in the database with the token's email
+        """,
+        routes=app.routes,
+    )
+    openapi_schema["components"]["securitySchemes"] = {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": """
+            Enter your Auth0 JWT token:
+            - Prefix with 'Bearer '
+            - Example: 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...'
+            - Token must have an 'email' claim
+            - User with this email must exist in the database
+            """
+        }
+    }
+    # Apply security globally to all routes
+    openapi_schema["security"] = [{"bearerAuth": []}]
+    app.openapi_schema = openapi_schema
+    return openapi_schema
+
+app.openapi = custom_openapi
 
 # CORS configuration
 origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")

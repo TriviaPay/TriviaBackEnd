@@ -31,7 +31,11 @@ def get_live_update(db: Session = Depends(get_db),user: User = Depends(get_curre
     return {"message": "No live updates available."}
 
 @router.post("/")
-def update_live_update(update_request: LiveUpdateRequest, db: Session = Depends(get_db)):
+def update_live_update(
+    update_request: LiveUpdateRequest, 
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
     """
     Endpoint to update the latest live update video URL.
     If an update already exists, it updates it; otherwise, it creates a new entry.
