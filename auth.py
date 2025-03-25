@@ -6,6 +6,52 @@ from config import (
     API_AUDIENCE, AUTH0_ALGORITHMS, AUTH0_ISSUER
 )
 import logging
+import json
+import base64
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.exceptions import InvalidSignature
+import datetime
+
+def base64url_decode(input_str):
+    """
+    Decode base64url encoded string
+    """
+    # Add padding if needed
+    input_str += '=' * (4 - (len(input_str) % 4))
+    return base64.urlsafe_b64decode(input_str)
+
+def get_email_from_userinfo(access_token: str) -> str:
+    """
+    Retrieve email from Auth0 userinfo endpoint
+    
+    Args:
+        access_token (str): JWT access token
+    
+    Returns:
+        str: User's email address
+    """
+    logger = logging.getLogger(__name__)
+    
+    try:
+        userinfo_url = f"https://{AUTH0_DOMAIN}/userinfo"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        
+        response = requests.get(userinfo_url, headers=headers)
+        
+        if response.status_code != 200:
+            logger.error(f"Userinfo request failed with status {response.status_code}")
+            logger.error(f"Response content: {response.text}")
+            return None
+        
+        userinfo = response.json()
+        logger.debug(f"Userinfo retrieved: {userinfo}")
+        
+        return userinfo.get('email')
+    
+    except Exception as e:
+        logger.error(f"Error retrieving userinfo: {str(e)}")
+        return None
 
 def verify_access_token(access_token: str) -> dict:
     """
@@ -48,17 +94,11 @@ def verify_access_token(access_token: str) -> dict:
                 detail="Invalid token: no key ID found"
             )
 
+        # Find the right key
         rsa_key = None
         for key in jwks_data["keys"]:
             if key["kid"] == kid:
-                rsa_key = {
-                    "kty": key["kty"],
-                    "kid": key["kid"],
-                    "use": key["use"],
-                    "n": key["n"],
-                    "e": key["e"],
-                    "x5c": key["x5c"]
-                }
+                rsa_key = key
                 break
 
         if not rsa_key:
@@ -68,43 +108,73 @@ def verify_access_token(access_token: str) -> dict:
                 detail="Invalid token: no matching key ID"
             )
 
-        from cryptography.hazmat.backends import default_backend
-        from cryptography.hazmat.primitives import serialization
+        # Convert JWKS key to a public key
+        n = base64url_decode(rsa_key['n'])
+        e = base64url_decode(rsa_key['e'])
 
-        cert_str = f"-----BEGIN CERTIFICATE-----\n{rsa_key['x5c'][0]}\n-----END CERTIFICATE-----\n"
-        public_key = serialization.load_pem_x509_certificate(
-            cert_str.encode("utf-8"), default_backend()
-        ).public_key()
-
-        payload = jwt.decode(
-            access_token,
-            public_key,
-            algorithms=AUTH0_ALGORITHMS,
-            audience=API_AUDIENCE if API_AUDIENCE else None,
-            issuer=AUTH0_ISSUER if AUTH0_ISSUER else None,
-            options={
-                "verify_aud": bool(API_AUDIENCE),
-                "verify_iss": bool(AUTH0_ISSUER),
-                "require_exp": True,
-                "require_iat": True,
-            }
-        )
-        
-        # Extensive logging of token claims
-        logger.debug("Token Verification Successful")
-        logger.debug("Token Claims:")
-        for key, value in payload.items():
-            logger.debug(f"{key}: {value}")
-        
-        # Additional validation
-        if not payload.get("email"):
-            logger.error("Token is missing required 'email' claim")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token is missing required email claim"
+        public_key = serialization.load_der_public_key(
+            rsa.RSAPublicNumbers(
+                int.from_bytes(e, byteorder='big'),
+                int.from_bytes(n, byteorder='big')
+            ).public_key().public_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
+        )
+
+        # Manual token verification
+        parts = access_token.split('.')
+        if len(parts) != 3:
+            raise JWTError("Invalid token format")
+
+        header, payload, signature = parts
+        signing_input = f"{header}.{payload}"
+
+        try:
+            # Verify signature
+            public_key.verify(
+                base64url_decode(signature),
+                signing_input.encode('utf-8'),
+                padding.PKCS1v15(),
+                hashes.SHA256()
+            )
+        except InvalidSignature:
+            raise JWTError("Invalid token signature")
+
+        # Decode payload
+        decoded_payload = json.loads(base64url_decode(payload).decode('utf-8'))
+
+        # Validate claims
+        current_time = int(datetime.datetime.utcnow().timestamp())
+        if decoded_payload.get('exp', 0) < current_time:
+            raise JWTError("Token has expired")
+
+        if API_AUDIENCE:
+            # Check audience
+            aud = decoded_payload.get('aud', [])
+            if isinstance(aud, str):
+                aud = [aud]
+            if not any(aud_item.startswith(API_AUDIENCE) for aud_item in aud):
+                raise JWTError("Invalid audience")
+
+        if AUTH0_ISSUER and decoded_payload.get('iss') != AUTH0_ISSUER:
+            raise JWTError("Invalid issuer")
+
+        # Additional validation
+        # If no email in token, try to fetch from userinfo
+        if not decoded_payload.get("email"):
+            logger.info("No email in token, attempting to retrieve from userinfo")
+            email = get_email_from_userinfo(access_token)
+            if email:
+                decoded_payload['email'] = email
+            else:
+                logger.error("Could not retrieve email from userinfo")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Could not retrieve user email"
+                )
         
-        return payload
+        return decoded_payload
 
     except jwt.ExpiredSignatureError:
         logger.error("Token has expired")
@@ -112,7 +182,7 @@ def verify_access_token(access_token: str) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired"
         )
-    except jwt.InvalidTokenError as e:
+    except (jwt.JWTError, JWTError) as e:
         logger.error(f"Invalid token: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
