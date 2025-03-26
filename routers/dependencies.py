@@ -47,6 +47,19 @@ def get_current_user(request: Request):
     # Verify the token
     try:
         claims = verify_access_token(auth_header)
+        
+        # Log the claims for debugging
+        logging.debug(f"Token claims: {json.dumps(claims, indent=2)}")
+        
+        # Ensure sub claim is present
+        if not claims.get('sub'):
+            logging.error("No sub claim found in token")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, 
+                detail="Missing user identifier",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        
         return claims
     except Exception as e:
         logging.error(f"Authentication failed: {str(e)}")

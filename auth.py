@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.exceptions import InvalidSignature
 import datetime
+from typing import Union
 
 def base64url_decode(input_str):
     """
@@ -21,15 +22,16 @@ def base64url_decode(input_str):
     input_str += '=' * (4 - (len(input_str) % 4))
     return base64.urlsafe_b64decode(input_str)
 
-def get_email_from_userinfo(access_token: str) -> str:
+def get_email_from_userinfo(access_token: str, return_full_info: bool = False) -> Union[str, dict]:
     """
-    Retrieve email from Auth0 userinfo endpoint
+    Retrieve email or full userinfo from Auth0 userinfo endpoint
     
     Args:
         access_token (str): JWT access token
+        return_full_info (bool, optional): Whether to return full userinfo. Defaults to False.
     
     Returns:
-        str: User's email address
+        Union[str, dict]: User's email address or full userinfo dictionary
     """
     logger = logging.getLogger(__name__)
     
@@ -37,7 +39,14 @@ def get_email_from_userinfo(access_token: str) -> str:
         userinfo_url = f"https://{AUTH0_DOMAIN}/userinfo"
         headers = {"Authorization": f"Bearer {access_token}"}
         
+        # Log the request details for debugging
+        logger.debug(f"Userinfo Request URL: {userinfo_url}")
+        logger.debug(f"Authorization Header: {headers}")
+        
         response = requests.get(userinfo_url, headers=headers)
+        
+        logger.debug(f"Userinfo Response Status: {response.status_code}")
+        logger.debug(f"Userinfo Response Content: {response.text}")
         
         if response.status_code != 200:
             logger.error(f"Userinfo request failed with status {response.status_code}")
@@ -47,7 +56,17 @@ def get_email_from_userinfo(access_token: str) -> str:
         userinfo = response.json()
         logger.debug(f"Userinfo retrieved: {userinfo}")
         
-        return userinfo.get('email')
+        # Return full info if requested
+        if return_full_info:
+            return userinfo
+        
+        # Prioritize email extraction
+        email = userinfo.get('email')
+        if not email:
+            logger.error("No email found in userinfo")
+            return None
+        
+        return email
     
     except Exception as e:
         logger.error(f"Error retrieving userinfo: {str(e)}")
@@ -62,29 +81,47 @@ def verify_access_token(access_token: str) -> dict:
     logging.basicConfig(level=logging.DEBUG)
 
     try:
+        # Log the raw token for debugging
+        logger.debug(f"Received token: {access_token}")
+
         # First, try to get the unverified header
-        unverified_header = jwt.get_unverified_header(access_token)
+        try:
+            unverified_header = jwt.get_unverified_header(access_token)
+        except Exception as header_error:
+            logger.error(f"Error decoding token headers: {header_error}")
+            logger.error(f"Full token: {access_token}")
+            raise JWTError(f"Error decoding token headers: {header_error}")
+
         logger.debug(f"Unverified Token Header: {unverified_header}")
 
         # Check if this is a local test token (HS256 algorithm)
         if unverified_header.get('alg') == 'HS256':
             logger.debug("Detected local test token, using client secret for verification")
-            payload = jwt.decode(
-                access_token, 
-                AUTH0_CLIENT_SECRET, 
-                algorithms=['HS256'],
-                options={
-                    "verify_aud": False,
-                    "verify_iss": False,
-                    "require_exp": True,
-                    "require_iat": True,
-                }
-            )
-            return payload
+            try:
+                payload = jwt.decode(
+                    access_token, 
+                    AUTH0_CLIENT_SECRET, 
+                    algorithms=['HS256'],
+                    options={
+                        "verify_aud": False,
+                        "verify_iss": False,
+                        "require_exp": True,
+                        "require_iat": True,
+                    }
+                )
+                return payload
+            except Exception as decode_error:
+                logger.error(f"Error decoding local test token: {decode_error}")
+                raise JWTError(f"Invalid local test token: {decode_error}")
 
         # For Auth0 tokens, proceed with JWKS verification
-        jwks_url = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json"
-        jwks_data = requests.get(jwks_url).json()
+        try:
+            jwks_url = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json"
+            jwks_response = requests.get(jwks_url)
+            jwks_data = jwks_response.json()
+        except Exception as jwks_error:
+            logger.error(f"Error fetching JWKS: {jwks_error}")
+            raise JWTError(f"Could not fetch JWKS: {jwks_error}")
 
         kid = unverified_header.get("kid")
         if not kid:
@@ -108,73 +145,36 @@ def verify_access_token(access_token: str) -> dict:
                 detail="Invalid token: no matching key ID"
             )
 
-        # Convert JWKS key to a public key
-        n = base64url_decode(rsa_key['n'])
-        e = base64url_decode(rsa_key['e'])
-
-        public_key = serialization.load_der_public_key(
-            rsa.RSAPublicNumbers(
-                int.from_bytes(e, byteorder='big'),
-                int.from_bytes(n, byteorder='big')
-            ).public_key().public_bytes(
-                encoding=serialization.Encoding.DER,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
-            )
-        )
-
-        # Manual token verification
-        parts = access_token.split('.')
-        if len(parts) != 3:
-            raise JWTError("Invalid token format")
-
-        header, payload, signature = parts
-        signing_input = f"{header}.{payload}"
-
+        # Decode the token using the JWKS
         try:
-            # Verify signature
-            public_key.verify(
-                base64url_decode(signature),
-                signing_input.encode('utf-8'),
-                padding.PKCS1v15(),
-                hashes.SHA256()
+            payload = jwt.decode(
+                access_token,
+                jwks_data,
+                algorithms=['RS256'],
+                audience=API_AUDIENCE,
+                issuer=f"https://{AUTH0_DOMAIN}/"
             )
-        except InvalidSignature:
-            raise JWTError("Invalid token signature")
-
-        # Decode payload
-        decoded_payload = json.loads(base64url_decode(payload).decode('utf-8'))
-
-        # Validate claims
-        current_time = int(datetime.datetime.utcnow().timestamp())
-        if decoded_payload.get('exp', 0) < current_time:
-            raise JWTError("Token has expired")
-
-        if API_AUDIENCE:
-            # Check audience
-            aud = decoded_payload.get('aud', [])
-            if isinstance(aud, str):
-                aud = [aud]
-            if not any(aud_item.startswith(API_AUDIENCE) for aud_item in aud):
-                raise JWTError("Invalid audience")
-
-        if AUTH0_ISSUER and decoded_payload.get('iss') != AUTH0_ISSUER:
-            raise JWTError("Invalid issuer")
-
-        # Additional validation
-        # If no email in token, try to fetch from userinfo
-        if not decoded_payload.get("email"):
-            logger.info("No email in token, attempting to retrieve from userinfo")
-            email = get_email_from_userinfo(access_token)
-            if email:
-                decoded_payload['email'] = email
-            else:
-                logger.error("Could not retrieve email from userinfo")
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Could not retrieve user email"
-                )
-        
-        return decoded_payload
+            
+            # If no email in payload, try to get from userinfo
+            if not payload.get('email'):
+                logger.info("No email in token, attempting to retrieve from userinfo")
+                email = get_email_from_userinfo(access_token)
+                if email:
+                    payload['email'] = email
+                else:
+                    logger.error("Could not retrieve email from userinfo")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Could not retrieve user email"
+                    )
+            
+            return payload
+        except jwt.JWTError as decode_error:
+            logger.error(f"Token decode error: {decode_error}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid token: {str(decode_error)}"
+            )
 
     except jwt.ExpiredSignatureError:
         logger.error("Token has expired")
