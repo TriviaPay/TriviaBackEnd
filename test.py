@@ -30,8 +30,8 @@ def generate_test_token(email):
     payload = {
         # Standard JWT claims
         "iss": f"https://{AUTH0_DOMAIN}/",  # Issuer
-        "sub": f"auth0|test_user_{email.replace('@', '_')}",  # Subject
-        "aud": API_AUDIENCE,  # Audience
+        "sub": f"email|{email.replace('@', '_')}",  # Subject
+        "aud": [API_AUDIENCE, f"https://{AUTH0_DOMAIN}/userinfo"],  # Audience
         "iat": int(now.timestamp()),  # Issued at (as Unix timestamp)
         "exp": int((now + datetime.timedelta(hours=1)).timestamp()),  # Expiration time
         
@@ -39,6 +39,10 @@ def generate_test_token(email):
         "email": email,
         "email_verified": True,
         "name": "Test User",
+        
+        # Additional Auth0-like claims
+        "azp": "test_client_id",  # Authorized party
+        "scope": "openid profile email"
     }
     
     # Encode the token using python-jose
@@ -54,6 +58,47 @@ def generate_test_token(email):
     )
     
     return token
+
+def generate_test_refresh_token(email):
+    """
+    Generate a test refresh token
+    
+    Args:
+        email (str): Email to use in the token
+    
+    Returns:
+        str: Refresh token
+    """
+    # Get configuration from environment
+    AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN", "")
+    API_AUDIENCE = os.getenv("API_AUDIENCE", "")
+    AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET", "")
+    
+    # Current time
+    now = datetime.datetime.utcnow()
+    
+    # Refresh token payload
+    payload = {
+        "iss": f"https://{AUTH0_DOMAIN}/",
+        "sub": f"email|{email.replace('@', '_')}",
+        "aud": API_AUDIENCE,
+        "iat": int(now.timestamp()),
+        "exp": int((now + datetime.timedelta(days=30)).timestamp()),
+    }
+    
+    # Encode the refresh token
+    refresh_token = jose.jwt.encode(
+        payload, 
+        AUTH0_CLIENT_SECRET, 
+        algorithm="HS256",
+        headers={
+            "typ": "JWT",
+            "alg": "HS256",
+            "kid": "local_test_refresh_key"
+        }
+    )
+    
+    return refresh_token
 
 def generate_unique_account_id(db):
     """
@@ -96,11 +141,20 @@ def create_test_user(email):
     db = SessionLocal()
 
     try:
-        # Check if user already exists
-        existing_user = db.query(User).filter(User.email == email).first()
+        # Check if user already exists by email or sub
+        sub = f"auth0|test_user_{email.replace('@', '_')}"
+        existing_user = db.query(User).filter(
+            (User.email == email) | (User.sub == sub)
+        ).first()
+        
         if existing_user:
-            print(f"User with email {email} already exists.")
-            db.close()
+            print(f"User with email {email} or sub {sub} already exists.")
+            
+            # Update the existing user if needed
+            if not existing_user.sub:
+                existing_user.sub = sub
+            
+            db.commit()
             return existing_user.account_id
 
         # Generate a unique account ID
@@ -111,7 +165,8 @@ def create_test_user(email):
             account_id=unique_account_id,
             email=email,
             first_name="Test",
-            last_name="User"
+            last_name="User",
+            sub=sub  # Add sub attribute
         )
         db.add(new_user)
         db.commit()
@@ -135,8 +190,9 @@ def main():
         print("Failed to create or find user.")
         return
     
-    # Generate test token
+    # Generate test token and refresh token
     test_token = generate_test_token(test_email)
+    test_refresh_token = generate_test_refresh_token(test_email)
     
     print("\nTest User Details:")
     print(f"Email: {test_email}")
@@ -144,8 +200,10 @@ def main():
     
     print("\nTest Token:")
     print(test_token)
+    print("\nTest Refresh Token:")
+    print(test_refresh_token)
     print("\nInstructions:")
-    print("1. Copy this token")
+    print("1. Copy the test token")
     print("2. In Swagger UI, click 'Authorize'")
     print("3. Enter: Bearer " + test_token)
 

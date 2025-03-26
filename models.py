@@ -36,7 +36,7 @@ class User(Base):
     subscription_flag = Column(Boolean, default=False)
     sign_up_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     refresh_token = Column(String, nullable=True)
-
+    sub = Column(String, nullable=True, unique=True)  # Auth0 sub claim
 
     # Relationships
     winners = relationship("Winner", back_populates="user")
