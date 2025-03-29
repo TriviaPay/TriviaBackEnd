@@ -72,10 +72,17 @@ def get_email_from_userinfo(access_token: str, return_full_info: bool = False) -
         logger.error(f"Error retrieving userinfo: {str(e)}")
         return None
 
-def verify_access_token(access_token: str) -> dict:
+def verify_access_token(access_token: str, check_expiration: bool = True) -> dict:
     """
     Verify the access token's signature/claims using Auth0's public JWKS or local secret.
     Returns the decoded payload if valid, else raises 401.
+    
+    Args:
+        access_token (str): JWT access token to verify
+        check_expiration (bool, optional): Whether to check token expiration. Defaults to True.
+    
+    Returns:
+        dict: Decoded token payload
     """
     logger = logging.getLogger(__name__)
     logging.basicConfig(level=logging.DEBUG)
@@ -105,7 +112,7 @@ def verify_access_token(access_token: str) -> dict:
                     options={
                         "verify_aud": False,
                         "verify_iss": False,
-                        "require_exp": True,
+                        "require_exp": check_expiration,
                         "require_iat": True,
                     }
                 )
@@ -147,12 +154,20 @@ def verify_access_token(access_token: str) -> dict:
 
         # Decode the token using the JWKS
         try:
+            # Modify decode options based on check_expiration
+            decode_options = {
+                "verify_exp": check_expiration,
+                "verify_aud": True,
+                "verify_iss": True
+            }
+            
             payload = jwt.decode(
                 access_token,
                 jwks_data,
                 algorithms=['RS256'],
                 audience=API_AUDIENCE,
-                issuer=f"https://{AUTH0_DOMAIN}/"
+                issuer=f"https://{AUTH0_DOMAIN}/",
+                options=decode_options
             )
             
             # If no email in payload, try to get from userinfo
@@ -169,6 +184,25 @@ def verify_access_token(access_token: str) -> dict:
                     )
             
             return payload
+        except jwt.ExpiredSignatureError:
+            # If expiration is being checked and token is expired
+            if check_expiration:
+                logger.error("Token has expired")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has expired"
+                )
+            # If not checking expiration, decode the token without expiration check
+            return jwt.decode(
+                access_token,
+                jwks_data,
+                algorithms=['RS256'],
+                options={
+                    "verify_exp": False,
+                    "verify_aud": True,
+                    "verify_iss": True
+                }
+            )
         except jwt.JWTError as decode_error:
             logger.error(f"Token decode error: {decode_error}")
             raise HTTPException(
@@ -176,12 +210,6 @@ def verify_access_token(access_token: str) -> dict:
                 detail=f"Invalid token: {str(decode_error)}"
             )
 
-    except jwt.ExpiredSignatureError:
-        logger.error("Token has expired")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired"
-        )
     except (jwt.JWTError, JWTError) as e:
         logger.error(f"Invalid token: {str(e)}")
         raise HTTPException(
@@ -192,19 +220,71 @@ def verify_access_token(access_token: str) -> dict:
 def refresh_auth0_token(refresh_token: str) -> dict:
     """
     Exchange the stored refresh token for a new access token via Auth0.
+    
+    Args:
+        refresh_token (str): Refresh token to exchange for new tokens
+    
+    Returns:
+        dict: New access token and related information
     """
-    url = f"https://{AUTH0_DOMAIN}/oauth/token"
-    data = {
-        "grant_type": "refresh_token",
-        "client_id": AUTH0_CLIENT_ID,
-        "client_secret": AUTH0_CLIENT_SECRET,
-        "refresh_token": refresh_token
-    }
-    resp = requests.post(url, json=data, timeout=10)
-    if resp.status_code != 200:
-        print(resp.text)
+    logger = logging.getLogger(__name__)
+    
+    try:
+        url = f"https://{AUTH0_DOMAIN}/oauth/token"
+        data = {
+            "grant_type": "refresh_token",
+            "client_id": AUTH0_CLIENT_ID,
+            "client_secret": AUTH0_CLIENT_SECRET,
+            "refresh_token": refresh_token
+        }
+        
+        # Log the request details for debugging
+        logger.debug(f"Refresh Token Request URL: {url}")
+        logger.debug(f"Request Data: {data}")
+        
+        # Make the token refresh request
+        resp = requests.post(url, json=data, timeout=10)
+        
+        # Log the response details
+        logger.debug(f"Refresh Token Response Status: {resp.status_code}")
+        logger.debug(f"Refresh Token Response Content: {resp.text}")
+        
+        # Check response status
+        if resp.status_code != 200:
+            logger.error(f"Token refresh failed with status {resp.status_code}")
+            logger.error(f"Response content: {resp.text}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token invalid or expired"
+            )
+        
+        # Parse the response
+        token_response = resp.json()
+        
+        # Validate the response
+        if not token_response.get('access_token'):
+            logger.error("No access token in refresh response")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not obtain new access token"
+            )
+        
+        return {
+            "access_token": token_response.get('access_token'),
+            "refresh_token": token_response.get('refresh_token', refresh_token),
+            "expires_in": token_response.get('expires_in'),
+            "token_type": token_response.get('token_type', 'Bearer')
+        }
+    
+    except requests.RequestException as req_error:
+        logger.error(f"Network error during token refresh: {req_error}")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token invalid or expired"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Network error during token refresh"
         )
-    return resp.json()
+    except Exception as e:
+        logger.error(f"Unexpected error during token refresh: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected error during token refresh"
+        )

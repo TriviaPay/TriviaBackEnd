@@ -5,10 +5,36 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from dotenv import load_dotenv
 import os
+import logging
+import sys
 
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging
+import logging
+import sys
+
+# Create a custom logger
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+
+# Create handlers
+c_handler = logging.StreamHandler(sys.stdout)  # Console handler
+c_handler.setLevel(logging.DEBUG)
+
+# Create formatters and add it to handlers
+c_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+c_handler.setFormatter(c_format)
+
+# Add handlers to the logger
+logger.addHandler(c_handler)
+
+# Reduce noise from other libraries
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -21,6 +47,13 @@ app = FastAPI(
         "docExpansion": "none",
         "syntaxHighlight.activate": True,
         "tryItOutEnabled": True,
+        "persistAuthorization": True,  # Keep authorization between requests
+        "displayRequestDuration": True,  # Show request duration
+        "filter": True,  # Enable filtering
+        "deepLinking": True,  # Enable deep linking
+        "displayOperationId": True,  # Show operation IDs
+        "defaultModelsExpandDepth": 2,  # Expand models by default
+        "defaultModelExpandDepth": 2,  # Expand model properties by default
     }
 )
 
@@ -40,10 +73,17 @@ def custom_openapi():
         - Format: 'Bearer <your_access_token>'
         
         ### How to Authenticate:
-        1. Click the 'Authorize' button
+        1. Click the 'Authorize' button at the top of the page
         2. Enter: 'Bearer <your_access_token>'
         3. Ensure the token is valid and not expired
         4. Verify a user exists in the database with the token's email
+
+        ### For /auth/refresh endpoint:
+        1. Use the REFRESH token, not the access token
+        2. Click the 'Authorize' button
+        3. Enter: 'Bearer YOUR_REFRESH_TOKEN'
+        4. Click 'Authorize' and then 'Close'
+        5. Try the /auth/refresh endpoint
         """,
         routes=app.routes,
     )
@@ -58,6 +98,12 @@ def custom_openapi():
             - Example: 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...'
             - Token must have an 'email' claim
             - User with this email must exist in the database
+            
+            For the /auth/refresh endpoint:
+            1. Use the REFRESH token, not the access token
+            2. Prefix with 'Bearer '
+            3. Ensure the refresh token is valid
+            4. Example: 'Bearer YOUR_REFRESH_TOKEN'
             """
         }
     }
@@ -75,7 +121,7 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "Authorization", "Content-Type", "Accept"]
 )
 
 # Include routers for different functionalities
