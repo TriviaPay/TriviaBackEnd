@@ -42,6 +42,12 @@ def get_current_user(request: Request):
     while auth_header.lower().startswith('bearer '):
         auth_header = auth_header.split(' ', 1)[1].strip()
     
+    # Clean up the token if it contains extra JSON-like content
+    if '"refresh_token"' in auth_header:
+        # Extract just the access token part
+        auth_header = auth_header.split('"refresh_token"')[0].strip().rstrip(',').rstrip('"')
+        logging.info(f"Cleaned token: {auth_header}")
+    
     logging.info(f"Extracted token: {auth_header[:10]}... (truncated)")
     
     # Verify the token

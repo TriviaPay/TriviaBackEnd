@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, winners, updates, trivia, entries, login, refresh
+from routers import draw, winners, updates, trivia, entries, login, refresh, rewards
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -46,14 +46,14 @@ app = FastAPI(
         "defaultModelExpandDepth": -1,
         "docExpansion": "none",
         "syntaxHighlight.activate": True,
-        "tryItOutEnabled": True,
-        "persistAuthorization": True,  # Keep authorization between requests
-        "displayRequestDuration": True,  # Show request duration
-        "filter": True,  # Enable filtering
-        "deepLinking": True,  # Enable deep linking
-        "displayOperationId": True,  # Show operation IDs
-        "defaultModelsExpandDepth": 2,  # Expand models by default
-        "defaultModelExpandDepth": 2,  # Expand model properties by default
+        "tryItOutEnabled": False,  # Disable try it out button
+        "persistAuthorization": False,  # Don't persist authorization
+        "displayRequestDuration": True,
+        "filter": True,
+        "deepLinking": True,
+        "displayOperationId": True,
+        "defaultModelsExpandDepth": 2,
+        "defaultModelExpandDepth": 2,
     }
 )
 
@@ -68,22 +68,10 @@ def custom_openapi():
         TriviaPay Backend API
 
         ## Authentication
-        - This API requires a Bearer JWT token for authentication
-        - Token must be obtained from Auth0
-        - Format: 'Bearer <your_access_token>'
+        This API requires a Bearer JWT token for authentication.
+        All endpoints except /login and /auth/refresh require a valid access token.
         
-        ### How to Authenticate:
-        1. Click the 'Authorize' button at the top of the page
-        2. Enter: 'Bearer <your_access_token>'
-        3. Ensure the token is valid and not expired
-        4. Verify a user exists in the database with the token's email
-
-        ### For /auth/refresh endpoint:
-        1. Use the REFRESH token, not the access token
-        2. Click the 'Authorize' button
-        3. Enter: 'Bearer YOUR_REFRESH_TOKEN'
-        4. Click 'Authorize' and then 'Close'
-        5. Try the /auth/refresh endpoint
+        Format: `Authorization: Bearer <your_access_token>`
         """,
         routes=app.routes,
     )
@@ -92,22 +80,9 @@ def custom_openapi():
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
-            "description": """
-            Enter your Auth0 JWT token:
-            - Prefix with 'Bearer '
-            - Example: 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...'
-            - Token must have an 'email' claim
-            - User with this email must exist in the database
-            
-            For the /auth/refresh endpoint:
-            1. Use the REFRESH token, not the access token
-            2. Prefix with 'Bearer '
-            3. Ensure the refresh token is valid
-            4. Example: 'Bearer YOUR_REFRESH_TOKEN'
-            """
         }
     }
-    # Apply security globally to all routes
+    # Apply security globally to all routes except login and refresh
     openapi_schema["security"] = [{"bearerAuth": []}]
     app.openapi_schema = openapi_schema
     return openapi_schema
@@ -124,14 +99,12 @@ app.add_middleware(
     allow_headers=["*", "Authorization", "Content-Type", "Accept"]
 )
 
-# Include routers for different functionalities
+# Include only required routers
+app.include_router(login.router)     # Auth0 login
+app.include_router(refresh.router)   # Token refresh
 app.include_router(draw.router)      # Draw-related endpoints
-app.include_router(winners.router)   # Recent winners endpoints
-app.include_router(updates.router)   # Live updates endpoints
-app.include_router(trivia.router)    # Trivia questions endpoints
-app.include_router(entries.router)   # Entry management endpoints
-app.include_router(login.router)     # Auth0 passwordless or local login
-app.include_router(refresh.router)   # Refresh tokens from DB
+app.include_router(trivia.router)    # Trivia questions and lifelines
+app.include_router(rewards.router)   # Rewards pool and winners
 
 @app.get("/")
 async def read_root():

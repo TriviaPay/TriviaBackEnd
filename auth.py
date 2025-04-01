@@ -72,7 +72,7 @@ def get_email_from_userinfo(access_token: str, return_full_info: bool = False) -
         logger.error(f"Error retrieving userinfo: {str(e)}")
         return None
 
-def verify_access_token(access_token: str, check_expiration: bool = True) -> dict:
+def verify_access_token(access_token: str, check_expiration: bool = True, require_email: bool = True) -> dict:
     """
     Verify the access token's signature/claims using Auth0's public JWKS or local secret.
     Returns the decoded payload if valid, else raises 401.
@@ -80,6 +80,7 @@ def verify_access_token(access_token: str, check_expiration: bool = True) -> dic
     Args:
         access_token (str): JWT access token to verify
         check_expiration (bool, optional): Whether to check token expiration. Defaults to True.
+        require_email (bool, optional): Whether to require email in the token. Defaults to True.
     
     Returns:
         dict: Decoded token payload
@@ -170,8 +171,8 @@ def verify_access_token(access_token: str, check_expiration: bool = True) -> dic
                 options=decode_options
             )
             
-            # If no email in payload, try to get from userinfo
-            if not payload.get('email'):
+            # If no email in payload and we require it, try to get from userinfo
+            if not payload.get('email') and require_email:
                 logger.info("No email in token, attempting to retrieve from userinfo")
                 email = get_email_from_userinfo(access_token)
                 if email:

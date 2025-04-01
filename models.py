@@ -37,11 +37,18 @@ class User(Base):
     sign_up_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     refresh_token = Column(String, nullable=True)
     sub = Column(String, nullable=True, unique=True)  # Auth0 sub claim
+    
+    # Added fields for trivia game
+    gems = Column(Integer, default=0)  # Track user's gems
+    streaks = Column(Integer, default=0)  # Track user's streaks
+    lifeline_changes_remaining = Column(Integer, default=3)  # Track remaining question changes
+    last_streak_date = Column(DateTime, nullable=True)  # To track daily streaks
 
     # Relationships
     winners = relationship("Winner", back_populates="user")
     entries = relationship("Entry", back_populates="user")
     payments = relationship("Payment", back_populates="user")
+    daily_questions = relationship("DailyQuestion", back_populates="user")
     # You could add a relationship for Comments, Chats, or Withdrawals if needed
     # (depending on whether they link to a user table).
 
@@ -248,3 +255,23 @@ class Withdrawal(Base):
 
     # Relationship to user if desired
     user = relationship("User", backref="withdrawals")
+
+# =================================
+#  Daily Questions Table
+# =================================
+class DailyQuestion(Base):
+    """Track which questions are allocated to users each day"""
+    __tablename__ = "daily_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
+    date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_common = Column(Boolean, default=False)  # True for first question
+    question_order = Column(Integer, nullable=False)  # 1-4 for ordering
+    is_used = Column(Boolean, default=False)  # Track if question was attempted
+    was_changed = Column(Boolean, default=False)  # Track if question was changed via lifeline
+    
+    # Relationships
+    user = relationship("User", back_populates="daily_questions")
+    question = relationship("Trivia", backref="daily_allocations")

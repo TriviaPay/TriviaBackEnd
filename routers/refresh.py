@@ -78,8 +78,14 @@ def refresh_access_token(
                 detail=f"Invalid auth scheme. Expected 'Bearer', got '{scheme}'"
             )
 
+        # Clean up the token if it contains extra JSON-like content
+        if '"refresh_token"' in token:
+            # Extract just the access token part
+            token = token.split('"refresh_token"')[0].strip().rstrip(',').rstrip('"')
+            logger.error(f"Cleaned token: {token}")
+
         # Attempt to decode the old token
-        claims = verify_access_token(token, check_expiration=False)
+        claims = verify_access_token(token, check_expiration=False, require_email=False)
         sub = claims.get("sub")
         if not sub:
             logger.error("Token has no 'sub' claim")

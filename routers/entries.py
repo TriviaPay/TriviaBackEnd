@@ -2,11 +2,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from db import get_db
 from models import Entry
+from routers.dependencies import get_current_user
 
 router = APIRouter(prefix="/entries", tags=["Entries"])
 
 @router.get("/")
-def get_all_entries(db: Session = Depends(get_db)):
+def get_all_entries(
+    claims: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Endpoint to fetch all entries.
     Returns the number_of_entries for all users.
