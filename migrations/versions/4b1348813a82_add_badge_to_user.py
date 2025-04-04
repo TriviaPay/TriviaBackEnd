@@ -1,7 +1,7 @@
-"""add_question_done_to_trivia
+"""add_badge_to_user
 
-Revision ID: a093e820d8c1
-Revises: 628703cb03fc
+Revision ID: 4b1348813a82
+Revises: 58355ef047f4
 Create Date: 2024-03-30 21:14:00.000000
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'a093e820d8c1'
-down_revision: Union[str, None] = '628703cb03fc'
+revision: str = '4b1348813a82'
+down_revision: Union[str, None] = '58355ef047f4'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

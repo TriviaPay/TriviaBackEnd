@@ -21,13 +21,38 @@ class Auth0TokenRequest(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
 
+class UserInfo(BaseModel):
+    """
+    Model representing user information in the response
+    """
+    username: str
+    account_id: int
+    badge: str
+    badge_image_url: str
+
+class LoginResponse(BaseModel):
+    """
+    Model representing the login response
+    """
+    access_token: str
+    user_info: UserInfo
+
 router = APIRouter(prefix="/login", tags=["Login"])
 
-@router.post("/token")
+def get_badge_image_url(badge: str) -> str:
+    """Get the image URL for a badge"""
+    badge_urls = {
+        "bronze": "https://drive.google.com/file/d/1Ih1bbxNUV9dgmEC8kCMgcomTYvifKlGZ/view?usp=sharing",
+        "silver": "https://drive.google.com/file/d/1Ih1bbxNUV9dgmEC8kCMgcomTYvifKlGZ/view?usp=sharing",
+        "gold": "https://drive.google.com/file/d/1Ih1bbxNUV9dgmEC8kCMgcomTYvifKlGZ/view?usp=sharing"
+    }
+    return badge_urls.get(badge.lower(), badge_urls["bronze"])
+
+@router.post("/token", response_model=LoginResponse)
 async def receive_auth0_tokens(
     tokens: Auth0TokenRequest, 
     db: Session = Depends(get_db)
-) -> Dict[str, str]:
+):
     """
     Process Auth0 tokens and create/update user in the database
     """
@@ -109,11 +134,15 @@ async def receive_auth0_tokens(
             db.commit()
         
         # Return token information
-        return {
-            "access_token": tokens.access_token,
-            "refresh_token": tokens.refresh_token or "",
-            "token_type": "bearer"
-        }
+        return LoginResponse(
+            access_token=tokens.access_token,
+            user_info=UserInfo(
+                username=user.username or email.split('@')[0],
+                account_id=user.account_id,
+                badge=user.badge,
+                badge_image_url=get_badge_image_url(user.badge)
+            )
+        )
     
     except HTTPException:
         raise

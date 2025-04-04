@@ -44,6 +44,19 @@ class User(Base):
     lifeline_changes_remaining = Column(Integer, default=3)  # Track remaining question changes
     last_streak_date = Column(DateTime, nullable=True)  # To track daily streaks
 
+    # Badge fields
+    badge = Column(String, nullable=False, default="bronze")  # Current badge level
+    badge_image_url = Column(String, nullable=True)  # URL to badge image
+
+    # Wallet fields
+    wallet_balance = Column(Float, default=0.0)  # User's wallet balance
+    total_spent = Column(Float, default=0.0)  # Total amount spent in the app
+    last_wallet_update = Column(DateTime, nullable=True)  # Last time wallet was updated
+
+    # Store purchased items
+    owned_cosmetics = Column(String, nullable=True)  # JSON string of owned cosmetic items
+    owned_boosts = Column(String, nullable=True)  # JSON string of owned boost items
+
     # Relationships
     winners = relationship("Winner", back_populates="user")
     entries = relationship("Entry", back_populates="user")
