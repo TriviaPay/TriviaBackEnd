@@ -1,0 +1,70 @@
+{
+    "daily_rewards": {
+        "base_gems": 10,
+        "streak_bonus": {
+            "days": 7,
+            "gems": 30
+        }
+    },
+    "gameplay_boosts": {
+        "streak_saver": {
+            "gems": 100,
+            "usd": 0.49,
+            "description": "Save your streak"
+        },
+        "question_reroll": {
+            "gems": 80,
+            "description": "Change your question"
+        },
+        "extra_chance": {
+            "gems": 150,
+            "usd": 0.99,
+            "description": "Extra chance if you answer wrong"
+        },
+        "hint": {
+            "gems": 30,
+            "description": "Get a hint for the current question"
+        },
+        "fifty_fifty": {
+            "gems": 50,
+            "description": "Remove two wrong answers"
+        },
+        "change_question": {
+            "gems": 10,
+            "description": "Change to a different question"
+        },
+        "auto_submit": {
+            "gems": 300,
+            "description": "Automatically submit answers"
+        }
+    },
+    "cosmetics": {
+        "avatar_pack": {
+            "gems": 500,
+            "usd": 0.99,
+            "description": "Collection of unique avatars"
+        },
+        "answer_button_skins": {
+            "gems": 200,
+            "usd": 0.99,
+            "description": "Custom button appearances"
+        },
+        "confetti_win_fx": {
+            "gems": 150,
+            "description": "Special effects when winning"
+        },
+        "profile_borders": {
+            "gems": 250,
+            "description": "Decorative profile borders"
+        },
+        "chat_bubble_skins": {
+            "gems": 300,
+            "usd": 0.99,
+            "description": "Custom chat bubble styles"
+        },
+        "reaction_emojis": {
+            "gems": 150,
+            "description": "Special reaction emojis"
+        }
+    }
+} 

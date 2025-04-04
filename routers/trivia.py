@@ -4,6 +4,7 @@ from sqlalchemy import func
 from typing import List, Optional
 from datetime import datetime, timedelta
 import random
+import json
 
 from db import get_db
 from models import User, Trivia, DailyQuestion
@@ -120,144 +121,14 @@ async def submit_answer(
     # Check answer
     is_correct = answer.lower() == question.correct_answer.lower()
     
-    # Update user stats
-    if is_correct:
-        # Update streak
-        if user.last_streak_date and user.last_streak_date.date() == (today - timedelta(days=1)):
-            user.streaks += 1
-        else:
-            user.streaks = 1
-        user.last_streak_date = datetime.utcnow()
-        
-        # Add gems for correct answer
-        user.gems += 10
-    else:
-        # Reset streak on wrong answer
-        user.streaks = 0
-        
+    # No longer update streaks/gems here since they're for daily logins
     db.commit()
 
     return {
         "is_correct": is_correct,
         "correct_answer": question.correct_answer,
-        "explanation": question.explanation,
-        "gems": user.gems,
-        "streaks": user.streaks
+        "explanation": question.explanation
     }
-
-@router.post("/lifeline")
-async def use_lifeline(
-    question_number: int,
-    lifeline_type: str,  # "fifty-fifty", "change", "hint"
-    claims: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Use a lifeline on a question"""
-    sub = claims.get("sub")
-    user = db.query(User).filter(User.sub == sub).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Check if user has enough gems
-    if user.gems < 5:
-        raise HTTPException(status_code=400, detail="Not enough gems")
-
-    # Get the question
-    question = db.query(Trivia).filter(Trivia.question_number == question_number).first()
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
-
-    # Get daily question allocation
-    today = datetime.utcnow().date()
-    daily_question = db.query(DailyQuestion).filter(
-        DailyQuestion.account_id == user.account_id,
-        DailyQuestion.question_number == question_number,
-        func.date(DailyQuestion.date) == today
-    ).first()
-
-    if not daily_question:
-        raise HTTPException(status_code=400, detail="Question not allocated for today")
-
-    if daily_question.is_used:
-        raise HTTPException(status_code=400, detail="Question already attempted")
-
-    # Process lifeline
-    response = {}
-    if lifeline_type == "fifty-fifty":
-        # Get correct answer and one random wrong answer
-        options = ["a", "b", "c", "d"]
-        # Find which option letter corresponds to the correct answer
-        correct_option = None
-        for opt in options:
-            if getattr(question, f"option_{opt}").lower() == question.correct_answer.lower():
-                correct_option = opt
-                break
-        
-        if not correct_option:
-            raise HTTPException(status_code=500, detail="Could not find correct option")
-            
-        wrong_options = [opt for opt in options if opt != correct_option]
-        random_wrong = random.choice(wrong_options)
-        
-        response = {
-            "options": {
-                correct_option: getattr(question, f"option_{correct_option}"),
-                random_wrong: getattr(question, f"option_{random_wrong}")
-            }
-        }
-
-    elif lifeline_type == "change":
-        if user.lifeline_changes_remaining <= 0:
-            raise HTTPException(status_code=400, detail="No question changes remaining")
-
-        # Get a new unused question
-        new_question = db.query(Trivia).filter(
-            Trivia.question_done == False
-        ).order_by(func.random()).first()
-
-        if not new_question:
-            raise HTTPException(status_code=400, detail="No more questions available")
-
-        # Update daily question
-        daily_question.question_number = new_question.question_number
-        daily_question.was_changed = True
-        
-        # Mark new question as used
-        new_question.question_done = True
-        new_question.que_displayed_date = datetime.utcnow()
-        
-        # Decrease remaining changes
-        user.lifeline_changes_remaining -= 1
-
-        response = {
-            "question_number": new_question.question_number,
-            "question": new_question.question,
-            "options": {
-                "a": new_question.option_a,
-                "b": new_question.option_b,
-                "c": new_question.option_c,
-                "d": new_question.option_d
-            },
-            "category": new_question.category,
-            "difficulty": new_question.difficulty_level,
-            "picture_url": new_question.picture_url,
-            "changes_remaining": user.lifeline_changes_remaining
-        }
-
-    elif lifeline_type == "hint":
-        response = {
-            "hint": question.explanation
-        }
-
-    else:
-        raise HTTPException(status_code=400, detail="Invalid lifeline type")
-
-    # Deduct gems
-    user.gems -= 5
-    db.commit()
-
-    response["gems_remaining"] = user.gems
-    return response
 
 @router.get("/")
 def get_trivia_questions(db: Session = Depends(get_db)):
@@ -294,4 +165,47 @@ def get_categories(db: Session = Depends(get_db)):
     """
     categories = db.query(Trivia.category).distinct().all()
     return {"categories": [c[0] for c in categories if c[0] is not None]}
+
+@router.post("/daily-login")
+async def process_daily_login(
+    claims: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Process daily login rewards and streak bonuses"""
+    sub = claims.get("sub")
+    user = db.query(User).filter(User.sub == sub).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    today = datetime.utcnow().date()
+    
+    # Check if already claimed today
+    if user.last_streak_date and user.last_streak_date.date() == today:
+        raise HTTPException(status_code=400, detail="Daily reward already claimed today")
+
+    # Calculate streak
+    if user.last_streak_date and user.last_streak_date.date() == (today - timedelta(days=1)):
+        # Consecutive day
+        user.streaks += 1
+    else:
+        # Streak broken or first login
+        user.streaks = 1
+
+    # Add daily login bonus (10 gems)
+    user.gems += 10
+
+    # Check for weekly streak bonus (30 gems)
+    if user.streaks % 7 == 0:  # Every 7 days
+        user.gems += 30
+
+    # Update last streak date
+    user.last_streak_date = datetime.utcnow()
+    db.commit()
+
+    return {
+        "gems_earned": 10 + (30 if user.streaks % 7 == 0 else 0),
+        "total_gems": user.gems,
+        "current_streak": user.streaks,
+        "days_until_weekly_bonus": 7 - (user.streaks % 7)
+    }
 
