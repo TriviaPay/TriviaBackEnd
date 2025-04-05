@@ -1,9 +1,9 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger
+    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date
 )
 from sqlalchemy.orm import relationship
 from db import Base
-from datetime import datetime
+from datetime import datetime, date
 import random
 
 # =================================
@@ -30,9 +30,14 @@ class User(Base):
     state = Column(String, nullable=True)
     zip = Column(String, nullable=True)
     country = Column(String, nullable=True)
+    date_of_birth = Column(Date, nullable=True)
+    referral_code = Column(String(5), unique=True, nullable=True)
+    referred_by = Column(String(5), nullable=True)
+    referral_count = Column(Integer, default=0)
+    is_referred = Column(Boolean, default=False)
 
     subscriber_number = Column(String, nullable=True)
-    username = Column(String, nullable=True)
+    username = Column(String, nullable=True, unique=True)
     subscription_flag = Column(Boolean, default=False)
     sign_up_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     refresh_token = Column(String, nullable=True)
