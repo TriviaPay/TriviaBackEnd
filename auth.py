@@ -92,15 +92,22 @@ def verify_access_token(access_token: str, check_expiration: bool = True, requir
         # Log the raw token for debugging
         logger.debug(f"Received token: {access_token}")
 
+        # Basic JWT format validation
+        if not access_token or not isinstance(access_token, str):
+            raise JWTError("Token must be a non-empty string")
+
+        parts = access_token.split('.')
+        if len(parts) != 3:
+            raise JWTError(f"Invalid token format. Expected 3 parts (header.payload.signature), got {len(parts)} parts")
+
         # First, try to get the unverified header
         try:
             unverified_header = jwt.get_unverified_header(access_token)
+            logger.debug(f"Unverified Token Header: {unverified_header}")
         except Exception as header_error:
             logger.error(f"Error decoding token headers: {header_error}")
             logger.error(f"Full token: {access_token}")
             raise JWTError(f"Error decoding token headers: {header_error}")
-
-        logger.debug(f"Unverified Token Header: {unverified_header}")
 
         # Check if this is a local test token (HS256 algorithm)
         if unverified_header.get('alg') == 'HS256':
@@ -126,7 +133,10 @@ def verify_access_token(access_token: str, check_expiration: bool = True, requir
         try:
             jwks_url = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json"
             jwks_response = requests.get(jwks_url)
+            if not jwks_response.ok:
+                raise JWTError(f"Failed to fetch JWKS: HTTP {jwks_response.status_code}")
             jwks_data = jwks_response.json()
+            logger.debug(f"Successfully fetched JWKS from Auth0")
         except Exception as jwks_error:
             logger.error(f"Error fetching JWKS: {jwks_error}")
             raise JWTError(f"Could not fetch JWKS: {jwks_error}")
@@ -171,20 +181,42 @@ def verify_access_token(access_token: str, check_expiration: bool = True, requir
                 options=decode_options
             )
             
-            # If no email in payload and we require it, try to get from userinfo
+            # Try to extract email from the token directly if not present
+            # This works for Auth0 tokens where email is embedded in the sub claim
+            if not payload.get('email') and 'sub' in payload:
+                sub = payload.get('sub')
+                # Auth0 often has emails in sub claim in format "email|..."
+                if sub and '|' in sub and sub.startswith('email'):
+                    try:
+                        email_part = sub.split('|')[1]
+                        if '@' in email_part:
+                            logger.info(f"Extracted email from sub claim: {email_part}")
+                            payload['email'] = email_part
+                    except Exception as e:
+                        logger.warning(f"Failed to extract email from sub: {e}")
+            
+            # Only try to get email from userinfo if it's required, not in the token,
+            # and we haven't already extracted it from the sub claim
             if not payload.get('email') and require_email:
                 logger.info("No email in token, attempting to retrieve from userinfo")
-                email = get_email_from_userinfo(access_token)
-                if email:
-                    payload['email'] = email
-                else:
-                    logger.error("Could not retrieve email from userinfo")
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Could not retrieve user email"
-                    )
+                try:
+                    email = get_email_from_userinfo(access_token)
+                    if email:
+                        payload['email'] = email
+                    elif require_email:  # Only raise error if email is required
+                        logger.error("Could not retrieve email from userinfo")
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Could not retrieve user email"
+                        )
+                except Exception as e:
+                    if not require_email:
+                        logger.warning(f"Skipping email requirement due to error: {e}")
+                    else:
+                        raise
             
             return payload
+
         except jwt.ExpiredSignatureError:
             # If expiration is being checked and token is expired
             if check_expiration:
@@ -215,7 +247,8 @@ def verify_access_token(access_token: str, check_expiration: bool = True, requir
         logger.error(f"Invalid token: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}"
+            detail=f"Invalid token: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer error=\"invalid_token\", error_description=\"{str(e)}\""}
         )
 
 def refresh_auth0_token(refresh_token: str) -> dict:

@@ -94,14 +94,24 @@ async def receive_auth0_tokens(
         if userinfo.get('picture'):
             user_data['profile_pic_url'] = userinfo['picture']
         
+        # Generate a default username from email
+        base_username = email.split('@')[0]
+        username = base_username
+        
         # Update or create user
         if not user:
-            # Generate a unique account_id
+            # Generate a unique account_id and username
             max_attempts = 10
-            for _ in range(max_attempts):
+            for attempt in range(max_attempts):
                 try:
                     # Generate a new account_id
                     user_data['account_id'] = generate_account_id()
+                    
+                    # Try with a numbered username if not first attempt
+                    if attempt > 0:
+                        username = f"{base_username}{attempt + 1}"
+                    
+                    user_data['username'] = username
                     
                     # Create new user
                     user = User(**user_data)
@@ -114,8 +124,18 @@ async def receive_auth0_tokens(
                     # Commit changes
                     db.commit()
                     break
-                except IntegrityError:
-                    # Rollback and try again with a new account_id
+                except IntegrityError as e:
+                    # Check if the error is due to duplicate username
+                    if 'uq_users_username' in str(e):
+                        # If we've tried max times with numbered usernames
+                        if attempt == max_attempts - 1:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Could not generate unique username. Please try again."
+                            )
+                        db.rollback()
+                        continue
+                    # If error is due to account_id, just retry
                     db.rollback()
             else:
                 # If we've exhausted our attempts

@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, winners, updates, trivia, entries, login, refresh, rewards, wallet, store
+from routers import draw, winners, updates, trivia, entries, login, refresh, rewards, wallet, store, profile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -90,13 +90,13 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 # CORS configuration
-origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
+    #allow_origins=["http://localhost:3000", "http://localhost:5173", "https://*.vercel.app", "http://localhost"],  # Common development and deployment URLs
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*", "Authorization", "Content-Type", "Accept"]
+    allow_headers=["*", "Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
 )
 
 # Include only required routers
@@ -107,6 +107,7 @@ app.include_router(trivia.router)    # Trivia questions and lifelines
 app.include_router(rewards.router)   # Rewards pool and winners
 app.include_router(wallet.router)    # Wallet-related endpoints
 app.include_router(store.router)     # Store and purchases
+app.include_router(profile.router)   # User profile management
 
 @app.get("/")
 async def read_root():
