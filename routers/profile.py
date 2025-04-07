@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field
 from datetime import datetime, date
 import random
 import string
 from db import get_db
-from models import User
+from models import User, Badge
 from routers.dependencies import get_current_user
 import logging
 
@@ -455,4 +455,137 @@ async def perform_profile_update(
             "status": "error",
             "message": f"An unexpected error occurred: {str(e)}",
             "code": "UNEXPECTED_ERROR"
+        }
+
+# Badge related models
+class BadgeAssignment(BaseModel):
+    badge_id: str
+
+@router.get("/badges", response_model=List[dict])
+async def get_user_badges(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get the current badge assigned to the user and all available badges
+    """
+    try:
+        # Get the current user
+        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+        
+        # Get all badges
+        badges = db.query(Badge).order_by(Badge.level).all()
+        
+        # Format response
+        badges_list = []
+        for badge in badges:
+            badge_dict = {
+                "id": badge.id,
+                "name": badge.name,
+                "description": badge.description,
+                "image_url": badge.image_url,
+                "level": badge.level,
+                "is_current": user.badge_id == badge.id
+            }
+            badges_list.append(badge_dict)
+        
+        return badges_list
+    
+    except Exception as e:
+        logging.error(f"Error getting user badges: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving badges: {str(e)}")
+
+@router.post("/assign-badge", status_code=200)
+async def assign_badge(
+    badge_data: BadgeAssignment,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Assign a badge to the user
+    """
+    try:
+        # Get the current user
+        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+        
+        # Get the badge
+        badge = db.query(Badge).filter(Badge.id == badge_data.badge_id).first()
+        if not badge:
+            return {
+                "status": "error",
+                "message": f"Badge with ID {badge_data.badge_id} not found",
+                "code": "BADGE_NOT_FOUND"
+            }
+        
+        # Update the user's badge
+        user.badge_id = badge.id
+        user.badge_image_url = badge.image_url
+        
+        # Commit changes
+        db.commit()
+        
+        return {
+            "status": "success",
+            "message": f"Badge '{badge.name}' successfully assigned",
+            "data": {
+                "badge_id": badge.id,
+                "badge_name": badge.name,
+                "badge_image_url": badge.image_url
+            }
+        }
+    
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error assigning badge: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error assigning badge: {str(e)}",
+            "code": "BADGE_ASSIGNMENT_ERROR"
+        }
+
+@router.post("/remove-badge", status_code=200)
+async def remove_badge(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Remove the current badge from the user
+    """
+    try:
+        # Get the current user
+        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+        
+        # Check if user has a badge
+        if not user.badge_id:
+            return {
+                "status": "error",
+                "message": "User does not have a badge assigned",
+                "code": "NO_BADGE_ASSIGNED"
+            }
+        
+        # Remove the badge
+        user.badge_id = None
+        user.badge_image_url = None
+        
+        # Commit changes
+        db.commit()
+        
+        return {
+            "status": "success",
+            "message": "Badge successfully removed"
+        }
+    
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error removing badge: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error removing badge: {str(e)}",
+            "code": "BADGE_REMOVAL_ERROR"
         } 

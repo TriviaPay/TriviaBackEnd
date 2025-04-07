@@ -1,0 +1,103 @@
+{
+  "avatars": [
+    {
+      "id": "avatar_01",
+      "name": "Default Avatar",
+      "description": "The default avatar available to all users",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Avatars/Avatar-1.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0F2YXRhcnMvQXZhdGFyLTEuanNvbiIsImlhdCI6MTc0Mzk1OTM2MCwiZXhwIjo0ODk3NTU5MzYwfQ.X3D74j5YUEQ0UwuGudq5HGvIPDBoBkLHvsBGM6wmTxc",
+      "is_default": true,
+      "is_premium": false
+    },
+    {
+      "id": "avatar_02",
+      "name": "Gold Star",
+      "description": "A premium avatar with a gold star theme",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Avatars/Avatar-2.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0F2YXRhcnMvQXZhdGFyLTIuanNvbiIsImlhdCI6MTc0Mzk1OTM4OCwiZXhwIjo0ODk3NTU5Mzg4fQ.JijSYJ2ySjdQhLQNVgpm63bhh2172eHWxk2QLhzneVM",
+      "price_gems": 500,
+      "is_premium": false,
+      "is_default": false
+    },
+    {
+      "id": "avatar_03",
+      "name": "Pro Gamer",
+      "description": "An avatar for serious gamers",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Avatars/Avatar-3.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0F2YXRhcnMvQXZhdGFyLTMuanNvbiIsImlhdCI6MTc0Mzk1OTQ2NSwiZXhwIjo0ODk3NTU5NDY1fQ.tIAsnYBFGGFOHi70FjzYEMkI0lOjaHic4C18pUgs7Ks",
+      "price_gems": 800,
+      "is_premium": false,
+      "is_default": false
+    },
+    {
+      "id": "avatar_04",
+      "name": "VIP Diamond",
+      "description": "An exclusive diamond-themed avatar for VIPs",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Avatars/Avatar-4.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0F2YXRhcnMvQXZhdGFyLTQuanNvbiIsImlhdCI6MTc0Mzk1OTU0NywiZXhwIjo0ODk3NTU5NTQ3fQ.PO9DIFy3JVnfTYR65ApXpCjUAKnccQPikbbkd-srkHs",
+      "price_usd": 4.99,
+      "is_premium": true,
+      "is_default": false
+    },
+    {
+      "id": "avatar_05",
+      "name": "Cosmic Explorer",
+      "description": "Explore the cosmos with this space-themed avatar",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Avatars/Avatar-5.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0F2YXRhcnMvQXZhdGFyLTUuanNvbiIsImlhdCI6MTc0Mzk1OTU2NiwiZXhwIjo0ODk3NTU5NTY2fQ.AzashiJUJ6dGtQj20rJT0lnl70-7a4gGSm_HWrvsb4Y",
+      "price_gems": 1200,
+      "is_premium": false,
+      "is_default": false
+    }
+  ],
+  "frames": [
+    {
+      "id": "frame_01",
+      "name": "Basic Frame",
+      "description": "A simple frame available to all users",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Frames/Frame-1.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0ZyYW1lcy9GcmFtZS0xLmpzb24iLCJpYXQiOjE3NDM5NTk2NTUsImV4cCI6NDg5NzU1OTY1NX0.O70hRs9cox9KsaKe8V3vE1sHCMqjQp1I3IeHpMzwP2A",
+      "is_default": true,
+      "is_premium": false
+    },
+    {
+      "id": "frame_02",
+      "name": "Gold Border",
+      "description": "A golden border to showcase your achievements",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Frames/Frame-2.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0ZyYW1lcy9GcmFtZS0yLmpzb24iLCJpYXQiOjE3NDM5NTk2NzMsImV4cCI6NDg5NzU1OTY3M30.0Ay88pxXsHeOVOTUjS-ZaAbNnzWSyCUW0MGFJYzZ554",
+      "price_gems": 600,
+      "is_premium": false,
+      "is_default": false
+    },
+    {
+      "id": "frame_03",
+      "name": "Silver Shine",
+      "description": "A sleek silver frame with a subtle shine effect",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Frames/Frame-3.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0ZyYW1lcy9GcmFtZS0zLmpzb24iLCJpYXQiOjE3NDM5NTk2OTIsImV4cCI6NDg5NzU1OTY5Mn0.YJpV3HFFTwa9peWPb5IG2yfS0pEeI9l5QHnFbF067PE",
+      "price_gems": 450,
+      "is_premium": false,
+      "is_default": false
+    },
+    {
+      "id": "frame_04",
+      "name": "Diamond Elite",
+      "description": "Show off your elite status with this diamond-encrusted frame",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Frames/Frame-4.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0ZyYW1lcy9GcmFtZS00Lmpzb24iLCJpYXQiOjE3NDM5NTk3MDgsImV4cCI6NDg5NzU1OTcwOH0.rmbUo9PBkhWtVGnIFkfxt7A5CKy0LVIjLBK-rSxe7go",
+      "price_usd": 3.99,
+      "is_premium": true,
+      "is_default": false
+    },
+    {
+      "id": "frame_05",
+      "name": "Animated Flames",
+      "description": "A dynamic frame with animated flame effects",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Frames/Frame-5.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0ZyYW1lcy9GcmFtZS01Lmpzb24iLCJpYXQiOjE3NDM5NTk3MjYsImV4cCI6NDg5NzU1OTcyNn0.pLbmvtAMdaCkr2aVf9w2H_sjEOXJnHomYgmFWLZOuOw",
+      "price_gems": 1500,
+      "is_premium": false,
+      "is_default": false
+    },
+    {
+      "id": "avatar_11",
+      "name": "Pro Gamers",
+      "description": "An avatar for serious gamerss",
+      "image_url": "https://euvkejlbuqsxtjkdbjhn.supabase.co/storage/v1/object/sign/triviapay-assets/Avatars/Avatar-3.json?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmwiOiJ0cml2aWFwYXktYXNzZXRzL0F2YXRhcnMvQXZhdGFyLTMuanNvbiIsImlhdCI6MTc0Mzk1OTQ2NSwiZXhwIjo0ODk3NTU5NDY1fQ.tIAsnYBFGGFOHi70FjzYEMkI0lOjaHic4C18pUgs7Ks",
+      "price_gems": 800,
+      "is_premium": false,
+      "is_default": false
+    }
+  ]
+}

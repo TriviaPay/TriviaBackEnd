@@ -5,7 +5,7 @@ from typing import Dict, Optional
 from pydantic import BaseModel
 
 from db import get_db
-from models import User, generate_account_id
+from models import User, generate_account_id, Avatar, Frame, Badge
 from auth import verify_access_token, get_email_from_userinfo
 import logging
 from datetime import datetime
@@ -27,8 +27,12 @@ class UserInfo(BaseModel):
     """
     username: str
     account_id: int
-    badge: str
-    badge_image_url: str
+    badge_id: Optional[str] = None
+    badge_name: Optional[str] = None
+    badge_image_url: Optional[str] = None
+    is_existing_user: bool
+    avatar_url: Optional[str] = None
+    frame_url: Optional[str] = None
 
 class LoginResponse(BaseModel):
     """
@@ -38,15 +42,6 @@ class LoginResponse(BaseModel):
     user_info: UserInfo
 
 router = APIRouter(prefix="/login", tags=["Login"])
-
-def get_badge_image_url(badge: str) -> str:
-    """Get the image URL for a badge"""
-    badge_urls = {
-        "bronze": "https://drive.google.com/file/d/1Ih1bbxNUV9dgmEC8kCMgcomTYvifKlGZ/view?usp=sharing",
-        "silver": "https://drive.google.com/file/d/1Ih1bbxNUV9dgmEC8kCMgcomTYvifKlGZ/view?usp=sharing",
-        "gold": "https://drive.google.com/file/d/1Ih1bbxNUV9dgmEC8kCMgcomTYvifKlGZ/view?usp=sharing"
-    }
-    return badge_urls.get(badge.lower(), badge_urls["bronze"])
 
 @router.post("/token", response_model=LoginResponse)
 async def receive_auth0_tokens(
@@ -80,6 +75,9 @@ async def receive_auth0_tokens(
             (User.email == email) | (User.sub == sub)
         ).first()
         
+        # Check if user is existing
+        is_existing_user = user is not None
+        
         # Prepare user data
         user_data = {
             'sub': sub,
@@ -87,6 +85,8 @@ async def receive_auth0_tokens(
             'sign_up_date': datetime.utcnow(),
             'notification_on': True,
             'subscription_flag': False,
+            'badge_id': None, # No default badge
+            'badge_image_url': None # No default badge image
         }
         
         # Add profile picture if available
@@ -143,7 +143,7 @@ async def receive_auth0_tokens(
         else:
             # Update existing user
             for key, value in user_data.items():
-                if value is not None:
+                if value is not None and key not in ['badge_id', 'badge_image_url']:  # Don't overwrite existing badge
                     setattr(user, key, value)
             
             # Store refresh token
@@ -153,14 +153,44 @@ async def receive_auth0_tokens(
             # Commit changes
             db.commit()
         
+        # Get badge information if assigned
+        badge_id = None
+        badge_name = None
+        badge_image_url = None
+        
+        if user.badge_id:
+            badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
+            if badge:
+                badge_id = badge.id
+                badge_name = badge.name
+                badge_image_url = badge.image_url
+        
+        # Get avatar and frame URLs if selected
+        avatar_url = None
+        frame_url = None
+        
+        if user.selected_avatar_id:
+            avatar = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
+            if avatar:
+                avatar_url = avatar.image_url
+        
+        if user.selected_frame_id:
+            frame = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
+            if frame:
+                frame_url = frame.image_url
+        
         # Return token information
         return LoginResponse(
             access_token=tokens.access_token,
             user_info=UserInfo(
                 username=user.username or email.split('@')[0],
                 account_id=user.account_id,
-                badge=user.badge,
-                badge_image_url=get_badge_image_url(user.badge)
+                badge_id=badge_id,
+                badge_name=badge_name,
+                badge_image_url=badge_image_url if badge_image_url else user.badge_image_url,
+                is_existing_user=is_existing_user,
+                avatar_url=avatar_url,
+                frame_url=frame_url
             )
         )
     
