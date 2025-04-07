@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, winners, updates, trivia, entries, login, refresh, rewards, wallet, store, profile
+from routers import draw, winners, updates, trivia, entries, login, refresh, rewards, wallet, store, profile, cosmetics, badges
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -108,6 +108,8 @@ app.include_router(rewards.router)   # Rewards pool and winners
 app.include_router(wallet.router)    # Wallet-related endpoints
 app.include_router(store.router)     # Store and purchases
 app.include_router(profile.router)   # User profile management
+app.include_router(cosmetics.router) # Avatars and Frames management
+app.include_router(badges.router)    # Badges management
 
 @app.get("/")
 async def read_root():

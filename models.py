@@ -50,8 +50,8 @@ class User(Base):
     last_streak_date = Column(DateTime, nullable=True)  # To track daily streaks
 
     # Badge fields
-    badge = Column(String, nullable=False, default="bronze")  # Current badge level
-    badge_image_url = Column(String, nullable=True)  # URL to badge image
+    badge_id = Column(String, ForeignKey("badges.id"), nullable=True)  # Reference to badge ID
+    badge_image_url = Column(String, nullable=True)  # URL to badge image (cached for performance)
 
     # Wallet fields
     wallet_balance = Column(Float, default=0.0)  # User's wallet balance
@@ -61,12 +61,17 @@ class User(Base):
     # Store purchased items
     owned_cosmetics = Column(String, nullable=True)  # JSON string of owned cosmetic items
     owned_boosts = Column(String, nullable=True)  # JSON string of owned boost items
+    
+    # Cosmetic selections
+    selected_avatar_id = Column(String, nullable=True)  # Currently selected avatar ID
+    selected_frame_id = Column(String, nullable=True)  # Currently selected frame ID
 
     # Relationships
     winners = relationship("Winner", back_populates="user")
     entries = relationship("Entry", back_populates="user")
     payments = relationship("Payment", back_populates="user")
     daily_questions = relationship("DailyQuestion", back_populates="user")
+    badge_info = relationship("Badge", back_populates="users")
     # You could add a relationship for Comments, Chats, or Withdrawals if needed
     # (depending on whether they link to a user table).
 
@@ -293,3 +298,88 @@ class DailyQuestion(Base):
     # Relationships
     user = relationship("User", back_populates="daily_questions")
     question = relationship("Trivia", backref="daily_allocations")
+
+# =================================
+#  Cosmetics - Avatars Table
+# =================================
+class Avatar(Base):
+    __tablename__ = "avatars"
+    
+    id = Column(String, primary_key=True, index=True)  # Unique ID for the avatar
+    name = Column(String, nullable=False)  # Display name
+    description = Column(String, nullable=True)  # Description of the avatar
+    image_url = Column(String, nullable=False)  # URL to the avatar image
+    price_gems = Column(Integer, nullable=True)  # Price in gems (if purchasable with gems)
+    price_usd = Column(Float, nullable=True)  # Price in USD (if purchasable with real money)
+    is_premium = Column(Boolean, default=False)  # Whether it's a premium avatar
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When the avatar was added
+    
+    # Relationships
+    users = relationship("UserAvatar", back_populates="avatar")
+
+
+# =================================
+#  Cosmetics - Frames Table
+# =================================
+class Frame(Base):
+    __tablename__ = "frames"
+    
+    id = Column(String, primary_key=True, index=True)  # Unique ID for the frame
+    name = Column(String, nullable=False)  # Display name
+    description = Column(String, nullable=True)  # Description of the frame
+    image_url = Column(String, nullable=False)  # URL to the frame image
+    price_gems = Column(Integer, nullable=True)  # Price in gems (if purchasable with gems)
+    price_usd = Column(Float, nullable=True)  # Price in USD (if purchasable with real money)
+    is_premium = Column(Boolean, default=False)  # Whether it's a premium frame
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When the frame was added
+    
+    # Relationships
+    users = relationship("UserFrame", back_populates="frame")
+
+
+# =================================
+#  User-Avatar Relation Table
+# =================================
+class UserAvatar(Base):
+    __tablename__ = "user_avatars"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    avatar_id = Column(String, ForeignKey("avatars.id"), nullable=False)
+    purchase_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="owned_avatars")
+    avatar = relationship("Avatar", back_populates="users")
+
+
+# =================================
+#  User-Frame Relation Table
+# =================================
+class UserFrame(Base):
+    __tablename__ = "user_frames"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    frame_id = Column(String, ForeignKey("frames.id"), nullable=False)
+    purchase_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="owned_frames")
+    frame = relationship("Frame", back_populates="users")
+
+# =================================
+#  Badge Table
+# =================================
+class Badge(Base):
+    __tablename__ = "badges"
+    
+    id = Column(String, primary_key=True, index=True)  # Unique ID for the badge (e.g., "bronze", "silver", "gold")
+    name = Column(String, nullable=False)  # Display name
+    description = Column(String, nullable=True)  # Description of the badge
+    image_url = Column(String, nullable=False)  # URL to the badge image
+    level = Column(Integer, nullable=False)  # Numeric level (for ordering, e.g., 1 for bronze, 2 for silver)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When the badge was added
+    
+    # Relationships
+    users = relationship("User", back_populates="badge_info")
