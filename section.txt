@@ -1,0 +1,31 @@
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """
+    Admin endpoint to reset to the default winner logic.
+    """
+    try:
+        # Get or create config
+        config = db.query(TriviaDrawConfig).first()
+        if not config:
+            config = TriviaDrawConfig(
+                is_custom=False,
+                custom_winner_count=None
+            )
+            db.add(config)
+        else:
+            config.is_custom = False
+            config.custom_winner_count = None
+        
+        db.commit()
+
+        return DrawConfigResponse(
+            is_custom=config.is_custom,
+            custom_winner_count=config.custom_winner_count
+        )
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error resetting winner logic: {str(e)}"

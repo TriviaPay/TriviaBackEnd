@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from db import get_db
 from models import User, Avatar, Frame, UserAvatar, UserFrame
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user, verify_admin
 
 # Load environment variables
 load_dotenv()
@@ -22,49 +22,7 @@ router = APIRouter(prefix="/cosmetics", tags=["Cosmetics"])
 
 # ======== Helper Functions ========
 
-def is_admin(current_user: dict, db: Session) -> bool:
-    """
-    Check if the current user is an admin based on their email matching ADMIN_EMAIL in env
-    
-    Args:
-        current_user (dict): The current user's JWT claims
-        db (Session): Database session
-        
-    Returns:
-        bool: Whether the user is an admin
-    """
-    # Get admin email from environment or use default
-    admin_email = os.getenv("ADMIN_EMAIL", "triviapay3@gmail.com")
-    
-    # Admin check is based on email
-    email = current_user.get('email')
-    if email and email.lower() == admin_email.lower():
-        return True
-        
-    # Check in database
-    if email:
-        user = db.query(User).filter(User.email == email).first()
-        if user and user.email.lower() == admin_email.lower():
-            return True
-            
-    return False
-    
-def verify_admin(current_user: dict, db: Session) -> None:
-    """
-    Verify the user is an admin or raise an HTTP exception
-    
-    Args:
-        current_user (dict): The current user's JWT claims
-        db (Session): Database session
-        
-    Raises:
-        HTTPException: If the user is not an admin
-    """
-    if not is_admin(current_user, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required for this endpoint"
-        )
+# Removed is_admin and verify_admin functions
 
 # ======== Pydantic Models for Request/Response Validation ========
 

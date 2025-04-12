@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Path, Body
 from sqlalchemy.orm import Session
-from typing import Optional, Literal
+from typing import Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field
 import json
 import random
@@ -21,13 +21,14 @@ with open(STORE_CONFIG_PATH) as f:
 
 class PurchaseRequest(BaseModel):
     """Model for purchase requests"""
-    payment_type: Literal["gems", "usd"] = Field(
+    payment_type: str = Field(
+        ...,
         description="Type of payment to use for the purchase",
-        examples=["gems", "usd"]
+        example="gems"
     )
 
     class Config:
-        json_schema_extra = {
+        schema_extra = {
             "example": {
                 "payment_type": "gems"
             }
@@ -42,25 +43,28 @@ class PurchaseResponse(BaseModel):
 
 class UseBoostRequest(BaseModel):
     """Model for using a gameplay boost"""
-    boost_type: Literal["streak_saver", "question_reroll", "extra_chance", "hint", "fifty_fifty", "change_question", "auto_submit"] = Field(
+    boost_type: str = Field(
+        ...,
         description="Type of boost to use",
-        examples=["hint", "fifty_fifty"]
+        example="hint"
     )
-    payment_type: Literal["gems", "usd"] = Field(
+    payment_type: str = Field(
+        ...,
         description="Type of payment to use for the purchase",
-        examples=["gems", "usd"]
+        example="gems"
     )
     question_number: Optional[int] = Field(
         None,
-        description="Question number to apply the boost to (not needed for streak_saver)"
+        description="Question number to use the boost on",
+        example=1
     )
 
     class Config:
-        json_schema_extra = {
+        schema_extra = {
             "example": {
                 "boost_type": "hint",
                 "payment_type": "gems",
-                "question_number": 123
+                "question_number": 1
             }
         }
 
