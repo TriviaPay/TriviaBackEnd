@@ -31,8 +31,9 @@ if "postgresql" in DATABASE_URL and "driver=" not in DATABASE_URL:
         if not port:
             port = "5432"  # Default PostgreSQL port
         
-        # Construct a new URL with the pg8000 driver and require SSL
-        DATABASE_URL = f"postgresql+pg8000://{username}:{password}@{host}:{port}/{dbname}?sslmode=require"
+        # Construct a new URL with the pg8000 driver
+        # For pg8000 1.30.1, using connect_args instead of URL parameters
+        DATABASE_URL = f"postgresql+pg8000://{username}:{password}@{host}:{port}/{dbname}"
         logging.info(f"Using pg8000 driver with URL: {DATABASE_URL.replace(password, '****')}")
 
 # Create SQLAlchemy engine with connection pooling
@@ -42,7 +43,11 @@ engine = create_engine(
     max_overflow=10,
     pool_timeout=30,
     pool_recycle=1800,  # Recycle connections after 30 minutes
-    pool_pre_ping=True  # Enable connection health checks
+    pool_pre_ping=True,  # Enable connection health checks
+    # For pg8000 1.30.1, use the correct connect_args format
+    connect_args={
+        "ssl_context": True  # This is the correct parameter for pg8000 1.30.1
+    }
 )
 
 # Create session maker for database interactions
