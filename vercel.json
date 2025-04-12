@@ -6,7 +6,7 @@
             "use": "@vercel/python",
             "config": {
                 "maxLambdaSize": "15mb",
-                "runtime": "python3.9",
+                "runtime": "python3.11",
                 "installCommand": "pip install -r requirements.txt"
             }
         }
@@ -31,6 +31,6 @@
     ],
     "env": {
         "PYTHONPATH": ".",
-        "PYTHON_VERSION": "3.9"
+        "PYTHON_VERSION": "3.11"
     }
 } 
