@@ -1,9 +1,25 @@
 import sys
 import os
+import re
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import create_engine, text
 from db import DATABASE_URL
+
+# Ensure we're using pg8000 as the driver
+if "postgresql" in DATABASE_URL and "pg8000" not in DATABASE_URL:
+    # Extract all parts of the connection URL
+    pattern = r'postgresql://([^:]+):([^@]+)@([^:/]+):?(\d*)/?([^?]*)'
+    match = re.match(pattern, DATABASE_URL)
+    
+    if match:
+        username, password, host, port, dbname = match.groups()
+        if not port:
+            port = "5432"  # Default PostgreSQL port
+        
+        # Construct a new URL with the pg8000 driver
+        DATABASE_URL = f"postgresql+pg8000://{username}:{password}@{host}:{port}/{dbname}"
+        print(f"Using pg8000 driver for migration")
 
 def create_draw_config_table():
     """Create draw_config table."""
