@@ -6,6 +6,7 @@ from typing import Optional
 from db import get_db
 from auth import verify_access_token
 from models import User
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -44,47 +45,68 @@ def get_current_user(request: Request, check_expiration: bool = True, require_em
     headers = dict(request.headers)
     logging.debug("Request Headers:\n%s", json.dumps(headers, indent=2))
     
-    # Extract Authorization header
+    # Try to get token from different sources
+    token = None
+    
+    # First, check Authorization header (most common)
     auth_header = request.headers.get('authorization', '').strip()
     if not auth_header:
-        logging.error("No Authorization header found in request")
         auth_header = request.headers.get('Authorization', '').strip()
-        if auth_header:
-            logging.info("Found Authorization header with uppercase key")
-        else:
-            logging.error("No Authorization header found in request (case insensitive)")
-            # Log all headers for debugging
-            logging.error(f"All headers: {json.dumps(dict(request.headers), indent=2)}")
     
-    logging.info(f"Found Authorization header: {auth_header[:20]}..." if auth_header else "No Authorization header")
+    if auth_header:
+        logging.info(f"Found Authorization header: {auth_header[:20]}..." if len(auth_header) > 20 else auth_header)
+        # Remove all 'Bearer ' prefixes (case-insensitive)
+        orig_auth_header = auth_header
+        while auth_header.lower().startswith('bearer '):
+            auth_header = auth_header.split(' ', 1)[1].strip()
+        
+        if orig_auth_header != auth_header:
+            logging.info(f"Stripped Bearer prefix: {auth_header[:20]}..." if len(auth_header) > 20 else auth_header)
+        
+        token = auth_header
     
-    if not auth_header:
+    # If no authorization header, try from query params
+    if not token:
+        token_from_query = request.query_params.get('access_token')
+        if token_from_query:
+            logging.info(f"Found token from query parameter: {token_from_query[:20]}..." if len(token_from_query) > 20 else token_from_query)
+            token = token_from_query
+    
+    # If still no token, try from form data - synchronous approach
+    if not token and request.method in ["POST", "PUT", "PATCH"]:
+        try:
+            # Check if content type is form
+            if "application/x-www-form-urlencoded" in request.headers.get("content-type", ""):
+                # Since we can't use await here, we'll just check if the request has this attribute
+                # FastAPI might have already parsed the form data
+                if hasattr(request, "form") and request.form and "access_token" in request.form:
+                    token_from_form = request.form.get("access_token")
+                    logging.info(f"Found token from form data: {token_from_form[:20]}...")
+                    token = token_from_form
+        except Exception as e:
+            logging.error(f"Error accessing form data: {e}")
+    
+    # If no token found, raise exception
+    if not token:
+        logging.error("No Authorization token found in request (checked headers, query params, and form data)")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header missing. Please provide a Bearer token.",
+            detail="Authorization token missing. Please provide a Bearer token in the header, query parameter, or form data.",
             headers={"WWW-Authenticate": "Bearer"}
         )
-        
-    # Remove all 'Bearer ' prefixes (case-insensitive)
-    orig_auth_header = auth_header
-    while auth_header.lower().startswith('bearer '):
-        auth_header = auth_header.split(' ', 1)[1].strip()
-    
-    if orig_auth_header != auth_header:
-        logging.info(f"Stripped Bearer prefix: {auth_header[:20]}...")
     
     # Clean up the token if it contains extra JSON-like content
-    if '"refresh_token"' in auth_header:
+    if '"refresh_token"' in token:
         # Extract just the access token part
-        auth_header = auth_header.split('"refresh_token"')[0].strip().rstrip(',').rstrip('"')
-        logging.info(f"Cleaned token: {auth_header[:20]}...")
+        token = token.split('"refresh_token"')[0].strip().rstrip(',').rstrip('"')
+        logging.info(f"Cleaned token: {token[:20]}...")
     
-    logging.info(f"Final token to verify: {auth_header[:20]}... with check_expiration={check_expiration}, require_email={require_email}")
+    logging.info(f"Final token to verify: {token[:20]}... with check_expiration={check_expiration}, require_email={require_email}")
     
     # Verify the token
     try:
         logging.info(f"Calling verify_access_token with check_expiration={check_expiration}, require_email={require_email}")
-        claims = verify_access_token(auth_header, check_expiration=check_expiration, require_email=require_email)
+        claims = verify_access_token(token, check_expiration=check_expiration, require_email=require_email)
         
         # Log the claims for debugging
         logging.info(f"Successfully verified token, got claims for sub: {claims.get('sub', 'NO SUB FOUND')}")
@@ -106,3 +128,58 @@ def get_current_user(request: Request, check_expiration: bool = True, require_em
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"}
         )
+
+def get_current_user_simple(claims: dict = Depends(verify_access_token)):
+    """Get current user from verified token"""
+    return claims
+
+def is_admin(current_user: dict, db: Session) -> bool:
+    """
+    Check if the current user is an admin based on their email matching ADMIN_EMAIL in env
+    
+    Args:
+        current_user (dict): The current user's JWT claims
+        db (Session): Database session
+        
+    Returns:
+        bool: Whether the user is an admin
+    """
+    # Get admin email from environment or use default
+    admin_email = os.getenv("ADMIN_EMAIL", "triviapay3@gmail.com")
+    
+    # Admin check is based on email
+    email = current_user.get('email')
+    if email and email.lower() == admin_email.lower():
+        return True
+        
+    # Check in database
+    if email:
+        user = db.query(User).filter(User.email == email).first()
+        if user and user.email.lower() == admin_email.lower():
+            return True
+            
+    return False
+
+
+def verify_admin(current_user: dict, db: Session) -> None:
+    """
+    Verify the user is an admin or raise an HTTP exception
+    
+    Args:
+        current_user (dict): The current user's JWT claims
+        db (Session): Database session
+        
+    Raises:
+        HTTPException: If the user is not an admin
+    """
+    if not is_admin(current_user, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required for this endpoint"
+        )
+
+
+def get_admin_user(claims: dict = Depends(verify_access_token), db: Session = Depends(get_db)):
+    """Verify user is admin using cosmetics.py logic"""
+    verify_admin(claims, db)
+    return claims

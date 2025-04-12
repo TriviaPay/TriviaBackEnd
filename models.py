@@ -85,11 +85,12 @@ def generate_account_id():
 class Entry(Base):
     __tablename__ = "entries"
 
-    account_id = Column(Integer, ForeignKey("users.account_id"), primary_key=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
     number_of_entries = Column(Integer, nullable=False)
     ques_attempted = Column(Integer, nullable=False)
     correct_answers = Column(Integer, nullable=False)
     wrong_answers = Column(Integer, nullable=False)
+    date = Column(Date, default=datetime.utcnow().date(), nullable=False)
 
     # Relationship
     user = relationship("User", back_populates="entries")
@@ -101,7 +102,7 @@ class Entry(Base):
 class Winner(Base):
     __tablename__ = "winners"
 
-    account_id = Column(Integer, ForeignKey("users.account_id"), primary_key=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
     amount_won = Column(Float, nullable=False)
     win_date = Column(DateTime, nullable=False)
 
@@ -126,7 +127,7 @@ class Winner(Base):
 class Payment(Base):
     __tablename__ = "payment"
 
-    account_id = Column(Integer, ForeignKey("users.account_id"), primary_key=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
     bank_account_number = Column(String, nullable=False)
     routing_number = Column(String, nullable=False)
     card_number = Column(String, nullable=False)
@@ -222,7 +223,7 @@ class Comment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     post_id = Column(Integer, ForeignKey("updates.post_id"), nullable=False)
-    account_id = Column(Integer, ForeignKey("users.account_id"), nullable=False)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     comment = Column(String, nullable=False)
     date = Column(DateTime, default=datetime.utcnow, nullable=False)
     likes = Column(Integer, default=0)
@@ -243,8 +244,8 @@ class Chat(Base):
     __tablename__ = "chats"
 
     message_id = Column(Integer, primary_key=True, index=True)
-    sender_account_id = Column(Integer, ForeignKey("users.account_id"), nullable=False)
-    receiver_account_id = Column(Integer, ForeignKey("users.account_id"), nullable=False)
+    sender_account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    receiver_account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     message = Column(String, nullable=True)
     sent_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -269,7 +270,7 @@ class Withdrawal(Base):
     __tablename__ = "withdrawals"
 
     id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(Integer, ForeignKey("users.account_id"), nullable=False)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     amount = Column(Float, nullable=False)
     withdrawal_method = Column(String, nullable=False)  # e.g. "bank", "paypal", ...
     withdrawal_status = Column(String, nullable=False)  # e.g. "requested", "completed", "failed"
@@ -294,6 +295,11 @@ class DailyQuestion(Base):
     question_order = Column(Integer, nullable=False)  # 1-4 for ordering
     is_used = Column(Boolean, default=False)  # Track if question was attempted
     was_changed = Column(Boolean, default=False)  # Track if question was changed via lifeline
+    
+    # New fields to track answers and correctness
+    answer = Column(String, nullable=True)  # User's answer
+    is_correct = Column(Boolean, nullable=True)  # Whether the answer was correct
+    answered_at = Column(DateTime, nullable=True)  # When the answer was submitted
     
     # Relationships
     user = relationship("User", back_populates="daily_questions")
@@ -383,3 +389,44 @@ class Badge(Base):
     
     # Relationships
     users = relationship("User", back_populates="badge_info")
+
+# =================================
+#  Trivia Draw Configuration
+# =================================
+class TriviaDrawConfig(Base):
+    __tablename__ = "trivia_draw_config"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    is_custom = Column(Boolean, default=False)  # Whether using custom winner count
+    custom_winner_count = Column(Integer, nullable=True)  # Custom number of winners
+    custom_data = Column(String, nullable=True)  # JSON string for additional configuration
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# =================================
+#  Trivia Draw Winners Table
+# =================================
+class TriviaDrawWinner(Base):
+    __tablename__ = "trivia_draw_winners"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    prize_amount = Column(Float, nullable=False)
+    position = Column(Integer, nullable=False)  # Winner position (1st, 2nd, etc.)
+    draw_date = Column(Date, nullable=False)  # Date of the draw
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    user = relationship("User", backref="trivia_draw_wins")
+
+# =================================
+#  Draw Configuration Table
+# =================================
+class DrawConfig(Base):
+    __tablename__ = "draw_config"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    is_custom = Column(Boolean, default=False)  # Whether using custom winner count
+    custom_winner_count = Column(Integer, nullable=True)  # Custom number of winners
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
