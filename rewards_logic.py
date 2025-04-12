@@ -8,20 +8,20 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, and_, or_
 import pytz
 
-from models import User, TriviaDrawWinner, DrawConfig, Entry, Badge, Avatar, Frame
+from models import User, TriviaDrawWinner, TriviaDrawConfig, Entry, Badge, Avatar, Frame
 from db import get_db
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_draw_config(db: Session) -> DrawConfig:
+def get_draw_config(db: Session) -> TriviaDrawConfig:
     """
     Get the current draw configuration. Create a default one if it doesn't exist.
     """
-    config = db.query(DrawConfig).first()
+    config = db.query(TriviaDrawConfig).first()
     if not config:
-        config = DrawConfig(is_custom=False, custom_winner_count=None)
+        config = TriviaDrawConfig(is_custom=False, custom_winner_count=None)
         db.add(config)
         db.commit()
         db.refresh(config)
