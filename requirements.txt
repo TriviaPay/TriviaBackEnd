@@ -7,16 +7,11 @@ passlib==1.7.4
 python-multipart==0.0.5
 python-dotenv==0.19.0
 alembic==1.7.1
-# Use a more compatible version of psycopg2-binary for Vercel
-psycopg2-binary==2.8.6; sys_platform != "darwin"
-# For local development on macOS
-psycopg2-binary==2.8.6; sys_platform == "darwin"
+# Pre-compiled binary, no build required
+psycopg2-binary==2.8.6
 requests==2.26.0
 pytz==2021.1
 apscheduler==3.9.1
 typing-extensions==4.0.1
-# Specify wheel for better compatibility
 wheel==0.37.1
-# Remove vercel from requirements (it's already in the Vercel environment)
 argon2-cffi==21.3.0
-pytest==6.2.5
