@@ -7,8 +7,8 @@ passlib==1.7.4
 python-multipart==0.0.5
 python-dotenv==0.19.0
 alembic==1.7.1
-# Pre-compiled binary, no build required
-psycopg2-binary==2.8.6
+# Use pg8000 instead of psycopg2 - pure Python PostgreSQL driver
+pg8000==1.19.5
 requests==2.26.0
 pytz==2021.1
 apscheduler==3.9.1

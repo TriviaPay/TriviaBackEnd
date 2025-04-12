@@ -1,9 +1,11 @@
 import os
+import re
 from sqlalchemy import create_engine, exc
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 from contextlib import contextmanager
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -13,6 +15,25 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is not set")
+
+# If using Heroku/Vercel, convert the postgres:// URL to postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Modify URL to use pg8000 instead of psycopg2
+if "postgresql" in DATABASE_URL and "driver=" not in DATABASE_URL:
+    # Extract all parts of the connection URL
+    pattern = r'postgresql://([^:]+):([^@]+)@([^:/]+):?(\d*)/?([^?]*)'
+    match = re.match(pattern, DATABASE_URL)
+    
+    if match:
+        username, password, host, port, dbname = match.groups()
+        if not port:
+            port = "5432"  # Default PostgreSQL port
+        
+        # Construct a new URL with the pg8000 driver
+        DATABASE_URL = f"postgresql+pg8000://{username}:{password}@{host}:{port}/{dbname}"
+        logging.info(f"Using pg8000 driver with URL: {DATABASE_URL.replace(password, '****')}")
 
 # Create SQLAlchemy engine with connection pooling
 engine = create_engine(
@@ -47,9 +68,9 @@ def verify_db_connection():
     Returns True if connection is successful, False otherwise.
     """
     try:
-        with get_db() as db:
-            db.execute("SELECT 1")
+        with engine.connect() as connection:
+            connection.execute("SELECT 1")
         return True
     except Exception as e:
-        print(f"Database connection error: {str(e)}")
+        logging.error(f"Database connection error: {str(e)}")
         return False
