@@ -194,6 +194,8 @@ async def get_daily_winners(
     If no date is provided, returns today's winners.
     """
     try:
+        logging.info(f"get_daily_winners called with date_str={date_str}")
+        
         if date_str:
             target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         else:
@@ -201,64 +203,72 @@ async def get_daily_winners(
             est = pytz.timezone('US/Eastern')
             target_date = (datetime.now(est) - timedelta(days=1)).date()
 
+        logging.info(f"Target date for winners: {target_date}")
+
         # Get winners for the specified date
-        winners = db.query(TriviaDrawWinner, User).join(
+        winners_query = db.query(TriviaDrawWinner, User).join(
             User, TriviaDrawWinner.account_id == User.account_id
         ).filter(
             TriviaDrawWinner.draw_date == target_date
         ).order_by(TriviaDrawWinner.position).all()
+        
+        logging.info(f"Found {len(winners_query)} winners for date {target_date}")
 
         result = []
         
-        for winner, user in winners:
-            # Calculate total amount won by user all-time
-            total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-                TriviaDrawWinner.account_id == user.account_id
-            ).scalar() or 0
-            
-            # Get badge information
-            badge_name = None
-            badge_image_url = None
-            if user.badge_info:
-                badge_name = user.badge_info.name
-                badge_image_url = user.badge_image_url
-            
-            # Get avatar URL
-            avatar_url = None
-            if user.selected_avatar_id:
-                avatar_query = text("""
-                    SELECT image_url FROM avatars 
-                    WHERE id = :avatar_id
-                """)
-                avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
-                if avatar_result:
-                    avatar_url = avatar_result[0]
-            
-            # Get frame URL
-            frame_url = None
-            if user.selected_frame_id:
-                frame_query = text("""
-                    SELECT image_url FROM frames 
-                    WHERE id = :frame_id
-                """)
-                frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
-                if frame_result:
-                    frame_url = frame_result[0]
-            
-            result.append(WinnerResponse(
-                username=user.username or f"User{user.account_id}",
-                amount_won=winner.prize_amount,
-                total_amount_won=total_won,
-                badge_name=badge_name,
-                badge_image_url=badge_image_url,
-                avatar_url=avatar_url,
-                frame_url=frame_url,
-                position=winner.position
-            ))
+        for winner, user in winners_query:
+            try:
+                # Calculate total amount won by user all-time
+                total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
+                    TriviaDrawWinner.account_id == user.account_id
+                ).scalar() or 0
+                
+                # Get badge information
+                badge_name = None
+                badge_image_url = None
+                if user.badge_info:
+                    badge_name = user.badge_info.name
+                    badge_image_url = user.badge_image_url
+                
+                # Get avatar URL
+                avatar_url = None
+                if user.selected_avatar_id:
+                    avatar_query = text("""
+                        SELECT image_url FROM avatars 
+                        WHERE id = :avatar_id
+                    """)
+                    avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
+                    if avatar_result:
+                        avatar_url = avatar_result[0]
+                
+                # Get frame URL
+                frame_url = None
+                if user.selected_frame_id:
+                    frame_query = text("""
+                        SELECT image_url FROM frames 
+                        WHERE id = :frame_id
+                    """)
+                    frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
+                    if frame_result:
+                        frame_url = frame_result[0]
+                
+                result.append(WinnerResponse(
+                    username=user.username or f"User{user.account_id}",
+                    amount_won=winner.prize_amount,
+                    total_amount_won=total_won,
+                    badge_name=badge_name,
+                    badge_image_url=badge_image_url,
+                    avatar_url=avatar_url,
+                    frame_url=frame_url,
+                    position=winner.position
+                ))
+            except Exception as user_error:
+                logging.error(f"Error processing winner {user.account_id}: {str(user_error)}")
         
         return result
         
     except Exception as e:
+        logging.error(f"Error in get_daily_winners: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving daily winners: {str(e)}"
