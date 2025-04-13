@@ -6,11 +6,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import pytz
 import logging
+import json
+from sqlalchemy import func # Import func for count
 
 from db import get_db
 from models import TriviaDrawConfig, TriviaDrawWinner
 from routers.dependencies import get_admin_user
 from rewards_logic import perform_draw
+
+# Configure logging at the top level if not already done
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -29,6 +35,7 @@ class DrawConfigResponse(BaseModel):
     draw_time_hour: int
     draw_time_minute: int
     draw_timezone: str
+    custom_data: Optional[Dict[str, Any]] = None
 
 class DrawResponse(BaseModel):
     status: str
@@ -38,44 +45,71 @@ class DrawResponse(BaseModel):
     prize_pool: float
     winners: List[Dict[str, Any]]
 
+# Default values - read from env vars at startup or use hardcoded defaults
+DEFAULT_DRAW_HOUR = int(os.environ.get("DRAW_TIME_HOUR", "20"))
+DEFAULT_DRAW_MINUTE = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
+DEFAULT_TIMEZONE = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
+
 @router.get("/draw-config", response_model=DrawConfigResponse)
 async def get_draw_config(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_admin_user)
 ):
     """
-    Admin endpoint to get the current draw configuration.
+    Admin endpoint to get the current draw configuration from the database.
     """
     try:
-        logging.info("Getting draw config from admin.py endpoint")
-        config = db.query(TriviaDrawConfig).first()
+        logger.info("--- Entering get_draw_config ---")
+        
+        # Check for multiple config rows (potential issue indicator)
+        config_count = db.query(func.count(TriviaDrawConfig.id)).scalar()
+        if config_count > 1:
+            logger.warning(f"Multiple ({config_count}) rows found in trivia_draw_config table. Only the latest (by ID) will be used.")
+            
+        config: Optional[TriviaDrawConfig] = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first() # Get the latest one
+
+        custom_data: Dict[str, Any] = {}
+        if config and config.custom_data:
+            try:
+                custom_data = json.loads(config.custom_data)
+                logger.info(f"Parsed custom_data from DB: {custom_data}")
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse custom_data from DB ID={config.id}: {config.custom_data}", exc_info=True)
+                # Proceed with defaults, but log error
+
         if not config:
-            config = TriviaDrawConfig(
-                is_custom=False,
-                custom_winner_count=None
-            )
-            db.add(config)
-            db.commit()
-            db.refresh(config)
-            logging.info("Created new default config")
-        
-        logging.info(f"Current config: is_custom={config.is_custom}, custom_winner_count={config.custom_winner_count}")
-        
-        # Get draw time from environment variables
-        draw_time_hour = int(os.environ.get("DRAW_TIME_HOUR", "20"))
-        draw_time_minute = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
-        draw_timezone = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
-        
+            logger.info("No existing config found. Returning defaults.")
+            # Simulate a default config for response, but don't save it here. Let PUT create it.
+            is_custom_resp = False
+            custom_winner_count_resp = None
+            draw_hour_resp = DEFAULT_DRAW_HOUR
+            draw_minute_resp = DEFAULT_DRAW_MINUTE
+            draw_timezone_resp = DEFAULT_TIMEZONE
+            custom_data_resp = {"draw_time_hour": draw_hour_resp, "draw_time_minute": draw_minute_resp, "draw_timezone": draw_timezone_resp}
+        else:
+            logger.info(f"Found existing config in DB: ID={config.id}, is_custom={config.is_custom}, count={config.custom_winner_count}")
+            is_custom_resp = config.is_custom
+            custom_winner_count_resp = config.custom_winner_count
+            # Get time/timezone from custom_data, falling back to defaults
+            draw_hour_resp = custom_data.get("draw_time_hour", DEFAULT_DRAW_HOUR)
+            draw_minute_resp = custom_data.get("draw_time_minute", DEFAULT_DRAW_MINUTE)
+            draw_timezone_resp = custom_data.get("draw_timezone", DEFAULT_TIMEZONE)
+            custom_data_resp = custom_data # Return the full parsed custom_data
+
+        # Log the final state being used for the response
+        logger.info(f"Final config values for GET response: is_custom={is_custom_resp}, count={custom_winner_count_resp}, hour={draw_hour_resp}, min={draw_minute_resp}, tz={draw_timezone_resp}")
+
         return DrawConfigResponse(
-            is_custom=config.is_custom,
-            custom_winner_count=config.custom_winner_count,
-            draw_time_hour=draw_time_hour,
-            draw_time_minute=draw_time_minute,
-            draw_timezone=draw_timezone
+            is_custom=is_custom_resp,
+            custom_winner_count=custom_winner_count_resp,
+            draw_time_hour=draw_hour_resp,
+            draw_time_minute=draw_minute_resp,
+            draw_timezone=draw_timezone_resp,
+            custom_data=custom_data_resp # Pass the potentially extended custom_data back
         )
-        
+
     except Exception as e:
-        logging.error(f"Error getting draw configuration: {str(e)}", exc_info=True)
+        logger.error(f"Error getting draw configuration: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting draw configuration: {str(e)}"
@@ -83,77 +117,177 @@ async def get_draw_config(
 
 @router.put("/draw-config", response_model=DrawConfigResponse)
 async def update_draw_config(
-    config: DrawConfigUpdateRequest,
+    req_config: DrawConfigUpdateRequest, # Renamed request model instance
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_admin_user)
 ):
     """
-    Admin endpoint to update the draw configuration.
+    Admin endpoint to update the draw configuration in the database.
     """
     try:
-        logging.info(f"Updating draw config: {config}")
-        # Validate timezone if provided
-        if config.draw_timezone:
+        logger.info(f"--- Entering update_draw_config with payload: {req_config.dict(exclude_unset=True)} ---") # Log only provided fields
+        
+        # Check for multiple config rows (potential issue indicator)
+        config_count = db.query(func.count(TriviaDrawConfig.id)).scalar()
+        if config_count > 1:
+            logger.warning(f"Multiple ({config_count}) rows found in trivia_draw_config table. Only the latest (by ID) will be updated.")
+
+        # Validate timezone if provided in request
+        if req_config.draw_timezone:
             try:
-                pytz.timezone(config.draw_timezone)
+                pytz.timezone(req_config.draw_timezone)
+                logger.info(f"Timezone '{req_config.draw_timezone}' is valid.")
             except pytz.exceptions.UnknownTimeZoneError:
+                logger.error(f"Invalid timezone provided: {req_config.draw_timezone}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid timezone: {config.draw_timezone}"
+                    detail=f"Invalid timezone: {req_config.draw_timezone}"
                 )
-        
-        # Get or create config in database
-        db_config = db.query(TriviaDrawConfig).first()
-        if not db_config:
+
+        # Get the latest config record to update, or create if none exists
+        db_config: Optional[TriviaDrawConfig] = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first() # Get the latest one
+
+        current_custom_data: Dict[str, Any] = {}
+        if db_config:
+             logger.info(f"Found existing config to update: ID={db_config.id}, is_custom={db_config.is_custom}, count={db_config.custom_winner_count}, custom_data='{db_config.custom_data}'")
+             # Load existing custom_data if available
+             if db_config.custom_data:
+                 try:
+                     current_custom_data = json.loads(db_config.custom_data)
+                 except json.JSONDecodeError:
+                     logger.error(f"Failed to parse existing custom_data ID={db_config.id}: {db_config.custom_data}. Starting fresh.", exc_info=True)
+                     current_custom_data = {}
+        else:
+            logger.info("No existing config found. Creating new one.")
             db_config = TriviaDrawConfig(
-                is_custom=False,
-                custom_winner_count=None
+                is_custom=False, # Start with default
+                custom_winner_count=None,
+                custom_data=None # Will be populated below
             )
             db.add(db_config)
-            logging.info("Created new config")
+            current_custom_data = {} # Start with empty custom data for new record
+
+        # --- Prepare updates ---
+        updated_fields = []
         
-        # Update database config
-        if config.is_custom is not None:
-            db_config.is_custom = config.is_custom
+        # Update is_custom
+        if req_config.is_custom is not None and db_config.is_custom != req_config.is_custom:
+            db_config.is_custom = req_config.is_custom
+            updated_fields.append(f"is_custom={db_config.is_custom}")
+
+        # Update custom_winner_count
+        if req_config.custom_winner_count is not None and db_config.custom_winner_count != req_config.custom_winner_count:
+            db_config.custom_winner_count = req_config.custom_winner_count
+            updated_fields.append(f"custom_winner_count={db_config.custom_winner_count}")
+
+        # --- Update custom_data field ---
+        new_custom_data = current_custom_data.copy() # Start with existing or empty
+
+        # Update draw time/timezone in custom_data if provided in request
+        if req_config.draw_time_hour is not None:
+            new_custom_data["draw_time_hour"] = req_config.draw_time_hour
+            updated_fields.append(f"custom_data.draw_time_hour={req_config.draw_time_hour}")
+        if req_config.draw_time_minute is not None:
+            new_custom_data["draw_time_minute"] = req_config.draw_time_minute
+            updated_fields.append(f"custom_data.draw_time_minute={req_config.draw_time_minute}")
+        if req_config.draw_timezone is not None:
+            new_custom_data["draw_timezone"] = req_config.draw_timezone
+            updated_fields.append(f"custom_data.draw_timezone='{req_config.draw_timezone}'")
+
+        # Ensure defaults are present in custom_data if not set by request or existing data
+        new_custom_data.setdefault("draw_time_hour", DEFAULT_DRAW_HOUR)
+        new_custom_data.setdefault("draw_time_minute", DEFAULT_DRAW_MINUTE)
+        new_custom_data.setdefault("draw_timezone", DEFAULT_TIMEZONE)
+
+        # Save the updated custom_data back to the model field as JSON string
+        updated_custom_data_json = json.dumps(new_custom_data)
+        if db_config.custom_data != updated_custom_data_json:
+             db_config.custom_data = updated_custom_data_json
+             # Log the change separately if custom_data content changed
+             if not any(f.startswith("custom_data.") for f in updated_fields):
+                 updated_fields.append(f"custom_data='{updated_custom_data_json}'")
+             else: # replace individual field logs with the full json
+                 updated_fields = [f for f in updated_fields if not f.startswith("custom_data.")]
+                 updated_fields.append(f"custom_data='{updated_custom_data_json}'")
+
+        # --- Commit Changes ---
+        if not updated_fields:
+             logger.info("No database fields needed updating based on the request payload.")
+        else:
+            logger.info(f"Attempting to commit updates: {', '.join(updated_fields)}")
+            try:
+                db.commit()
+                logger.info(f"Successfully committed updates for config ID={db_config.id}")
+            except Exception as commit_exc:
+                logger.error(f"Error committing config updates ID={db_config.id}: {commit_exc}", exc_info=True)
+                db.rollback()
+                raise HTTPException(status_code=500, detail="Failed to save config updates")
+
+        # Refresh to get the latest state including DB defaults/triggers if any
+        try:
+            db.refresh(db_config)
+            logger.info(f"Refreshed DB state after commit: ID={db_config.id}, is_custom={db_config.is_custom}, count={db_config.custom_winner_count}, custom_data='{db_config.custom_data}'")
+        except Exception as refresh_exc:
+             logger.error(f"Error refreshing config object after commit ID={db_config.id}: {refresh_exc}", exc_info=True)
+             # If refresh fails, we might have stale data, but proceed cautiously.
+
+        # --- Construct Response from the refreshed DB State ---
+        final_custom_data: Dict[str, Any] = {}
+        refreshed_is_custom = db_config.is_custom
+        refreshed_winner_count = db_config.custom_winner_count
         
-        if config.custom_winner_count is not None:
-            db_config.custom_winner_count = config.custom_winner_count
-        
-        # Update environment variables for draw time
-        if config.draw_time_hour is not None:
-            os.environ["DRAW_TIME_HOUR"] = str(config.draw_time_hour)
-        
-        if config.draw_time_minute is not None:
-            os.environ["DRAW_TIME_MINUTE"] = str(config.draw_time_minute)
-        
-        if config.draw_timezone:
-            os.environ["DRAW_TIMEZONE"] = config.draw_timezone
-        
-        db.commit()
-        db.refresh(db_config)
-        logging.info(f"Updated config: is_custom={db_config.is_custom}, custom_winner_count={db_config.custom_winner_count}")
-        
-        # Get current values for response
-        draw_time_hour = int(os.environ.get("DRAW_TIME_HOUR", "20"))
-        draw_time_minute = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
-        draw_timezone = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
-        
+        if db_config.custom_data:
+             try:
+                 final_custom_data = json.loads(db_config.custom_data)
+             except json.JSONDecodeError:
+                 logger.error(f"Failed to parse refreshed custom_data for response ID={db_config.id}: {db_config.custom_data}", exc_info=True)
+                 # Use defaults if parsing fails
+                 final_custom_data = {
+                     "draw_time_hour": DEFAULT_DRAW_HOUR,
+                     "draw_time_minute": DEFAULT_DRAW_MINUTE,
+                     "draw_timezone": DEFAULT_TIMEZONE
+                 }
+        else: # Handle case where custom_data might be None after refresh
+             logger.warning(f"Refreshed custom_data is None for ID={db_config.id}. Using defaults for response time/tz.")
+             final_custom_data = {
+                 "draw_time_hour": DEFAULT_DRAW_HOUR,
+                 "draw_time_minute": DEFAULT_DRAW_MINUTE,
+                 "draw_timezone": DEFAULT_TIMEZONE
+             }
+
+
+        # Use values directly from refreshed db_config and parsed final_custom_data for response
+        resp_hour = final_custom_data.get("draw_time_hour", DEFAULT_DRAW_HOUR)
+        resp_minute = final_custom_data.get("draw_time_minute", DEFAULT_DRAW_MINUTE)
+        resp_timezone = final_custom_data.get("draw_timezone", DEFAULT_TIMEZONE)
+
+        logger.info(f"Final PUT response values: is_custom={refreshed_is_custom}, count={refreshed_winner_count}, hour={resp_hour}, min={resp_minute}, tz={resp_timezone}")
+
         return DrawConfigResponse(
-            is_custom=db_config.is_custom,
-            custom_winner_count=db_config.custom_winner_count,
-            draw_time_hour=draw_time_hour,
-            draw_time_minute=draw_time_minute,
-            draw_timezone=draw_timezone
+            is_custom=refreshed_is_custom,
+            custom_winner_count=refreshed_winner_count,
+            draw_time_hour=resp_hour,
+            draw_time_minute=resp_minute,
+            draw_timezone=resp_timezone,
+            custom_data=final_custom_data # Return full custom data dictionary
         )
-        
-    except HTTPException:
-        raise
+
+    except HTTPException as http_exc:
+        # Log HTTPExceptions before raising them
+        logger.error(f"HTTPException in update_draw_config: Status={http_exc.status_code}, Detail={http_exc.detail}")
+        raise http_exc # Re-raise the original HTTPException
     except Exception as e:
-        db.rollback()
-        logging.error(f"Error updating draw configuration: {str(e)}", exc_info=True)
+        # Rollback in case of unexpected errors before commit happened
+        try:
+            db.rollback()
+            logger.info("Rolled back transaction due to unexpected error.")
+        except Exception as rb_exc:
+             logger.error(f"Error during rollback: {rb_exc}", exc_info=True)
+             
+        logger.error(f"Unexpected error updating draw configuration: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating draw configuration: {str(e)}"
+            detail=f"Unexpected error updating draw configuration: {str(e)}"
         )
 
 @router.post("/trigger-draw", response_model=DrawResponse)
