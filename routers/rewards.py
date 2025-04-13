@@ -25,10 +25,10 @@ class WinnerResponse(BaseModel):
     username: str
     amount_won: float
     total_amount_won: float = 0
-    badge_name: str = None
-    badge_image_url: str = None
-    avatar_url: str = None
-    frame_url: str = None
+    badge_name: Optional[str] = None
+    badge_image_url: Optional[str] = None
+    avatar_url: Optional[str] = None
+    frame_url: Optional[str] = None
     position: int
 
 class DrawConfigResponse(BaseModel):
@@ -37,6 +37,7 @@ class DrawConfigResponse(BaseModel):
     draw_time_hour: int = 20
     draw_time_minute: int = 0
     draw_timezone: str = "US/Eastern"
+    custom_data: Optional[Dict[str, Any]] = None
 
 class DrawResponse(BaseModel):
     total_participants: int
@@ -631,71 +632,6 @@ async def trigger_draw(
             detail=f"Error triggering draw: {str(e)}"
         )
 
-@router.put("/admin/custom-winner-count", response_model=DrawConfigResponse)
-async def set_custom_winner_count(
-    winner_count: int = Body(..., embed=True),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_admin_user)
-):
-    """
-    Admin endpoint to set a custom number of winners.
-    This is an alternative to /admin/draw-config which only updates the winner count.
-    """
-    try:
-        logging.info(f"Setting custom winner count to {winner_count}")
-        
-        if winner_count <= 0:
-            logging.warning(f"Invalid winner count: {winner_count}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Winner count must be a positive number"
-            )
-        
-        # Get or create config - ONLY use TriviaDrawConfig, not DrawConfig
-        config = db.query(TriviaDrawConfig).first()
-        logging.info(f"Current config: {config}")
-        
-        if not config:
-            config = TriviaDrawConfig(
-                is_custom=True,
-                custom_winner_count=winner_count
-            )
-            db.add(config)
-            logging.info(f"Created new config with custom_winner_count={winner_count}")
-        else:
-            config.is_custom = True
-            config.custom_winner_count = winner_count
-            logging.info(f"Updated existing config with custom_winner_count={winner_count}")
-        
-        db.commit()
-        
-        # Verify the config was saved correctly
-        updated_config = db.query(TriviaDrawConfig).first()
-        logging.info(f"Config after update: is_custom={updated_config.is_custom}, custom_winner_count={updated_config.custom_winner_count}")
-        
-        # Get draw time from environment for the response
-        draw_time_hour = int(os.environ.get("DRAW_TIME_HOUR", "20"))
-        draw_time_minute = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
-        draw_timezone = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
-        
-        return DrawConfigResponse(
-            is_custom=config.is_custom,
-            custom_winner_count=config.custom_winner_count,
-            draw_time_hour=draw_time_hour,
-            draw_time_minute=draw_time_minute,
-            draw_timezone=draw_timezone
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logging.error(f"Error setting custom winner count: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error setting custom winner count: {str(e)}"
-        )
-
 @router.put("/admin/reset-winner-logic", response_model=DrawConfigResponse)
 async def reset_winner_logic(
     db: Session = Depends(get_db),
@@ -703,150 +639,88 @@ async def reset_winner_logic(
 ):
     """
     Admin endpoint to reset to the default winner logic.
+    Updates the latest config record ensuring consistency with GET /admin/draw-config.
     """
+    # Ensure logger is accessible within the function scope
+    logger = logging.getLogger(__name__)
     try:
-        # Get or create config
-        config = db.query(TriviaDrawConfig).first()
+        logger.info("--- Entering reset_winner_logic ---")
+        # Fetch the LATEST config record
+        config = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first()
+
+        # Define default values within the function scope to ensure availability
+        DEFAULT_DRAW_HOUR = int(os.environ.get("DRAW_TIME_HOUR", "20"))
+        DEFAULT_DRAW_MINUTE = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
+        DEFAULT_TIMEZONE = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
+
         if not config:
+            # If no config exists, create one with defaults
+            logger.info("No config found, creating new default config.")
             config = TriviaDrawConfig(
                 is_custom=False,
-                custom_winner_count=None
+                custom_winner_count=None,
+                custom_data=json.dumps({ # Initialize custom_data with defaults
+                    "draw_time_hour": DEFAULT_DRAW_HOUR,
+                    "draw_time_minute": DEFAULT_DRAW_MINUTE,
+                    "draw_timezone": DEFAULT_TIMEZONE
+                })
             )
             db.add(config)
         else:
+            # If config exists, update it
+            logger.info(f"Found config ID={config.id}. Resetting is_custom and custom_winner_count.")
             config.is_custom = False
             config.custom_winner_count = None
-        
-        db.commit()
-        
-        # Get draw time from environment for the response
-        draw_time_hour = int(os.environ.get("DRAW_TIME_HOUR", "20"))
-        draw_time_minute = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
-        draw_timezone = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
+            # Note: We don't reset the draw time/timezone in custom_data here,
+            # as resetting only affects the winner count logic.
 
+        db.commit()
+        db.refresh(config) # Refresh to get the committed state
+        logger.info(f"Committed reset. DB state: ID={config.id}, is_custom={config.is_custom}, count={config.custom_winner_count}, custom_data='{config.custom_data}'")
+
+        # --- Read response values from the refreshed DB state --- 
+        final_custom_data = {}
+        if config.custom_data:
+            try:
+                final_custom_data = json.loads(config.custom_data)
+            except json.JSONDecodeError:
+                 logger.error(f"Failed to parse custom_data after reset ID={config.id}: {config.custom_data}. Using defaults for response.", exc_info=True)
+                 final_custom_data = {
+                     "draw_time_hour": DEFAULT_DRAW_HOUR,
+                     "draw_time_minute": DEFAULT_DRAW_MINUTE,
+                     "draw_timezone": DEFAULT_TIMEZONE
+                 }
+        else: # Handle case where custom_data might be None
+             logger.warning(f"custom_data is None after reset for ID={config.id}. Using defaults for response time/tz.")
+             final_custom_data = {
+                 "draw_time_hour": DEFAULT_DRAW_HOUR,
+                 "draw_time_minute": DEFAULT_DRAW_MINUTE,
+                 "draw_timezone": DEFAULT_TIMEZONE
+             }
+
+        # Get time/timezone from the parsed custom_data, falling back to defaults
+        resp_hour = final_custom_data.get("draw_time_hour", DEFAULT_DRAW_HOUR)
+        resp_minute = final_custom_data.get("draw_time_minute", DEFAULT_DRAW_MINUTE)
+        resp_timezone = final_custom_data.get("draw_timezone", DEFAULT_TIMEZONE)
+
+        logger.info(f"Final reset_winner_logic response values: is_custom={config.is_custom}, count={config.custom_winner_count}, hour={resp_hour}, min={resp_minute}, tz={resp_timezone}")
+
+        # Construct the response using DB values and include custom_data
         return DrawConfigResponse(
             is_custom=config.is_custom,
             custom_winner_count=config.custom_winner_count,
-            draw_time_hour=draw_time_hour,
-            draw_time_minute=draw_time_minute,
-            draw_timezone=draw_timezone
+            draw_time_hour=resp_hour,
+            draw_time_minute=resp_minute,
+            draw_timezone=resp_timezone,
+            custom_data=final_custom_data # Include the parsed custom_data
         )
-        
+
     except Exception as e:
+        # Ensure logger is accessible in except block too
+        logger = logging.getLogger(__name__)
         db.rollback()
+        logger.error(f"Error resetting winner logic: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error resetting winner logic: {str(e)}"
-        )
-
-@router.get("/admin/config", response_model=DrawConfigResponse)
-async def get_draw_config(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_admin_user)
-):
-    """
-    Admin endpoint to get the current draw configuration.
-    Kept for backwards compatibility - prefer using /admin/draw-config instead.
-    """
-    try:
-        # ONLY use TriviaDrawConfig, not DrawConfig
-        config = db.query(TriviaDrawConfig).first()
-        logging.info(f"Getting draw config: {config}")
-        
-        if not config:
-            config = TriviaDrawConfig(
-                is_custom=False,
-                custom_winner_count=None
-            )
-            db.add(config)
-            db.commit()
-            logging.info(f"Created new default config")
-        
-        logging.info(f"Current config: is_custom={config.is_custom}, custom_winner_count={config.custom_winner_count}")
-        
-        # Get draw time from environment for the response
-        draw_time_hour = int(os.environ.get("DRAW_TIME_HOUR", "20"))
-        draw_time_minute = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
-        draw_timezone = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
-        
-        return DrawConfigResponse(
-            is_custom=config.is_custom,
-            custom_winner_count=config.custom_winner_count,
-            draw_time_hour=draw_time_hour,
-            draw_time_minute=draw_time_minute,
-            draw_timezone=draw_timezone
-        )
-        
-    except Exception as e:
-        logging.error(f"Error getting draw configuration: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error getting draw configuration: {str(e)}"
-        )
-
-@router.put("/admin/draw-config")
-async def update_draw_config(
-    config: DrawConfigUpdateRequest,
-    claims: dict = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Update the draw configuration (admin only).
-    """
-    # Validate timezone if provided
-    if config.draw_timezone:
-        try:
-            pytz.timezone(config.draw_timezone)
-        except pytz.exceptions.UnknownTimeZoneError:
-            raise HTTPException(status_code=400, detail=f"Invalid timezone: {config.draw_timezone}")
-    
-    # Update environment variables
-    updated_config = {}
-    
-    if config.draw_time_hour is not None:
-        os.environ["DRAW_TIME_HOUR"] = str(config.draw_time_hour)
-        updated_config["draw_time_hour"] = config.draw_time_hour
-        
-    if config.draw_time_minute is not None:
-        os.environ["DRAW_TIME_MINUTE"] = str(config.draw_time_minute)
-        updated_config["draw_time_minute"] = config.draw_time_minute
-        
-    if config.draw_timezone:
-        os.environ["DRAW_TIMEZONE"] = config.draw_timezone
-        updated_config["draw_timezone"] = config.draw_timezone
-    
-    # Also store the config in the database for persistence
-    draw_config = db.query(TriviaDrawConfig).first()
-    if not draw_config:
-        draw_config = TriviaDrawConfig(
-            is_custom=True,
-            custom_winner_count=None
-        )
-        db.add(draw_config)
-    
-    # Store the draw time in the custom_data field
-    custom_data = {
-        "draw_time_hour": int(os.environ.get("DRAW_TIME_HOUR", "20")),
-        "draw_time_minute": int(os.environ.get("DRAW_TIME_MINUTE", "0")),
-        "draw_timezone": os.environ.get("DRAW_TIMEZONE", "US/Eastern")
-    }
-    
-    if hasattr(draw_config, 'custom_data'):
-        # If the field exists, update it
-        draw_config.custom_data = json.dumps(custom_data)
-    else:
-        # If the field doesn't exist yet, we'll need to add it via Alembic migration
-        # For now, just log the issue
-        logging.warning("custom_data field not available in TriviaDrawConfig model. Cannot store draw time in database.")
-    
-    db.commit()
-    
-    # Get current config for response
-    current_config = {
-        "draw_time_hour": int(os.environ.get("DRAW_TIME_HOUR", "20")),
-        "draw_time_minute": int(os.environ.get("DRAW_TIME_MINUTE", "0")),
-        "draw_timezone": os.environ.get("DRAW_TIMEZONE", "US/Eastern"),
-        "updated_fields": list(updated_config.keys())
-    }
-    
-    return current_config 
+        ) 

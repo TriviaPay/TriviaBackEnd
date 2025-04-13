@@ -151,7 +151,9 @@ def test_get_weekly_winners():
         winners = response.json()
         print(f"Weekly winners (count: {len(winners)}):")
         for winner in winners:
-            print(f"  {winner['username']} - Weekly: ${winner['weekly_amount']}, All-time: ${winner['total_amount_won']}")
+            # Use amount_won instead of weekly_amount, but try weekly_amount as fallback
+            weekly_amount = winner.get('amount_won', winner.get('weekly_amount', 0))
+            print(f"  {winner['username']} - Weekly: ${weekly_amount}, All-time: ${winner['total_amount_won']}")
     else:
         print(f"Failed to get weekly winners: {response.status_code} - {response.text}")
 
