@@ -30,6 +30,7 @@ class WinnerResponse(BaseModel):
     avatar_url: Optional[str] = None
     frame_url: Optional[str] = None
     position: int
+    draw_date: Optional[str] = None  # Date on which the user won
 
 class DrawConfigResponse(BaseModel):
     is_custom: bool
@@ -261,7 +262,8 @@ async def get_daily_winners(
                     badge_image_url=badge_image_url,
                     avatar_url=avatar_url,
                     frame_url=frame_url,
-                    position=winner.position
+                    position=winner.position,
+                    draw_date=winner.draw_date.isoformat() if winner.draw_date else None
                 ))
             except Exception as user_error:
                 logging.error(f"Error processing winner {user.account_id}: {str(user_error)}")
