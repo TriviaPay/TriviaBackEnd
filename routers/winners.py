@@ -54,12 +54,14 @@ async def get_daily_winner_list(
         - Position in the draw
         - Amount won in the draw
         - Total amount won all-time
+        - Date on which they won (draw_date)
     """
     try:
         # Try to get actual winners
         winners = get_daily_winners(db, specific_date)
         if not winners:
             # If no winners found, return test data
+            target_date = specific_date or date.today()
             return [
                 {
                     "username": "test_user",
@@ -70,7 +72,7 @@ async def get_daily_winner_list(
                     "avatar_url": "https://example.com/avatar.png",
                     "frame_url": "https://example.com/frame.png",
                     "position": 1,
-                    "draw_date": date.today().isoformat()
+                    "draw_date": target_date.isoformat()
                 }
             ]
         return winners

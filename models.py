@@ -1,5 +1,6 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date
+    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date,
+    PrimaryKeyConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from db import Base
@@ -66,12 +67,24 @@ class User(Base):
     selected_avatar_id = Column(String, nullable=True)  # Currently selected avatar ID
     selected_frame_id = Column(String, nullable=True)  # Currently selected frame ID
 
+    # --- Gameplay Boosts --- #
+    streak_saver_count = Column(Integer, default=0, nullable=False)
+    question_reroll_count = Column(Integer, default=0, nullable=False)
+    extra_chance_count = Column(Integer, default=0, nullable=False)
+    hint_count = Column(Integer, default=0, nullable=False)
+    fifty_fifty_count = Column(Integer, default=0, nullable=False)
+    auto_answer_count = Column(Integer, default=0, nullable=False)
+    # Daily usage flags (need to be reset daily)
+    hint_used_today = Column(Boolean, default=False, nullable=False)
+    fifty_fifty_used_today = Column(Boolean, default=False, nullable=False)
+    auto_answer_used_today = Column(Boolean, default=False, nullable=False)
+
     # Relationships
     winners = relationship("Winner", back_populates="user")
     entries = relationship("Entry", back_populates="user")
     payments = relationship("Payment", back_populates="user")
-    daily_questions = relationship("DailyQuestion", back_populates="user")
-    badge_info = relationship("Badge", back_populates="users")
+    question_answers = relationship("UserQuestionAnswer", back_populates="user")
+    badge_info = relationship("Badge", foreign_keys=[badge_id], back_populates="users")
     # You could add a relationship for Comments, Chats, or Withdrawals if needed
     # (depending on whether they link to a user table).
 
@@ -85,12 +98,14 @@ def generate_account_id():
 class Entry(Base):
     __tablename__ = "entries"
 
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
-    number_of_entries = Column(Integer, nullable=False)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=False)
+    date = Column(Date, default=datetime.utcnow().date(), nullable=False, primary_key=False)
     ques_attempted = Column(Integer, nullable=False)
     correct_answers = Column(Integer, nullable=False)
     wrong_answers = Column(Integer, nullable=False)
-    date = Column(Date, default=datetime.utcnow().date(), nullable=False)
+    
+    # Define composite primary key
+    __table_args__ = (PrimaryKeyConstraint('account_id', 'date'), {})
 
     # Relationship
     user = relationship("User", back_populates="entries")
@@ -155,6 +170,7 @@ class Payment(Base):
 
     # Relationship
     user = relationship("User", back_populates="payments")
+
 
 
 # =================================
@@ -288,22 +304,19 @@ class DailyQuestion(Base):
     __tablename__ = "daily_questions"
 
     id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
-    date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    date = Column(Date, default=datetime.utcnow().date, nullable=False)
     is_common = Column(Boolean, default=False)  # True for first question
     question_order = Column(Integer, nullable=False)  # 1-4 for ordering
     is_used = Column(Boolean, default=False)  # Track if question was attempted
     was_changed = Column(Boolean, default=False)  # Track if question was changed via lifeline
-    
-    # New fields to track answers and correctness
-    answer = Column(String, nullable=True)  # User's answer
-    is_correct = Column(Boolean, nullable=True)  # Whether the answer was correct
-    answered_at = Column(DateTime, nullable=True)  # When the answer was submitted
+    correct_answer = Column(String, nullable=True)  # Store the correct answer for convenience
     
     # Relationships
-    user = relationship("User", back_populates="daily_questions")
     question = relationship("Trivia", backref="daily_allocations")
+    
+    # Define unique constraint
+    __table_args__ = (UniqueConstraint('date', 'question_number', name='unique_date_question'),)
 
 # =================================
 #  Cosmetics - Avatars Table
@@ -430,3 +443,29 @@ class DrawConfig(Base):
     custom_winner_count = Column(Integer, nullable=True)  # Custom number of winners
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# =================================
+#  User Question Answer Table
+# =================================
+class UserQuestionAnswer(Base):
+    """Tracks when users answer specific questions - only created on answer submission"""
+    __tablename__ = "user_question_answers"
+    
+    # Composite primary key
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
+    date = Column(Date, default=datetime.utcnow().date(), nullable=False)
+    
+    # Answer data
+    answer = Column(String, nullable=True)
+    is_correct = Column(Boolean, nullable=True)
+    answered_at = Column(DateTime, nullable=True)
+    is_common = Column(Boolean, default=False, nullable=False)  # Was this the common question?
+    
+    # Relationships
+    user = relationship("User", back_populates="question_answers")
+    trivia = relationship("Trivia", foreign_keys=[question_number])
+    
+    # Define unique constraint
+    __table_args__ = (UniqueConstraint('account_id', 'question_number', 'date', name='unique_user_question_date'),)
