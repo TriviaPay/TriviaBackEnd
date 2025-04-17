@@ -10,8 +10,9 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 from db import get_db
-from models import User, TriviaDrawWinner, TriviaDrawConfig, DailyQuestion, Trivia, Badge, Avatar, Frame, Entry
+from models import User, TriviaDrawWinner, TriviaDrawConfig, DailyQuestion, Trivia, Badge, Avatar, Frame, Entry, UserFrame, UserAvatar
 from routers.dependencies import get_current_user, get_admin_user
+from routers.winners import WinnerResponse
 from sqlalchemy.sql import extract
 import os
 import json
@@ -20,17 +21,6 @@ import logging
 router = APIRouter(tags=["Rewards"])
 
 # ======== Models ========
-
-class WinnerResponse(BaseModel):
-    username: str
-    amount_won: float
-    total_amount_won: float = 0
-    badge_name: Optional[str] = None
-    badge_image_url: Optional[str] = None
-    avatar_url: Optional[str] = None
-    frame_url: Optional[str] = None
-    position: int
-    draw_date: Optional[str] = None  # Date on which the user won
 
 class DrawConfigResponse(BaseModel):
     is_custom: bool
@@ -122,353 +112,39 @@ def calculate_prize_pool(db: Session, draw_date: date) -> float:
     
     return round(daily_prize_pool, 2)
 
-def get_eligible_users(db: Session, draw_date: date) -> List[User]:
-    """Get list of eligible users for the draw."""
-    # Log the requested draw date for debugging
-    logging.info(f"Getting eligible users for draw date: {draw_date}")
+def get_eligible_users(db, date_for_entries):
+    """
+    Get users who completed at least one question for the given date.
+    """
+    logging.info(f"Finding eligible users for draw on {date_for_entries}")
     
-    # Get all users for testing
-    all_users = db.query(User).all()
-    logging.info(f"Total users found: {len(all_users)}")
+    # Get all users with entries for the given date
+    users_with_entries = (
+        db.query(User)
+        .join(Entry, User.account_id == Entry.account_id)
+        .filter(Entry.date == date_for_entries)
+        .filter(Entry.correct_answers > 0)  # Must have at least 1 correct answer
+        .all()
+    )
     
-    # Get subscribed users
-    subscribed_users = db.query(User).filter(User.subscription_flag == True).all()
-    logging.info(f"Users with subscription: {len(subscribed_users)}")
+    logging.info(f"Found {len(users_with_entries)} users with at least 1 correct answer")
     
-    eligible_user_ids = []
+    # Filter for active users (exclude banned, etc.)
+    active_users = [user for user in users_with_entries if is_user_active(user)]
     
-    # METHOD 1: Check which users answered correctly in the DailyQuestion table
-    for user in all_users:  # Test with all users first
-        # Log which user we're checking
-        logging.info(f"Checking eligibility for user {user.account_id} ({user.username or 'unknown'})")
-        
-        # Get the start and end of the draw date for comparison
-        start_date = datetime.combine(draw_date, datetime.min.time())
-        end_date = datetime.combine(draw_date, datetime.max.time())
-        
-        # Get daily questions for this user that were answered correctly on the draw date
-        correct_answers = db.query(DailyQuestion).filter(
-            DailyQuestion.account_id == user.account_id,
-            DailyQuestion.date.between(start_date, end_date),
-            DailyQuestion.is_used == True,
-            DailyQuestion.is_correct == True
-        ).count()
-        
-        logging.info(f"Method 1: User {user.account_id} has {correct_answers} correct answers in DailyQuestion on {draw_date}")
-        
-        # METHOD 2: Check the Entry table as an alternative
-        entry = db.query(Entry).filter(
-            Entry.account_id == user.account_id,
-            Entry.date == draw_date,
-            Entry.correct_answers > 0
-        ).first()
-        
-        entry_correct = entry is not None and entry.correct_answers > 0
-        logging.info(f"Method 2: User {user.account_id} has Entry with correct_answers > 0: {entry_correct}")
-        
-        # User is eligible if either method shows they answered correctly
-        if correct_answers > 0 or entry_correct:
-            eligible_user_ids.append(user.account_id)
-            logging.info(f"User {user.account_id} is eligible for the draw")
+    logging.info(f"Found {len(active_users)} active eligible users")
     
-    # Return list of eligible users
-    eligible_users = db.query(User).filter(User.account_id.in_(eligible_user_ids)).all()
-    logging.info(f"Found {len(eligible_users)} eligible users for the draw")
-    
-    # FOR TESTING: If no eligible users found, just return a few random users
-    if not eligible_users and all_users:
-        test_users = all_users[:min(3, len(all_users))]
-        logging.warning(f"No eligible users found. Returning {len(test_users)} test users for debugging.")
-        return test_users
-    
-    return eligible_users
+    return active_users
+
+def is_user_active(user):
+    """
+    Check if a user is active (not banned, etc.)
+    """
+    # Add any additional checks here as needed
+    # For now, all users are considered active
+    return True
 
 # ======== API Endpoints ========
-
-@router.get("/daily-winners", response_model=List[WinnerResponse])
-async def get_daily_winners(
-    date_str: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get the list of daily winners for a specific date.
-    If no date is provided, returns today's winners.
-    """
-    try:
-        logging.info(f"get_daily_winners called with date_str={date_str}")
-        
-        if date_str:
-            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        else:
-            # Default to yesterday if no date specified
-            est = pytz.timezone('US/Eastern')
-            target_date = (datetime.now(est) - timedelta(days=1)).date()
-
-        logging.info(f"Target date for winners: {target_date}")
-
-        # Get winners for the specified date
-        winners_query = db.query(TriviaDrawWinner, User).join(
-            User, TriviaDrawWinner.account_id == User.account_id
-        ).filter(
-            TriviaDrawWinner.draw_date == target_date
-        ).order_by(TriviaDrawWinner.position).all()
-        
-        logging.info(f"Found {len(winners_query)} winners for date {target_date}")
-
-        result = []
-        
-        for winner, user in winners_query:
-            try:
-                # Calculate total amount won by user all-time
-                total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-                    TriviaDrawWinner.account_id == user.account_id
-                ).scalar() or 0
-                
-                # Get badge information
-                badge_name = None
-                badge_image_url = None
-                if user.badge_info:
-                    badge_name = user.badge_info.name
-                    badge_image_url = user.badge_image_url
-                
-                # Get avatar URL
-                avatar_url = None
-                if user.selected_avatar_id:
-                    avatar_query = text("""
-                        SELECT image_url FROM avatars 
-                        WHERE id = :avatar_id
-                    """)
-                    avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
-                    if avatar_result:
-                        avatar_url = avatar_result[0]
-                
-                # Get frame URL
-                frame_url = None
-                if user.selected_frame_id:
-                    frame_query = text("""
-                        SELECT image_url FROM frames 
-                        WHERE id = :frame_id
-                    """)
-                    frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
-                    if frame_result:
-                        frame_url = frame_result[0]
-                
-                result.append(WinnerResponse(
-                    username=user.username or f"User{user.account_id}",
-                    amount_won=winner.prize_amount,
-                    total_amount_won=total_won,
-                    badge_name=badge_name,
-                    badge_image_url=badge_image_url,
-                    avatar_url=avatar_url,
-                    frame_url=frame_url,
-                    position=winner.position,
-                    draw_date=winner.draw_date.isoformat() if winner.draw_date else None
-                ))
-            except Exception as user_error:
-                logging.error(f"Error processing winner {user.account_id}: {str(user_error)}")
-        
-        return result
-        
-    except Exception as e:
-        logging.error(f"Error in get_daily_winners: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving daily winners: {str(e)}"
-        )
-
-@router.get("/weekly-winners", response_model=List[WinnerResponse])
-async def get_weekly_winners(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get the list of top winners for the current week (Monday to Sunday).
-    Returns users who won the most in the current week.
-    """
-    try:
-        # Get current date in EST
-        est = pytz.timezone('US/Eastern')
-        today = datetime.now(est).date()
-        
-        # Calculate start of the week (Monday)
-        start_of_week = today - timedelta(days=today.weekday())
-        
-        # Calculate end of the week (Sunday)
-        end_of_week = start_of_week + timedelta(days=6)
-        
-        # Get weekly winners (aggregated by account_id)
-        winners_query = text("""
-            SELECT 
-                dw.account_id, 
-                SUM(dw.prize_amount) as weekly_amount,
-                MIN(dw.position) as best_position
-            FROM trivia_draw_winners dw
-            WHERE dw.draw_date BETWEEN :start_date AND :end_date
-            GROUP BY dw.account_id
-            ORDER BY weekly_amount DESC
-            LIMIT 50
-        """)
-        
-        winners_result = db.execute(winners_query, {
-            "start_date": start_of_week,
-            "end_date": end_of_week
-        }).fetchall()
-        
-        # Format the response
-        result = []
-        position = 1
-        
-        for winner_data in winners_result:
-            account_id, weekly_amount, best_position = winner_data
-            
-            # Get user details
-            user = db.query(User).filter(User.account_id == account_id).first()
-            if not user:
-                continue
-            
-            # Calculate total amount won by user all-time
-            total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-                TriviaDrawWinner.account_id == user.account_id
-            ).scalar() or 0
-            
-            # Get badge information
-            badge_name = None
-            badge_image_url = None
-            if user.badge_info:
-                badge_name = user.badge_info.name
-                badge_image_url = user.badge_image_url
-            
-            # Get avatar URL
-            avatar_url = None
-            if user.selected_avatar_id:
-                avatar_query = text("""
-                    SELECT image_url FROM avatars 
-                    WHERE id = :avatar_id
-                """)
-                avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
-                if avatar_result:
-                    avatar_url = avatar_result[0]
-            
-            # Get frame URL
-            frame_url = None
-            if user.selected_frame_id:
-                frame_query = text("""
-                    SELECT image_url FROM frames 
-                    WHERE id = :frame_id
-                """)
-                frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
-                if frame_result:
-                    frame_url = frame_result[0]
-            
-            result.append(WinnerResponse(
-                username=user.username or f"User{user.account_id}",
-                amount_won=weekly_amount,
-                total_amount_won=total_won,
-                badge_name=badge_name,
-                badge_image_url=badge_image_url,
-                avatar_url=avatar_url,
-                frame_url=frame_url,
-                position=position
-            ))
-            
-            position += 1
-        
-        return result
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving weekly winners: {str(e)}"
-        )
-
-@router.get("/all-time-winners", response_model=List[WinnerResponse])
-async def get_all_time_winners(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get the list of all-time top winners.
-    Returns users who won the most all-time.
-    """
-    try:
-        # Get all-time winners (aggregated by account_id)
-        winners_query = text("""
-            SELECT 
-                dw.account_id, 
-                SUM(dw.prize_amount) as total_amount,
-                MIN(dw.position) as best_position
-            FROM trivia_draw_winners dw
-            GROUP BY dw.account_id
-            ORDER BY total_amount DESC
-            LIMIT 50
-        """)
-        
-        winners_result = db.execute(winners_query).fetchall()
-        
-        # Format the response
-        result = []
-        position = 1
-        
-        for winner_data in winners_result:
-            account_id, total_amount, best_position = winner_data
-            
-            # Get user details
-            user = db.query(User).filter(User.account_id == account_id).first()
-            if not user:
-                continue
-            
-            # Get badge information
-            badge_name = None
-            badge_image_url = None
-            if user.badge_info:
-                badge_name = user.badge_info.name
-                badge_image_url = user.badge_image_url
-            
-            # Get avatar URL
-            avatar_url = None
-            if user.selected_avatar_id:
-                avatar_query = text("""
-                    SELECT image_url FROM avatars 
-                    WHERE id = :avatar_id
-                """)
-                avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
-                if avatar_result:
-                    avatar_url = avatar_result[0]
-            
-            # Get frame URL
-            frame_url = None
-            if user.selected_frame_id:
-                frame_query = text("""
-                    SELECT image_url FROM frames 
-                    WHERE id = :frame_id
-                """)
-                frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
-                if frame_result:
-                    frame_url = frame_result[0]
-            
-            result.append(WinnerResponse(
-                username=user.username or f"User{user.account_id}",
-                amount_won=total_amount,
-                total_amount_won=total_amount,  # Same value for all-time
-                badge_name=badge_name,
-                badge_image_url=badge_image_url,
-                avatar_url=avatar_url,
-                frame_url=frame_url,
-                position=position
-            ))
-            
-            position += 1
-        
-        return result
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving all-time winners: {str(e)}"
-        )
-
-# ======== Admin Endpoints ========
 
 @router.post("/admin/trigger-draw", response_model=DrawResponse)
 async def trigger_draw(
@@ -726,3 +402,13 @@ async def reset_winner_logic(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error resetting winner logic: {str(e)}"
         ) 
+
+# ======== Daily Rewards Endpoints ========
+
+# These endpoints have been moved to routers/daily_rewards.py
+# - /daily-login
+# - /double-up-reward
+# - /weekly-rewards-status
+# Along with their helper functions:
+# - award_nonpremium_cosmetic
+# - get_daily_reward_status 

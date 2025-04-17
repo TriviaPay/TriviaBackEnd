@@ -88,6 +88,9 @@ class User(Base):
     # You could add a relationship for Comments, Chats, or Withdrawals if needed
     # (depending on whether they link to a user table).
 
+    # Daily rewards relationship
+    daily_rewards = relationship("UserDailyRewards", back_populates="user", uselist=True)
+
 def generate_account_id():
     """Generate a 10-digit random unique number."""
     return int("".join(str(random.randint(0, 9)) for _ in range(10)))
@@ -469,3 +472,32 @@ class UserQuestionAnswer(Base):
     
     # Define unique constraint
     __table_args__ = (UniqueConstraint('account_id', 'question_number', 'date', name='unique_user_question_date'),)
+
+# =================================
+#  User Daily Rewards Table
+# =================================
+class UserDailyRewards(Base):
+    """
+    Tracks the user's daily rewards status for the current week.
+    Each row represents one user's current week rewards status.
+    """
+    __tablename__ = "user_daily_rewards"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    week_start_date = Column(Date, nullable=False)  # Monday of current week
+    
+    # Status for each day: "claimed", "doubled", "missed", "locked", "available"
+    day1_status = Column(String, nullable=False, default="locked")
+    day2_status = Column(String, nullable=False, default="locked")
+    day3_status = Column(String, nullable=False, default="locked")
+    day4_status = Column(String, nullable=False, default="locked")
+    day5_status = Column(String, nullable=False, default="locked")
+    day6_status = Column(String, nullable=False, default="locked")
+    day7_status = Column(String, nullable=False, default="locked")
+    
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User", back_populates="daily_rewards")
