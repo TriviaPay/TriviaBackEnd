@@ -1,13 +1,28 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func, text, desc
+import pytz
 from db import get_db
-from models import Winner, User, TriviaDrawWinner, TriviaDrawConfig
+from models import Winner, User, TriviaDrawWinner, TriviaDrawConfig, Badge, Avatar, Frame
 from routers.dependencies import get_current_user
-from rewards_logic import get_daily_winners, get_weekly_winners, get_all_time_winners
+from rewards_logic import get_daily_winners as get_daily_winners_logic
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/winners", tags=["Winners"])
+
+# === Pydantic Models ===
+class WinnerResponse(BaseModel):
+    username: str
+    amount_won: float
+    total_amount_won: float = 0
+    badge_name: Optional[str] = None
+    badge_image_url: Optional[str] = None
+    avatar_url: Optional[str] = None
+    frame_url: Optional[str] = None
+    position: int
+    draw_date: Optional[str] = None  # Date on which the user won
 
 @router.get("/")
 def get_recent_winners(
@@ -57,8 +72,8 @@ async def get_daily_winner_list(
         - Date on which they won (draw_date)
     """
     try:
-        # Try to get actual winners
-        winners = get_daily_winners(db, specific_date)
+        # Try to get actual winners from rewards_logic
+        winners = get_daily_winners_logic(db, specific_date)
         if not winners:
             # If no winners found, return test data
             target_date = specific_date or date.today()
@@ -93,103 +108,288 @@ async def get_daily_winner_list(
             }
         ]
 
-@router.get("/weekly-winners", response_model=List[Dict[str, Any]])
-async def get_weekly_winner_list(
+@router.get("/daily-winners-api", response_model=List[WinnerResponse])
+async def get_daily_winners(
+    date_str: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get the list of winners for the past week, sorted by total amount won in the week.
-    
-    Returns:
-        List of winners with:
-        - User info (username, badge, avatar, frame)
-        - Amount won in the past week
-        - Total amount won all-time
+    Get the list of daily winners for a specific date.
+    If no date is provided, returns yesterday's winners.
     """
     try:
-        # Try to get actual winners
-        winners = get_weekly_winners(db)
-        if not winners:
-            # If no winners found, return test data
-            return [
-                {
-                    "username": "test_user",
-                    "amount_won": 100.0,
-                    "weekly_amount": 100.0,
-                    "total_amount_won": 500.0,
-                    "badge_name": "Gold",
-                    "badge_image_url": "https://example.com/gold.png",
-                    "avatar_url": "https://example.com/avatar.png",
-                    "frame_url": "https://example.com/frame.png",
-                    "position": 1
-                }
-            ]
-        return winners
-    except Exception as e:
-        # Log the error and return test data
-        print(f"Error in get_weekly_winners: {str(e)}")
-        return [
-            {
-                "username": "test_user",
-                "amount_won": 100.0,
-                "weekly_amount": 100.0,
-                "total_amount_won": 500.0,
-                "badge_name": "Gold",
-                "badge_image_url": "https://example.com/gold.png",
-                "avatar_url": "https://example.com/avatar.png",
-                "frame_url": "https://example.com/frame.png",
-                "position": 1
-            }
-        ]
-
-@router.get("/all-time-winners", response_model=List[Dict[str, Any]])
-async def get_all_time_winner_list(
-    limit: int = Query(10, ge=1, le=50),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get the list of all-time winners, sorted by total amount won.
-    
-    Args:
-        limit: Maximum number of winners to return (default: 10, max: 50)
+        logging.info(f"get_daily_winners called with date_str={date_str}")
         
-    Returns:
-        List of winners with:
-        - User info (username, badge, avatar, frame)
-        - Total amount won all-time
+        if date_str:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        else:
+            # Default to yesterday if no date specified
+            est = pytz.timezone('US/Eastern')
+            target_date = (datetime.now(est) - timedelta(days=1)).date()
+
+        logging.info(f"Target date for winners: {target_date}")
+
+        # Get winners for the specified date
+        winners_query = db.query(TriviaDrawWinner, User).join(
+            User, TriviaDrawWinner.account_id == User.account_id
+        ).filter(
+            TriviaDrawWinner.draw_date == target_date
+        ).order_by(TriviaDrawWinner.position).all()
+        
+        logging.info(f"Found {len(winners_query)} winners for date {target_date}")
+
+        result = []
+        
+        for winner, user in winners_query:
+            try:
+                # Calculate total amount won by user all-time
+                total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
+                    TriviaDrawWinner.account_id == user.account_id
+                ).scalar() or 0
+                
+                # Get badge information
+                badge_name = None
+                badge_image_url = None
+                if user.badge_info:
+                    badge_name = user.badge_info.name
+                    badge_image_url = user.badge_image_url
+                
+                # Get avatar URL
+                avatar_url = None
+                if user.selected_avatar_id:
+                    avatar_query = text("""
+                        SELECT image_url FROM avatars 
+                        WHERE id = :avatar_id
+                    """)
+                    avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
+                    if avatar_result:
+                        avatar_url = avatar_result[0]
+                
+                # Get frame URL
+                frame_url = None
+                if user.selected_frame_id:
+                    frame_query = text("""
+                        SELECT image_url FROM frames 
+                        WHERE id = :frame_id
+                    """)
+                    frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
+                    if frame_result:
+                        frame_url = frame_result[0]
+                
+                result.append(WinnerResponse(
+                    username=user.username or f"User{user.account_id}",
+                    amount_won=winner.prize_amount,
+                    total_amount_won=total_won,
+                    badge_name=badge_name,
+                    badge_image_url=badge_image_url,
+                    avatar_url=avatar_url,
+                    frame_url=frame_url,
+                    position=winner.position,
+                    draw_date=winner.draw_date.isoformat() if winner.draw_date else None
+                ))
+            except Exception as user_error:
+                logging.error(f"Error processing winner {user.account_id}: {str(user_error)}")
+        
+        return result
+        
+    except Exception as e:
+        logging.error(f"Error in get_daily_winners: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving daily winners: {str(e)}"
+        )
+
+@router.get("/weekly-winners", response_model=List[WinnerResponse])
+async def get_weekly_winners(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get the list of top winners for the current week (Monday to Sunday).
+    Returns users who won the most in the current week.
     """
     try:
-        # Try to get actual winners
-        winners = get_all_time_winners(db, limit=limit)
-        if not winners:
-            # If no winners found, return test data
-            return [
-                {
-                    "username": "test_user",
-                    "amount_won": 100.0,
-                    "total_amount_won": 500.0,
-                    "badge_name": "Gold",
-                    "badge_image_url": "https://example.com/gold.png",
-                    "avatar_url": "https://example.com/avatar.png",
-                    "frame_url": "https://example.com/frame.png",
-                    "position": 1
-                }
-            ]
-        return winners
+        # Get current date in EST
+        est = pytz.timezone('US/Eastern')
+        today = datetime.now(est).date()
+        
+        # Calculate start of the week (Monday)
+        start_of_week = today - timedelta(days=today.weekday())
+        
+        # Calculate end of the week (Sunday)
+        end_of_week = start_of_week + timedelta(days=6)
+        
+        # Get weekly winners (aggregated by account_id)
+        winners_query = text("""
+            SELECT 
+                dw.account_id, 
+                SUM(dw.prize_amount) as weekly_amount,
+                MIN(dw.position) as best_position,
+                MAX(dw.draw_date) as latest_draw_date
+            FROM trivia_draw_winners dw
+            WHERE dw.draw_date BETWEEN :start_date AND :end_date
+            GROUP BY dw.account_id
+            ORDER BY weekly_amount DESC
+            LIMIT 50
+        """)
+        
+        winners_result = db.execute(winners_query, {
+            "start_date": start_of_week,
+            "end_date": end_of_week
+        }).fetchall()
+        
+        # Format the response
+        result = []
+        position = 1
+        
+        for winner_data in winners_result:
+            account_id, weekly_amount, best_position, latest_draw_date = winner_data
+            
+            # Get user details
+            user = db.query(User).filter(User.account_id == account_id).first()
+            if not user:
+                continue
+            
+            # Calculate total amount won by user all-time
+            total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
+                TriviaDrawWinner.account_id == user.account_id
+            ).scalar() or 0
+            
+            # Get badge information
+            badge_name = None
+            badge_image_url = None
+            if user.badge_info:
+                badge_name = user.badge_info.name
+                badge_image_url = user.badge_image_url
+            
+            # Get avatar URL
+            avatar_url = None
+            if user.selected_avatar_id:
+                avatar_query = text("""
+                    SELECT image_url FROM avatars 
+                    WHERE id = :avatar_id
+                """)
+                avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
+                if avatar_result:
+                    avatar_url = avatar_result[0]
+            
+            # Get frame URL
+            frame_url = None
+            if user.selected_frame_id:
+                frame_query = text("""
+                    SELECT image_url FROM frames 
+                    WHERE id = :frame_id
+                """)
+                frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
+                if frame_result:
+                    frame_url = frame_result[0]
+            
+            result.append(WinnerResponse(
+                username=user.username or f"User{user.account_id}",
+                amount_won=weekly_amount,
+                total_amount_won=total_won,
+                badge_name=badge_name,
+                badge_image_url=badge_image_url,
+                avatar_url=avatar_url,
+                frame_url=frame_url,
+                position=position,
+                draw_date=latest_draw_date.isoformat() if latest_draw_date else None
+            ))
+            
+            position += 1
+        
+        return result
+        
     except Exception as e:
-        # Log the error and return test data
-        print(f"Error in get_all_time_winners: {str(e)}")
-        return [
-            {
-                "username": "test_user",
-                "amount_won": 100.0,
-                "total_amount_won": 500.0,
-                "badge_name": "Gold",
-                "badge_image_url": "https://example.com/gold.png",
-                "avatar_url": "https://example.com/avatar.png",
-                "frame_url": "https://example.com/frame.png",
-                "position": 1
-            }
-        ]
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving weekly winners: {str(e)}"
+        )
+
+@router.get("/all-time-winners", response_model=List[WinnerResponse])
+async def get_all_time_winners(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get the list of all-time top winners.
+    Returns users who won the most all-time.
+    """
+    try:
+        # Get all-time winners (aggregated by account_id)
+        winners_query = text("""
+            SELECT 
+                dw.account_id, 
+                SUM(dw.prize_amount) as total_amount,
+                MIN(dw.position) as best_position,
+                MAX(dw.draw_date) as latest_draw_date
+            FROM trivia_draw_winners dw
+            GROUP BY dw.account_id
+            ORDER BY total_amount DESC
+            LIMIT 50
+        """)
+        
+        winners_result = db.execute(winners_query).fetchall()
+        
+        # Format the response
+        result = []
+        position = 1
+        
+        for winner_data in winners_result:
+            account_id, total_amount, best_position, latest_draw_date = winner_data
+            
+            # Get user details
+            user = db.query(User).filter(User.account_id == account_id).first()
+            if not user:
+                continue
+            
+            # Get badge information
+            badge_name = None
+            badge_image_url = None
+            if user.badge_info:
+                badge_name = user.badge_info.name
+                badge_image_url = user.badge_image_url
+            
+            # Get avatar URL
+            avatar_url = None
+            if user.selected_avatar_id:
+                avatar_query = text("""
+                    SELECT image_url FROM avatars 
+                    WHERE id = :avatar_id
+                """)
+                avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
+                if avatar_result:
+                    avatar_url = avatar_result[0]
+            
+            # Get frame URL
+            frame_url = None
+            if user.selected_frame_id:
+                frame_query = text("""
+                    SELECT image_url FROM frames 
+                    WHERE id = :frame_id
+                """)
+                frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
+                if frame_result:
+                    frame_url = frame_result[0]
+            
+            result.append(WinnerResponse(
+                username=user.username or f"User{user.account_id}",
+                amount_won=total_amount,
+                total_amount_won=total_amount,
+                badge_name=badge_name,
+                badge_image_url=badge_image_url,
+                avatar_url=avatar_url,
+                frame_url=frame_url,
+                position=position,
+                draw_date=latest_draw_date.isoformat() if latest_draw_date else None
+            ))
+            
+            position += 1
+        
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving all-time winners: {str(e)}"
+        )

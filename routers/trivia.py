@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from db import get_db
-from models import User, Trivia, DailyQuestion, Entry, UserQuestionAnswer
+from models import User, Trivia, DailyQuestion, Entry, UserQuestionAnswer, Frame, UserFrame, Avatar, UserAvatar
 from auth import verify_access_token
 from routers.dependencies import get_current_user
 from pydantic import BaseModel
@@ -648,111 +648,6 @@ def get_categories(db: Session = Depends(get_db)):
     """
     categories = db.query(Trivia.category).distinct().all()
     return {"categories": [c[0] for c in categories if c[0] is not None]}
-
-@router.post("/daily-login")
-async def process_daily_login(
-    claims: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Process daily login: update streak (with saver), reset daily boosts, grant login gems."""
-    # Ensure logger is available in function scope
-    logger = logging.getLogger(__name__)
-
-    sub = claims.get("sub")
-    user = db.query(User).filter(User.sub == sub).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    today = datetime.utcnow().date()
-    now = datetime.utcnow() # Use a single timestamp for consistency
-    
-    reward_message = "Welcome back!"
-    gems_reward = 0
-    streak_saved = False
-    
-    # Check if already processed today
-    if user.last_streak_date and user.last_streak_date.date() == today:
-        logger.info(f"Daily login already processed today for user {user.account_id}")
-        # Still return current status even if already processed
-        reward_message = "Already checked in today."
-        return {
-            "message": reward_message,
-            "gems_added": 0,
-            "current_gems": user.gems,
-            "current_streak": user.streaks,
-            "streak_saved_today": streak_saved
-        }
-
-    # --- Process First Login of the Day --- 
-    logger.info(f"Processing first daily login for user {user.account_id} on {today}")
-
-    # Reset daily boost usage flags
-    user.hint_used_today = False
-    user.fifty_fifty_used_today = False
-    user.auto_answer_used_today = False
-    logger.info(f"Reset daily boost flags for user {user.account_id}")
-
-    # Update streak logic
-    if user.last_streak_date and user.last_streak_date.date() == (today - timedelta(days=1)):
-        # Consecutive day, increment streak
-        user.streaks += 1
-        logger.info(f"User {user.account_id} continued streak to {user.streaks}")
-    elif user.last_streak_date and user.last_streak_date.date() < (today - timedelta(days=1)):
-        # Missed one or more days
-        logger.info(f"User {user.account_id} missed day(s). Current streak: {user.streaks}")
-        if user.streak_saver_count > 0:
-            # Use a streak saver
-            user.streak_saver_count -= 1
-            streak_saved = True
-            # Streak does NOT reset
-            logger.info(f"Used streak saver for user {user.account_id}. Remaining savers: {user.streak_saver_count}. Streak maintained at {user.streaks}.")
-        else:
-            # No savers left, reset streak
-            logger.info(f"No streak savers left for user {user.account_id}. Resetting streak.")
-            user.streaks = 0 
-        # Regardless of saver, start a new streak of 1 *for today*
-        user.streaks = 1 # Correctly starts streak for today after missed day(s)
-        logger.info(f"User {user.account_id} starting new streak of 1 today.")
-            
-    else:
-        # First login ever or streak already 0
-        user.streaks = 1
-        logger.info(f"User {user.account_id} starting first streak or restarting streak at 1.")
-
-    # Grant daily login gem bonus (example: 1 gem)
-    gems_reward = 1 
-    user.gems += gems_reward
-    reward_message = f"Welcome! You received {gems_reward} gem. Your streak is {user.streaks}."
-    if streak_saved:
-        reward_message += " Your streak was saved!"
-        
-    # Always update last streak date to today
-    user.last_streak_date = now
-
-    try:
-        db.commit()
-        logger.info(f"Committed daily login updates for user {user.account_id}")
-    except Exception as e:
-        # Ensure logger is available in except block
-        logger = logging.getLogger(__name__)
-        db.rollback()
-        logger.error(f"Failed to commit daily login for user {user.account_id}: {e}", exc_info=True)
-        # Revert optimistic updates if commit fails
-        # (This part is tricky, ideally use a transaction manager or redo query)
-        # For simplicity, we just log and return a non-committal message
-        reward_message = "Welcome back! (Error updating stats)"
-        gems_reward = 0
-        # Don't return potentially incorrect streak/gem count if commit failed
-        # Query again or return placeholder values? Let's query again for safety.
-        db.refresh(user)
-        
-    return {
-        "message": reward_message,
-        "gems_added": gems_reward,
-        "current_gems": user.gems,
-        "current_streak": user.streaks,
-        "streak_saved_today": streak_saved
-    }
 
 @router.get("/question-status/{question_number}")
 async def get_question_status(

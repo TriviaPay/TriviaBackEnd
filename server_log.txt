@@ -1,0 +1,1210 @@
+/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pydantic/_internal/_config.py:317: UserWarning: Valid config keys have changed in V2:
+* 'schema_extra' has been renamed to 'json_schema_extra'
+  warnings.warn(message, UserWarning)
+/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pydantic/_internal/_config.py:317: UserWarning: Valid config keys have changed in V2:
+* 'orm_mode' has been renamed to 'from_attributes'
+  warnings.warn(message, UserWarning)
+INFO:     Started server process [65923]
+INFO:uvicorn.error:Started server process [65923]
+2025-04-16 00:02:36,378 - uvicorn.error - INFO - Started server process [65923]
+INFO:     Waiting for application startup.
+INFO:uvicorn.error:Waiting for application startup.
+2025-04-16 00:02:36,378 - uvicorn.error - INFO - Waiting for application startup.
+INFO:scheduler:Starting the scheduler...
+2025-04-16 00:02:36,379 - scheduler - INFO - Starting the scheduler...
+DEBUG:tzlocal:/etc/localtime found
+2025-04-16 00:02:36,379 - tzlocal - DEBUG - /etc/localtime found
+DEBUG:tzlocal:1 found:
+ {'/etc/localtime is a symlink to': 'America/New_York'}
+2025-04-16 00:02:36,380 - tzlocal - DEBUG - 1 found:
+ {'/etc/localtime is a symlink to': 'America/New_York'}
+INFO:scheduler:Scheduling daily draw at 20:0 US/Eastern
+2025-04-16 00:02:36,380 - scheduler - INFO - Scheduling daily draw at 20:0 US/Eastern
+INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-04-16 00:02:36,394 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-04-16 00:02:36,394 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-04-16 00:02:36,394 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-04-16 00:02:36,394 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+INFO:apscheduler.scheduler:Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2025-04-16 00:02:36,394 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+INFO:apscheduler.scheduler:Added job "run_daily_draw" to job store "default"
+2025-04-16 00:02:36,395 - apscheduler.scheduler - INFO - Added job "run_daily_draw" to job store "default"
+INFO:apscheduler.scheduler:Added job "reset_weekly_rewards" to job store "default"
+2025-04-16 00:02:36,395 - apscheduler.scheduler - INFO - Added job "reset_weekly_rewards" to job store "default"
+INFO:apscheduler.scheduler:Added job "reset_weekly_rewards" to job store "default"
+2025-04-16 00:02:36,395 - apscheduler.scheduler - INFO - Added job "reset_weekly_rewards" to job store "default"
+INFO:apscheduler.scheduler:Added job "create_weekly_revenue_snapshot" to job store "default"
+2025-04-16 00:02:36,395 - apscheduler.scheduler - INFO - Added job "create_weekly_revenue_snapshot" to job store "default"
+INFO:apscheduler.scheduler:Added job "reset_monthly_subscriptions" to job store "default"
+2025-04-16 00:02:36,395 - apscheduler.scheduler - INFO - Added job "reset_monthly_subscriptions" to job store "default"
+INFO:apscheduler.scheduler:Scheduler started
+2025-04-16 00:02:36,395 - apscheduler.scheduler - INFO - Scheduler started
+INFO:scheduler:Scheduler started
+2025-04-16 00:02:36,395 - scheduler - INFO - Scheduler started
+DEBUG:apscheduler.scheduler:Looking for jobs to run
+2025-04-16 00:02:36,395 - apscheduler.scheduler - DEBUG - Looking for jobs to run
+DEBUG:apscheduler.scheduler:Next wakeup is due at 2025-04-16 20:00:00-04:00 (in 71843.604101 seconds)
+2025-04-16 00:02:36,395 - apscheduler.scheduler - DEBUG - Next wakeup is due at 2025-04-16 20:00:00-04:00 (in 71843.604101 seconds)
+INFO:     Application startup complete.
+INFO:uvicorn.error:Application startup complete.
+2025-04-16 00:02:36,395 - uvicorn.error - INFO - Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:uvicorn.error:Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2025-04-16 00:02:36,396 - uvicorn.error - INFO - Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:root:Regular endpoint (non-profile): http://localhost:8000/daily-rewards/weekly-status - Using check_expiration=True, require_email=True
+2025-04-16 00:03:00,887 - root - INFO - Regular endpoint (non-profile): http://localhost:8000/daily-rewards/weekly-status - Using check_expiration=True, require_email=True
+DEBUG:root:=== Request Debug Information ===
+2025-04-16 00:03:00,887 - root - DEBUG - === Request Debug Information ===
+DEBUG:root:Request Method: GET
+2025-04-16 00:03:00,887 - root - DEBUG - Request Method: GET
+DEBUG:root:Request URL: http://localhost:8000/daily-rewards/weekly-status
+2025-04-16 00:03:00,887 - root - DEBUG - Request URL: http://localhost:8000/daily-rewards/weekly-status
+DEBUG:root:Request Headers:
+{
+  "host": "localhost:8000",
+  "user-agent": "curl/8.7.1",
+  "accept": "*/*",
+  "authorization": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg"
+}
+2025-04-16 00:03:00,887 - root - DEBUG - Request Headers:
+{
+  "host": "localhost:8000",
+  "user-agent": "curl/8.7.1",
+  "accept": "*/*",
+  "authorization": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg"
+}
+INFO:root:Found Authorization header: Bearer eyJhbGciOiJSU...
+2025-04-16 00:03:00,887 - root - INFO - Found Authorization header: Bearer eyJhbGciOiJSU...
+INFO:root:Stripped Bearer prefix: eyJhbGciOiJSUzI1NiIs...
+2025-04-16 00:03:00,887 - root - INFO - Stripped Bearer prefix: eyJhbGciOiJSUzI1NiIs...
+INFO:root:Final token to verify: eyJhbGciOiJSUzI1NiIs... with check_expiration=True, require_email=True
+2025-04-16 00:03:00,887 - root - INFO - Final token to verify: eyJhbGciOiJSUzI1NiIs... with check_expiration=True, require_email=True
+INFO:root:Calling verify_access_token with check_expiration=True, require_email=True
+2025-04-16 00:03:00,887 - root - INFO - Calling verify_access_token with check_expiration=True, require_email=True
+INFO:auth:Development mode detected. Accepting test token with minimal verification.
+2025-04-16 00:03:00,887 - auth - INFO - Development mode detected. Accepting test token with minimal verification.
+WARNING:auth:Test token missing required 'email' claim
+2025-04-16 00:03:00,888 - auth - WARNING - Test token missing required 'email' claim
+INFO:auth:No email in token, attempting to retrieve from userinfo
+2025-04-16 00:03:00,888 - auth - INFO - No email in token, attempting to retrieve from userinfo
+DEBUG:auth:Userinfo Request URL: https://triviapay.us.auth0.com/userinfo
+2025-04-16 00:03:00,888 - auth - DEBUG - Userinfo Request URL: https://triviapay.us.auth0.com/userinfo
+DEBUG:auth:Authorization Header: {'Authorization': 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg'}
+2025-04-16 00:03:00,888 - auth - DEBUG - Authorization Header: {'Authorization': 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg'}
+DEBUG:auth:Userinfo Response Status: 401
+2025-04-16 00:03:01,140 - auth - DEBUG - Userinfo Response Status: 401
+DEBUG:charset_normalizer:Encoding detection: ascii is most likely the one.
+2025-04-16 00:03:01,143 - charset_normalizer - DEBUG - Encoding detection: ascii is most likely the one.
+DEBUG:auth:Userinfo Response Content: Unauthorized
+2025-04-16 00:03:01,143 - auth - DEBUG - Userinfo Response Content: Unauthorized
+ERROR:auth:Userinfo request failed with status 401
+2025-04-16 00:03:01,143 - auth - ERROR - Userinfo request failed with status 401
+DEBUG:charset_normalizer:Encoding detection: ascii is most likely the one.
+2025-04-16 00:03:01,143 - charset_normalizer - DEBUG - Encoding detection: ascii is most likely the one.
+ERROR:auth:Response content: Unauthorized
+2025-04-16 00:03:01,143 - auth - ERROR - Response content: Unauthorized
+INFO:auth:Successfully verified token in dev mode for: unknown
+2025-04-16 00:03:01,146 - auth - INFO - Successfully verified token in dev mode for: unknown
+INFO:root:Successfully verified token, got claims for sub: email|67fb442d4af4e6860012d014
+2025-04-16 00:03:01,146 - root - INFO - Successfully verified token, got claims for sub: email|67fb442d4af4e6860012d014
+INFO:routers.daily_rewards:Debug date info - Today: 2025-04-16, weekday: 2, day_num: 3
+2025-04-16 00:03:01,957 - routers.daily_rewards - INFO - Debug date info - Today: 2025-04-16, weekday: 2, day_num: 3
+INFO:routers.daily_rewards:Week start date (Monday): 2025-04-14
+2025-04-16 00:03:01,957 - routers.daily_rewards - INFO - Week start date (Monday): 2025-04-14
+ERROR:root:Database session error: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+2025-04-16 00:03:01,993 - root - ERROR - Database session error: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+INFO:     127.0.0.1:59214 - "GET /daily-rewards/weekly-status HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 254, in execute
+    self._context = self._c.execute_unnamed(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 688, in execute_unnamed
+    self.handle_messages(context)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 827, in handle_messages
+    raise context.error
+pg8000.exceptions.DatabaseError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+pg8000.dbapi.ProgrammingError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/protocols/http/h11_impl.py", line 373, in run_asgi
+    result = await app(self.scope, self.receive, self.send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/middleware/proxy_headers.py", line 75, in __call__
+    return await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py", line 292, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/applications.py", line 122, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 184, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 273, in app
+    raw_response = await run_endpoint_function(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 190, in run_endpoint_function
+    return await dependant.call(**values)
+  File "/Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/daily_rewards.py", line 577, in get_weekly_rewards_status
+    user_rewards = db.query(UserDailyRewards).filter(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2762, in first
+    return self.limit(1)._iter().first()
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2846, in _iter
+    result = self.session.execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/session.py", line 1689, in execute
+    result = conn._execute_20(statement, params or {}, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1583, in _execute_20
+    return meth(self, args_10style, kwargs_10style, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/sql/elements.py", line 323, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1452, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1995, in _handle_dbapi_exception
+    util.raise_(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/util/compat.py", line 207, in raise_
+    raise exception
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+sqlalchemy.exc.ProgrammingError: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+ERROR:uvicorn.error:Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 254, in execute
+    self._context = self._c.execute_unnamed(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 688, in execute_unnamed
+    self.handle_messages(context)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 827, in handle_messages
+    raise context.error
+pg8000.exceptions.DatabaseError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+pg8000.dbapi.ProgrammingError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/protocols/http/h11_impl.py", line 373, in run_asgi
+    result = await app(self.scope, self.receive, self.send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/middleware/proxy_headers.py", line 75, in __call__
+    return await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py", line 292, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/applications.py", line 122, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 184, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 273, in app
+    raw_response = await run_endpoint_function(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 190, in run_endpoint_function
+    return await dependant.call(**values)
+  File "/Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/daily_rewards.py", line 577, in get_weekly_rewards_status
+    user_rewards = db.query(UserDailyRewards).filter(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2762, in first
+    return self.limit(1)._iter().first()
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2846, in _iter
+    result = self.session.execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/session.py", line 1689, in execute
+    result = conn._execute_20(statement, params or {}, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1583, in _execute_20
+    return meth(self, args_10style, kwargs_10style, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/sql/elements.py", line 323, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1452, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1995, in _handle_dbapi_exception
+    util.raise_(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/util/compat.py", line 207, in raise_
+    raise exception
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+sqlalchemy.exc.ProgrammingError: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+2025-04-16 00:03:02,101 - uvicorn.error - ERROR - Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 254, in execute
+    self._context = self._c.execute_unnamed(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 688, in execute_unnamed
+    self.handle_messages(context)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 827, in handle_messages
+    raise context.error
+pg8000.exceptions.DatabaseError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+pg8000.dbapi.ProgrammingError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/protocols/http/h11_impl.py", line 373, in run_asgi
+    result = await app(self.scope, self.receive, self.send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/middleware/proxy_headers.py", line 75, in __call__
+    return await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py", line 292, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/applications.py", line 122, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 184, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 273, in app
+    raw_response = await run_endpoint_function(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 190, in run_endpoint_function
+    return await dependant.call(**values)
+  File "/Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/daily_rewards.py", line 577, in get_weekly_rewards_status
+    user_rewards = db.query(UserDailyRewards).filter(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2762, in first
+    return self.limit(1)._iter().first()
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2846, in _iter
+    result = self.session.execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/session.py", line 1689, in execute
+    result = conn._execute_20(statement, params or {}, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1583, in _execute_20
+    return meth(self, args_10style, kwargs_10style, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/sql/elements.py", line 323, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1452, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1995, in _handle_dbapi_exception
+    util.raise_(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/util/compat.py", line 207, in raise_
+    raise exception
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+sqlalchemy.exc.ProgrammingError: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+INFO:     127.0.0.1:59293 - "GET /docs HTTP/1.1" 200 OK
+/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/openapi/utils.py:207: UserWarning: Duplicate Operation ID trigger_draw_admin_trigger_draw_post for function trigger_draw at /Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/admin.py
+  warnings.warn(message, stacklevel=1)
+INFO:     127.0.0.1:59293 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59377 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59377 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:root:Regular endpoint (non-profile): http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true - Using check_expiration=True, require_email=True
+2025-04-16 00:13:30,762 - root - INFO - Regular endpoint (non-profile): http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true - Using check_expiration=True, require_email=True
+DEBUG:root:=== Request Debug Information ===
+2025-04-16 00:13:30,770 - root - DEBUG - === Request Debug Information ===
+DEBUG:root:Request Method: GET
+2025-04-16 00:13:30,770 - root - DEBUG - Request Method: GET
+DEBUG:root:Request URL: http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true
+2025-04-16 00:13:30,770 - root - DEBUG - Request URL: http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true
+DEBUG:root:Request Headers:
+{
+  "host": "127.0.0.1:8000",
+  "connection": "keep-alive",
+  "sec-ch-ua-platform": "\"macOS\"",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "accept": "application/json",
+  "sec-ch-ua": "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"",
+  "sec-ch-ua-mobile": "?0",
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-dest": "empty",
+  "referer": "http://127.0.0.1:8000/docs",
+  "accept-encoding": "gzip, deflate, br, zstd",
+  "accept-language": "en-US,en;q=0.9"
+}
+2025-04-16 00:13:30,771 - root - DEBUG - Request Headers:
+{
+  "host": "127.0.0.1:8000",
+  "connection": "keep-alive",
+  "sec-ch-ua-platform": "\"macOS\"",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "accept": "application/json",
+  "sec-ch-ua": "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"",
+  "sec-ch-ua-mobile": "?0",
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-dest": "empty",
+  "referer": "http://127.0.0.1:8000/docs",
+  "accept-encoding": "gzip, deflate, br, zstd",
+  "accept-language": "en-US,en;q=0.9"
+}
+ERROR:root:No Authorization token found in request (checked headers, query params, and form data)
+2025-04-16 00:13:30,772 - root - ERROR - No Authorization token found in request (checked headers, query params, and form data)
+INFO:     127.0.0.1:59400 - "GET /daily-rewards/weekly-status?check_expiration=true&require_email=true HTTP/1.1" 401 Unauthorized
+INFO:root:Regular endpoint (non-profile): http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true - Using check_expiration=True, require_email=True
+2025-04-16 00:13:43,751 - root - INFO - Regular endpoint (non-profile): http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true - Using check_expiration=True, require_email=True
+DEBUG:root:=== Request Debug Information ===
+2025-04-16 00:13:43,752 - root - DEBUG - === Request Debug Information ===
+DEBUG:root:Request Method: GET
+2025-04-16 00:13:43,752 - root - DEBUG - Request Method: GET
+DEBUG:root:Request URL: http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true
+2025-04-16 00:13:43,752 - root - DEBUG - Request URL: http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true
+DEBUG:root:Request Headers:
+{
+  "host": "127.0.0.1:8000",
+  "connection": "keep-alive",
+  "sec-ch-ua-platform": "\"macOS\"",
+  "authorization": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "accept": "application/json",
+  "sec-ch-ua": "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"",
+  "sec-ch-ua-mobile": "?0",
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-dest": "empty",
+  "referer": "http://127.0.0.1:8000/docs",
+  "accept-encoding": "gzip, deflate, br, zstd",
+  "accept-language": "en-US,en;q=0.9"
+}
+2025-04-16 00:13:43,754 - root - DEBUG - Request Headers:
+{
+  "host": "127.0.0.1:8000",
+  "connection": "keep-alive",
+  "sec-ch-ua-platform": "\"macOS\"",
+  "authorization": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "accept": "application/json",
+  "sec-ch-ua": "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"",
+  "sec-ch-ua-mobile": "?0",
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-dest": "empty",
+  "referer": "http://127.0.0.1:8000/docs",
+  "accept-encoding": "gzip, deflate, br, zstd",
+  "accept-language": "en-US,en;q=0.9"
+}
+INFO:root:Found Authorization header: Bearer eyJhbGciOiJSU...
+2025-04-16 00:13:43,755 - root - INFO - Found Authorization header: Bearer eyJhbGciOiJSU...
+INFO:root:Stripped Bearer prefix: eyJhbGciOiJSUzI1NiIs...
+2025-04-16 00:13:43,755 - root - INFO - Stripped Bearer prefix: eyJhbGciOiJSUzI1NiIs...
+INFO:root:Final token to verify: eyJhbGciOiJSUzI1NiIs... with check_expiration=True, require_email=True
+2025-04-16 00:13:43,755 - root - INFO - Final token to verify: eyJhbGciOiJSUzI1NiIs... with check_expiration=True, require_email=True
+INFO:root:Calling verify_access_token with check_expiration=True, require_email=True
+2025-04-16 00:13:43,755 - root - INFO - Calling verify_access_token with check_expiration=True, require_email=True
+INFO:auth:Development mode detected. Accepting test token with minimal verification.
+2025-04-16 00:13:43,756 - auth - INFO - Development mode detected. Accepting test token with minimal verification.
+WARNING:auth:Test token missing required 'email' claim
+2025-04-16 00:13:43,758 - auth - WARNING - Test token missing required 'email' claim
+INFO:auth:No email in token, attempting to retrieve from userinfo
+2025-04-16 00:13:43,758 - auth - INFO - No email in token, attempting to retrieve from userinfo
+DEBUG:auth:Userinfo Request URL: https://triviapay.us.auth0.com/userinfo
+2025-04-16 00:13:43,758 - auth - DEBUG - Userinfo Request URL: https://triviapay.us.auth0.com/userinfo
+DEBUG:auth:Authorization Header: {'Authorization': 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg'}
+2025-04-16 00:13:43,759 - auth - DEBUG - Authorization Header: {'Authorization': 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg'}
+DEBUG:auth:Userinfo Response Status: 401
+2025-04-16 00:13:44,141 - auth - DEBUG - Userinfo Response Status: 401
+DEBUG:charset_normalizer:Encoding detection: ascii is most likely the one.
+2025-04-16 00:13:44,143 - charset_normalizer - DEBUG - Encoding detection: ascii is most likely the one.
+DEBUG:auth:Userinfo Response Content: Unauthorized
+2025-04-16 00:13:44,143 - auth - DEBUG - Userinfo Response Content: Unauthorized
+ERROR:auth:Userinfo request failed with status 401
+2025-04-16 00:13:44,143 - auth - ERROR - Userinfo request failed with status 401
+DEBUG:charset_normalizer:Encoding detection: ascii is most likely the one.
+2025-04-16 00:13:44,143 - charset_normalizer - DEBUG - Encoding detection: ascii is most likely the one.
+ERROR:auth:Response content: Unauthorized
+2025-04-16 00:13:44,144 - auth - ERROR - Response content: Unauthorized
+INFO:auth:Successfully verified token in dev mode for: unknown
+2025-04-16 00:13:44,146 - auth - INFO - Successfully verified token in dev mode for: unknown
+INFO:root:Successfully verified token, got claims for sub: email|67fb442d4af4e6860012d014
+2025-04-16 00:13:44,146 - root - INFO - Successfully verified token, got claims for sub: email|67fb442d4af4e6860012d014
+INFO:routers.daily_rewards:Debug date info - Today: 2025-04-16, weekday: 2, day_num: 3
+2025-04-16 00:13:44,685 - routers.daily_rewards - INFO - Debug date info - Today: 2025-04-16, weekday: 2, day_num: 3
+INFO:routers.daily_rewards:Week start date (Monday): 2025-04-14
+2025-04-16 00:13:44,685 - routers.daily_rewards - INFO - Week start date (Monday): 2025-04-14
+ERROR:root:Database session error: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+2025-04-16 00:13:44,725 - root - ERROR - Database session error: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+INFO:     127.0.0.1:59403 - "GET /daily-rewards/weekly-status?check_expiration=true&require_email=true HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 254, in execute
+    self._context = self._c.execute_unnamed(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 688, in execute_unnamed
+    self.handle_messages(context)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 827, in handle_messages
+    raise context.error
+pg8000.exceptions.DatabaseError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+pg8000.dbapi.ProgrammingError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/protocols/http/h11_impl.py", line 373, in run_asgi
+    result = await app(self.scope, self.receive, self.send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/middleware/proxy_headers.py", line 75, in __call__
+    return await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py", line 292, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/applications.py", line 122, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 184, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 273, in app
+    raw_response = await run_endpoint_function(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 190, in run_endpoint_function
+    return await dependant.call(**values)
+  File "/Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/daily_rewards.py", line 577, in get_weekly_rewards_status
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2762, in first
+    return self.limit(1)._iter().first()
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2846, in _iter
+    result = self.session.execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/session.py", line 1689, in execute
+    result = conn._execute_20(statement, params or {}, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1583, in _execute_20
+    return meth(self, args_10style, kwargs_10style, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/sql/elements.py", line 323, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1452, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1995, in _handle_dbapi_exception
+    util.raise_(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/util/compat.py", line 207, in raise_
+    raise exception
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+sqlalchemy.exc.ProgrammingError: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+ERROR:uvicorn.error:Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 254, in execute
+    self._context = self._c.execute_unnamed(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 688, in execute_unnamed
+    self.handle_messages(context)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 827, in handle_messages
+    raise context.error
+pg8000.exceptions.DatabaseError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+pg8000.dbapi.ProgrammingError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/protocols/http/h11_impl.py", line 373, in run_asgi
+    result = await app(self.scope, self.receive, self.send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/middleware/proxy_headers.py", line 75, in __call__
+    return await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py", line 292, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/applications.py", line 122, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 184, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 273, in app
+    raw_response = await run_endpoint_function(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 190, in run_endpoint_function
+    return await dependant.call(**values)
+  File "/Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/daily_rewards.py", line 577, in get_weekly_rewards_status
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2762, in first
+    return self.limit(1)._iter().first()
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2846, in _iter
+    result = self.session.execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/session.py", line 1689, in execute
+    result = conn._execute_20(statement, params or {}, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1583, in _execute_20
+    return meth(self, args_10style, kwargs_10style, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/sql/elements.py", line 323, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1452, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1995, in _handle_dbapi_exception
+    util.raise_(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/util/compat.py", line 207, in raise_
+    raise exception
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+sqlalchemy.exc.ProgrammingError: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+2025-04-16 00:13:44,852 - uvicorn.error - ERROR - Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 254, in execute
+    self._context = self._c.execute_unnamed(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 688, in execute_unnamed
+    self.handle_messages(context)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 827, in handle_messages
+    raise context.error
+pg8000.exceptions.DatabaseError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+pg8000.dbapi.ProgrammingError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/protocols/http/h11_impl.py", line 373, in run_asgi
+    result = await app(self.scope, self.receive, self.send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/middleware/proxy_headers.py", line 75, in __call__
+    return await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py", line 292, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/applications.py", line 122, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 184, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 273, in app
+    raw_response = await run_endpoint_function(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 190, in run_endpoint_function
+    return await dependant.call(**values)
+  File "/Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/daily_rewards.py", line 577, in get_weekly_rewards_status
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2762, in first
+    return self.limit(1)._iter().first()
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2846, in _iter
+    result = self.session.execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/session.py", line 1689, in execute
+    result = conn._execute_20(statement, params or {}, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1583, in _execute_20
+    return meth(self, args_10style, kwargs_10style, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/sql/elements.py", line 323, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1452, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1995, in _handle_dbapi_exception
+    util.raise_(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/util/compat.py", line 207, in raise_
+    raise exception
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+sqlalchemy.exc.ProgrammingError: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+INFO:     127.0.0.1:59477 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59477 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:root:Regular endpoint (non-profile): http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true - Using check_expiration=True, require_email=True
+2025-04-16 00:16:47,465 - root - INFO - Regular endpoint (non-profile): http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true - Using check_expiration=True, require_email=True
+DEBUG:root:=== Request Debug Information ===
+2025-04-16 00:16:47,466 - root - DEBUG - === Request Debug Information ===
+DEBUG:root:Request Method: GET
+2025-04-16 00:16:47,466 - root - DEBUG - Request Method: GET
+DEBUG:root:Request URL: http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true
+2025-04-16 00:16:47,466 - root - DEBUG - Request URL: http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true
+DEBUG:root:Request Headers:
+{
+  "host": "127.0.0.1:8000",
+  "connection": "keep-alive",
+  "sec-ch-ua-platform": "\"macOS\"",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "accept": "application/json",
+  "sec-ch-ua": "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"",
+  "sec-ch-ua-mobile": "?0",
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-dest": "empty",
+  "referer": "http://127.0.0.1:8000/docs",
+  "accept-encoding": "gzip, deflate, br, zstd",
+  "accept-language": "en-US,en;q=0.9"
+}
+2025-04-16 00:16:47,466 - root - DEBUG - Request Headers:
+{
+  "host": "127.0.0.1:8000",
+  "connection": "keep-alive",
+  "sec-ch-ua-platform": "\"macOS\"",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "accept": "application/json",
+  "sec-ch-ua": "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"",
+  "sec-ch-ua-mobile": "?0",
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-dest": "empty",
+  "referer": "http://127.0.0.1:8000/docs",
+  "accept-encoding": "gzip, deflate, br, zstd",
+  "accept-language": "en-US,en;q=0.9"
+}
+ERROR:root:No Authorization token found in request (checked headers, query params, and form data)
+2025-04-16 00:16:47,466 - root - ERROR - No Authorization token found in request (checked headers, query params, and form data)
+INFO:     127.0.0.1:59482 - "GET /daily-rewards/weekly-status?check_expiration=true&require_email=true HTTP/1.1" 401 Unauthorized
+INFO:root:Regular endpoint (non-profile): http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true - Using check_expiration=True, require_email=True
+2025-04-16 00:17:00,669 - root - INFO - Regular endpoint (non-profile): http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true - Using check_expiration=True, require_email=True
+DEBUG:root:=== Request Debug Information ===
+2025-04-16 00:17:00,669 - root - DEBUG - === Request Debug Information ===
+DEBUG:root:Request Method: GET
+2025-04-16 00:17:00,669 - root - DEBUG - Request Method: GET
+DEBUG:root:Request URL: http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true
+2025-04-16 00:17:00,669 - root - DEBUG - Request URL: http://127.0.0.1:8000/daily-rewards/weekly-status?check_expiration=true&require_email=true
+DEBUG:root:Request Headers:
+{
+  "host": "127.0.0.1:8000",
+  "connection": "keep-alive",
+  "sec-ch-ua-platform": "\"macOS\"",
+  "authorization": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "accept": "application/json",
+  "sec-ch-ua": "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"",
+  "sec-ch-ua-mobile": "?0",
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-dest": "empty",
+  "referer": "http://127.0.0.1:8000/docs",
+  "accept-encoding": "gzip, deflate, br, zstd",
+  "accept-language": "en-US,en;q=0.9"
+}
+2025-04-16 00:17:00,670 - root - DEBUG - Request Headers:
+{
+  "host": "127.0.0.1:8000",
+  "connection": "keep-alive",
+  "sec-ch-ua-platform": "\"macOS\"",
+  "authorization": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg",
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "accept": "application/json",
+  "sec-ch-ua": "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"",
+  "sec-ch-ua-mobile": "?0",
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-dest": "empty",
+  "referer": "http://127.0.0.1:8000/docs",
+  "accept-encoding": "gzip, deflate, br, zstd",
+  "accept-language": "en-US,en;q=0.9"
+}
+INFO:root:Found Authorization header: Bearer eyJhbGciOiJSU...
+2025-04-16 00:17:00,670 - root - INFO - Found Authorization header: Bearer eyJhbGciOiJSU...
+INFO:root:Stripped Bearer prefix: eyJhbGciOiJSUzI1NiIs...
+2025-04-16 00:17:00,670 - root - INFO - Stripped Bearer prefix: eyJhbGciOiJSUzI1NiIs...
+INFO:root:Final token to verify: eyJhbGciOiJSUzI1NiIs... with check_expiration=True, require_email=True
+2025-04-16 00:17:00,670 - root - INFO - Final token to verify: eyJhbGciOiJSUzI1NiIs... with check_expiration=True, require_email=True
+INFO:root:Calling verify_access_token with check_expiration=True, require_email=True
+2025-04-16 00:17:00,670 - root - INFO - Calling verify_access_token with check_expiration=True, require_email=True
+INFO:auth:Development mode detected. Accepting test token with minimal verification.
+2025-04-16 00:17:00,675 - auth - INFO - Development mode detected. Accepting test token with minimal verification.
+WARNING:auth:Test token missing required 'email' claim
+2025-04-16 00:17:00,682 - auth - WARNING - Test token missing required 'email' claim
+INFO:auth:No email in token, attempting to retrieve from userinfo
+2025-04-16 00:17:00,682 - auth - INFO - No email in token, attempting to retrieve from userinfo
+DEBUG:auth:Userinfo Request URL: https://triviapay.us.auth0.com/userinfo
+2025-04-16 00:17:00,682 - auth - DEBUG - Userinfo Request URL: https://triviapay.us.auth0.com/userinfo
+DEBUG:auth:Authorization Header: {'Authorization': 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg'}
+2025-04-16 00:17:00,683 - auth - DEBUG - Authorization Header: {'Authorization': 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImR1Zmo3c3Q1ZmJCZVJtdGNSd19ocSJ9.eyJpc3MiOiJodHRwczovL3RyaXZpYXBheS51cy5hdXRoMC5jb20vIiwic3ViIjoiZW1haWx8NjdmYjQ0MmQ0YWY0ZTY4NjAwMTJkMDE0IiwiYXVkIjpbImh0dHBzOi8vdHJpdmlhcGF5LnVzLmF1dGgwLmNvbS9hcGkvdjIvIiwiaHR0cHM6Ly90cml2aWFwYXkudXMuYXV0aDAuY29tL3VzZXJpbmZvIl0sImlhdCI6MTc0NDYwNDMzNiwiZXhwIjoxNzQ0NjkwNzM2LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIHJlYWQ6Y3VycmVudF91c2VyIHVwZGF0ZTpjdXJyZW50X3VzZXJfbWV0YWRhdGEgZGVsZXRlOmN1cnJlbnRfdXNlcl9tZXRhZGF0YSBjcmVhdGU6Y3VycmVudF91c2VyX21ldGFkYXRhIGNyZWF0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIGRlbGV0ZTpjdXJyZW50X3VzZXJfZGV2aWNlX2NyZWRlbnRpYWxzIHVwZGF0ZTpjdXJyZW50X3VzZXJfaWRlbnRpdGllcyBvZmZsaW5lX2FjY2VzcyIsImd0eSI6InBhc3N3b3JkIiwiYXpwIjoiV3NLMlo3OG1PMnNCbUVGN05tcW1Obm81Y1haeXBMYmsifQ.N21plf3l0d0HimA2OILWGLXXcQj1Kw4LflafnyLb74W4QRyDkkptzMZ4DGUjGWYCISiI6oU1dRJ7-r34-gSVFh5Sdyuy4aPlPQ8Rhqwph6vhRzluavXDM8fiuaN4t9enzPBkeqgnNKmCRdtiJfV7IYcc2J0xkXNUxHE6G01LqaaKKztA7ppba5spbAUxmMxpiGREF4yG3kyNLqr3T20TjU2gEgbbYAlQWDbUIBuLVAqoDzG7AuRtM8UzPRR6wr-f0V3xcvuOhMN5efkYLRrNhdmCsIu2gyayts-8DrSn3et8NzxrB594akY4PtJLOiAv4ardl_JWuohV-uCjk6Fjtg'}
+DEBUG:auth:Userinfo Response Status: 401
+2025-04-16 00:17:00,948 - auth - DEBUG - Userinfo Response Status: 401
+DEBUG:charset_normalizer:Encoding detection: ascii is most likely the one.
+2025-04-16 00:17:00,949 - charset_normalizer - DEBUG - Encoding detection: ascii is most likely the one.
+DEBUG:auth:Userinfo Response Content: Unauthorized
+2025-04-16 00:17:00,950 - auth - DEBUG - Userinfo Response Content: Unauthorized
+ERROR:auth:Userinfo request failed with status 401
+2025-04-16 00:17:00,950 - auth - ERROR - Userinfo request failed with status 401
+DEBUG:charset_normalizer:Encoding detection: ascii is most likely the one.
+2025-04-16 00:17:00,950 - charset_normalizer - DEBUG - Encoding detection: ascii is most likely the one.
+ERROR:auth:Response content: Unauthorized
+2025-04-16 00:17:00,950 - auth - ERROR - Response content: Unauthorized
+INFO:auth:Successfully verified token in dev mode for: unknown
+2025-04-16 00:17:00,954 - auth - INFO - Successfully verified token in dev mode for: unknown
+INFO:root:Successfully verified token, got claims for sub: email|67fb442d4af4e6860012d014
+2025-04-16 00:17:00,954 - root - INFO - Successfully verified token, got claims for sub: email|67fb442d4af4e6860012d014
+INFO:routers.daily_rewards:Debug date info - Today: 2025-04-16, weekday: 2, day_num: 3
+2025-04-16 00:17:01,147 - routers.daily_rewards - INFO - Debug date info - Today: 2025-04-16, weekday: 2, day_num: 3
+INFO:routers.daily_rewards:Week start date (Monday): 2025-04-14
+2025-04-16 00:17:01,147 - routers.daily_rewards - INFO - Week start date (Monday): 2025-04-14
+ERROR:root:Database session error: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+2025-04-16 00:17:01,187 - root - ERROR - Database session error: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+INFO:     127.0.0.1:59488 - "GET /daily-rewards/weekly-status?check_expiration=true&require_email=true HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 254, in execute
+    self._context = self._c.execute_unnamed(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 688, in execute_unnamed
+    self.handle_messages(context)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 827, in handle_messages
+    raise context.error
+pg8000.exceptions.DatabaseError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+pg8000.dbapi.ProgrammingError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/protocols/http/h11_impl.py", line 373, in run_asgi
+    result = await app(self.scope, self.receive, self.send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/middleware/proxy_headers.py", line 75, in __call__
+    return await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py", line 292, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/applications.py", line 122, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 184, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 273, in app
+    raw_response = await run_endpoint_function(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 190, in run_endpoint_function
+    return await dependant.call(**values)
+  File "/Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/daily_rewards.py", line 577, in get_weekly_rewards_status
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2762, in first
+    return self.limit(1)._iter().first()
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2846, in _iter
+    result = self.session.execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/session.py", line 1689, in execute
+    result = conn._execute_20(statement, params or {}, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1583, in _execute_20
+    return meth(self, args_10style, kwargs_10style, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/sql/elements.py", line 323, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1452, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1995, in _handle_dbapi_exception
+    util.raise_(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/util/compat.py", line 207, in raise_
+    raise exception
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+sqlalchemy.exc.ProgrammingError: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+ERROR:uvicorn.error:Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 254, in execute
+    self._context = self._c.execute_unnamed(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 688, in execute_unnamed
+    self.handle_messages(context)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 827, in handle_messages
+    raise context.error
+pg8000.exceptions.DatabaseError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+pg8000.dbapi.ProgrammingError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/protocols/http/h11_impl.py", line 373, in run_asgi
+    result = await app(self.scope, self.receive, self.send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/middleware/proxy_headers.py", line 75, in __call__
+    return await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py", line 292, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/applications.py", line 122, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 184, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 273, in app
+    raw_response = await run_endpoint_function(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 190, in run_endpoint_function
+    return await dependant.call(**values)
+  File "/Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/daily_rewards.py", line 577, in get_weekly_rewards_status
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2762, in first
+    return self.limit(1)._iter().first()
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2846, in _iter
+    result = self.session.execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/session.py", line 1689, in execute
+    result = conn._execute_20(statement, params or {}, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1583, in _execute_20
+    return meth(self, args_10style, kwargs_10style, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/sql/elements.py", line 323, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1452, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1995, in _handle_dbapi_exception
+    util.raise_(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/util/compat.py", line 207, in raise_
+    raise exception
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+sqlalchemy.exc.ProgrammingError: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
+2025-04-16 00:17:01,296 - uvicorn.error - ERROR - Exception in ASGI application
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 254, in execute
+    self._context = self._c.execute_unnamed(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 688, in execute_unnamed
+    self.handle_messages(context)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/core.py", line 827, in handle_messages
+    raise context.error
+pg8000.exceptions.DatabaseError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+pg8000.dbapi.ProgrammingError: {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/protocols/http/h11_impl.py", line 373, in run_asgi
+    result = await app(self.scope, self.receive, self.send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/uvicorn/middleware/proxy_headers.py", line 75, in __call__
+    return await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/applications.py", line 292, in __call__
+    await super().__call__(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/applications.py", line 122, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 184, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/errors.py", line 162, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/cors.py", line 83, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 79, in __call__
+    raise exc
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/middleware/exceptions.py", line 68, in __call__
+    await self.app(scope, receive, sender)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 20, in __call__
+    raise e
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/middleware/asyncexitstack.py", line 17, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 718, in __call__
+    await route.handle(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/starlette/routing.py", line 66, in app
+    response = await func(request)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 273, in app
+    raw_response = await run_endpoint_function(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/fastapi/routing.py", line 190, in run_endpoint_function
+    return await dependant.call(**values)
+  File "/Users/rithiktheddu/Documents/TriviaPay/TriviaBackEnd/./routers/daily_rewards.py", line 577, in get_weekly_rewards_status
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2762, in first
+    return self.limit(1)._iter().first()
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/query.py", line 2846, in _iter
+    result = self.session.execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/orm/session.py", line 1689, in execute
+    result = conn._execute_20(statement, params or {}, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1583, in _execute_20
+    return meth(self, args_10style, kwargs_10style, execution_options)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/sql/elements.py", line 323, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1452, in _execute_clauseelement
+    ret = self._execute_context(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1814, in _execute_context
+    self._handle_dbapi_exception(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1995, in _handle_dbapi_exception
+    util.raise_(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/util/compat.py", line 207, in raise_
+    raise exception
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/base.py", line 1771, in _execute_context
+    self.dialect.do_execute(
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/sqlalchemy/engine/default.py", line 717, in do_execute
+    cursor.execute(statement, parameters)
+  File "/Users/rithiktheddu/Library/Python/3.9/lib/python/site-packages/pg8000/legacy.py", line 281, in execute
+    raise cls(msg)
+sqlalchemy.exc.ProgrammingError: (pg8000.dbapi.ProgrammingError) {'S': 'ERROR', 'V': 'ERROR', 'C': '42703', 'M': 'column user_daily_rewards.last_claimed_day does not exist', 'P': '656', 'F': 'parse_relation.c', 'L': '3716', 'R': 'errorMissingColumn'}
+[SQL: SELECT user_daily_rewards.id AS user_daily_rewards_id, user_daily_rewards.account_id AS user_daily_rewards_account_id, user_daily_rewards.week_start_date AS user_daily_rewards_week_start_date, user_daily_rewards.day1_status AS user_daily_rewards_day1_status, user_daily_rewards.day2_status AS user_daily_rewards_day2_status, user_daily_rewards.day3_status AS user_daily_rewards_day3_status, user_daily_rewards.day4_status AS user_daily_rewards_day4_status, user_daily_rewards.day5_status AS user_daily_rewards_day5_status, user_daily_rewards.day6_status AS user_daily_rewards_day6_status, user_daily_rewards.day7_status AS user_daily_rewards_day7_status, user_daily_rewards.last_claimed_day AS user_daily_rewards_last_claimed_day, user_daily_rewards.created_at AS user_daily_rewards_created_at, user_daily_rewards.updated_at AS user_daily_rewards_updated_at 
+FROM user_daily_rewards 
+WHERE user_daily_rewards.account_id = %s AND user_daily_rewards.week_start_date = %s 
+ LIMIT %s]
+[parameters: (7054809125, datetime.date(2025, 4, 14), 1)]
+(Background on this error at: https://sqlalche.me/e/14/f405)
