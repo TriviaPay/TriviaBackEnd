@@ -1,5 +1,5 @@
 import os
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Body, status
 from pydantic import BaseModel, Field
@@ -10,7 +10,7 @@ import json
 from sqlalchemy import func # Import func for count
 
 from db import get_db
-from models import TriviaDrawConfig, TriviaDrawWinner
+from models import TriviaDrawConfig, TriviaDrawWinner, CompanyRevenue, Transaction
 from routers.dependencies import get_admin_user
 from rewards_logic import perform_draw
 
@@ -340,4 +340,92 @@ async def trigger_draw(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error triggering draw: {str(e)}"
+        )
+
+@router.get("/revenue")
+async def get_company_revenue(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get company revenue data for a specified date range.
+    Only accessible by admin users.
+    If no dates are provided, returns data for the last 10 weeks.
+    """
+    try:
+        # Parse dates if provided
+        if start_date:
+            start = datetime.fromisoformat(start_date).date()
+        else:
+            # Default to 10 weeks ago
+            start = datetime.now().date() - timedelta(weeks=10)
+        
+        if end_date:
+            end = datetime.fromisoformat(end_date).date()
+        else:
+            # Default to today
+            end = datetime.now().date()
+        
+        # Query revenue records for the specified period
+        revenue_records = db.query(CompanyRevenue).filter(
+            CompanyRevenue.week_start_date >= start,
+            CompanyRevenue.week_start_date <= end
+        ).order_by(CompanyRevenue.week_start_date).all()
+        
+        # Format response
+        result = []
+        for record in revenue_records:
+            result.append({
+                "week_start": record.week_start_date.isoformat(),
+                "week_end": record.week_end_date.isoformat(),
+                "weekly_revenue": record.weekly_revenue,
+                "total_revenue": record.total_revenue,
+                "streak_rewards_paid": record.streak_rewards_paid,
+                "total_streak_rewards_paid": record.total_streak_rewards_paid,
+                "created_at": record.created_at.isoformat() if record.created_at else None
+            })
+        
+        # Calculate summary statistics
+        total_weeks = len(result)
+        total_revenue = sum(record["weekly_revenue"] for record in result)
+        total_streak_rewards = sum(record["streak_rewards_paid"] for record in result)
+        
+        # Include current week's transactions that aren't in the weekly summary yet
+        current_monday = datetime.now().date() - timedelta(days=datetime.now().date().weekday())
+        current_transactions = db.query(func.sum(Transaction.amount)).filter(
+            Transaction.created_at >= current_monday,
+            Transaction.amount > 0  # Only count positive transactions as revenue
+        ).scalar() or 0
+        
+        current_streak_rewards = db.query(func.sum(Transaction.amount)).filter(
+            Transaction.created_at >= current_monday,
+            Transaction.transaction_type == "streak_reward"
+        ).scalar() or 0
+        
+        return {
+            "revenue_data": result,
+            "summary": {
+                "total_weeks": total_weeks,
+                "total_revenue": total_revenue,
+                "total_streak_rewards": total_streak_rewards,
+                "current_week_revenue": current_transactions,
+                "current_week_streak_rewards": current_streak_rewards,
+                "date_range": {
+                    "start": start.isoformat(),
+                    "end": end.isoformat()
+                }
+            }
+        }
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid date format: {str(e)}"
+        )
+    except Exception as e:
+        logging.error(f"Error retrieving revenue data: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving revenue data: {str(e)}"
         ) 

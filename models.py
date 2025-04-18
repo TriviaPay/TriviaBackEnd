@@ -91,6 +91,10 @@ class User(Base):
     # Daily rewards relationship
     daily_rewards = relationship("UserDailyRewards", back_populates="user", uselist=True)
 
+    # These relationships for transactions and notifications
+    transactions = relationship("Transaction", back_populates="user", uselist=True)
+    notifications = relationship("Notification", back_populates="user", uselist=True)
+
 def generate_account_id():
     """Generate a 10-digit random unique number."""
     return int("".join(str(random.randint(0, 9)) for _ in range(10)))
@@ -501,3 +505,63 @@ class UserDailyRewards(Base):
     
     # Relationships
     user = relationship("User", back_populates="daily_rewards")
+
+# =================================
+#  Company Revenue Table
+# =================================
+class CompanyRevenue(Base):
+    """
+    Tracks company revenue on a weekly basis and streak rewards paid.
+    New records are created at the beginning of each week (Monday 12:00 AM).
+    """
+    __tablename__ = "company_revenue"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    week_start_date = Column(Date, nullable=False, unique=True)  # Monday of the week
+    week_end_date = Column(Date, nullable=False)  # Sunday of the week
+    weekly_revenue = Column(Float, nullable=False, default=0.0)  # Revenue for this week
+    total_revenue = Column(Float, nullable=False, default=0.0)  # Total revenue until this point
+    streak_rewards_paid = Column(Float, nullable=False, default=0.0)  # Streak rewards paid this week
+    total_streak_rewards_paid = Column(Float, nullable=False, default=0.0)  # Total streak rewards paid
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    notes = Column(String, nullable=True)
+
+# =================================
+#  Transaction Table
+# =================================
+class Transaction(Base):
+    """
+    Tracks all monetary transactions (wallet balance changes) for users.
+    This includes purchases, streak rewards, etc.
+    """
+    __tablename__ = "transactions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    transaction_type = Column(String, nullable=False)  # "streak_reward", "purchase", "refund", etc.
+    amount = Column(Float, nullable=False)  # Positive for additions, negative for deductions
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User", back_populates="transactions")
+
+# =================================
+#  Notification Table
+# =================================
+class Notification(Base):
+    """
+    Stores user notifications for various events.
+    """
+    __tablename__ = "notifications"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    notification_type = Column(String, nullable=False)  # "streak_milestone", "reward", etc.
+    message = Column(String, nullable=False)
+    is_read = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User", back_populates="notifications")

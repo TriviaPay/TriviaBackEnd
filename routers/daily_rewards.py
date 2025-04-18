@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import logging
 
 from db import get_db
-from models import User, UserDailyRewards, Frame, UserFrame, Avatar, UserAvatar
+from models import User, UserDailyRewards, Frame, UserFrame, Avatar, UserAvatar, Transaction, Notification, CompanyRevenue
 from routers.dependencies import get_current_user
 
 router = APIRouter(prefix="/daily-rewards", tags=["Daily Rewards"])
@@ -24,6 +24,8 @@ async def process_daily_login(
     - Only current day is available to claim
     - Missed days become locked
     - The week resets on Mondays
+    - Streaks increment each day, reset if missed (unless streak saver used)
+    - $5 reward for every 365-day streak milestone
     """
     logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ async def process_daily_login(
 
     # Get current date and time
     today = datetime.now().date()
+    now = datetime.now()
     
     # Find the current weekday (0=Monday, 6=Sunday)
     current_weekday = today.weekday()
@@ -77,6 +80,36 @@ async def process_daily_login(
                 logger.info(f"Marking future day{day} as locked")
             
         db.add(user_rewards)
+        db.commit()
+    else:
+        # Reset days to enforce policy - FIXED 
+        modified = False
+        
+        # First ensure all past days that are "available" are set to "missed"
+        for day in range(1, current_day_num):
+            day_status = getattr(user_rewards, f"day{day}_status")
+            if day_status == "available":
+                setattr(user_rewards, f"day{day}_status", "missed")
+                logger.info(f"Fixed: Changed day{day} from 'available' to 'missed'")
+                modified = True
+        
+        # Then handle the current day
+        day_status = getattr(user_rewards, f"day{current_day_num}_status")
+        if day_status in ["locked", "missed"]:
+            setattr(user_rewards, f"day{current_day_num}_status", "available")
+            logger.info(f"Updated day{current_day_num} from {day_status} to available")
+            modified = True
+        
+        # Make sure future days are locked
+        for day in range(current_day_num + 1, 8):
+            day_status = getattr(user_rewards, f"day{day}_status")
+            if day_status == "available":
+                setattr(user_rewards, f"day{day}_status", "locked")
+                logger.info(f"Fixed: Changed day{day} from 'available' to 'locked'")
+                modified = True
+                
+        if modified:
+            db.commit()
     
     # Get today's reward status
     today_status = getattr(user_rewards, f"day{current_day_num}_status")
@@ -89,6 +122,7 @@ async def process_daily_login(
             "message": "You've already claimed today's reward.",
             "gems_added": 0,
             "current_gems": user.gems,
+            "current_streak": user.streaks,
             "daily_reward_status": get_daily_reward_status(user_rewards, current_day_num)
         }
     
@@ -99,6 +133,7 @@ async def process_daily_login(
             "message": "No reward available for today.",
             "gems_added": 0,
             "current_gems": user.gems,
+            "current_streak": user.streaks,
             "daily_reward_status": get_daily_reward_status(user_rewards, current_day_num)
         }
     
@@ -125,6 +160,88 @@ async def process_daily_login(
     user.auto_answer_used_today = False
     logger.info(f"Reset daily boost flags for user {user.account_id}")
 
+    # =================================
+    # Streak Logic Implementation
+    # =================================
+    streak_message = ""
+    streak_reward_message = ""
+    streak_saver_used = False
+    
+    # Check if this is a consecutive day login 
+    if user.last_streak_date:
+        yesterday = today - timedelta(days=1)
+        two_days_ago = today - timedelta(days=2)
+        
+        if user.last_streak_date.date() == yesterday:
+            # Consecutive day, increment streak
+            user.streaks += 1
+            logger.info(f"User {user.account_id} continued streak to {user.streaks}")
+            
+            # Check for 365-day milestone
+            if user.streaks > 0 and user.streaks % 365 == 0:
+                # Award $5 bonus for yearly streak
+                reward_amount = 5.0
+                user.wallet_balance += reward_amount
+                
+                # Create transaction record
+                streak_transaction = Transaction(
+                    account_id=user.account_id,
+                    transaction_type="streak_reward",
+                    amount=reward_amount,
+                    description=f"Reward for {user.streaks}-day streak"
+                )
+                db.add(streak_transaction)
+                
+                # Create notification
+                milestone_notification = Notification(
+                    account_id=user.account_id,
+                    notification_type="streak_milestone",
+                    message=f"Congratulations on your {user.streaks}-day streak! You've earned a $5.00 bonus."
+                )
+                db.add(milestone_notification)
+                
+                # Update company revenue
+                current_week_revenue = db.query(CompanyRevenue).filter(
+                    CompanyRevenue.week_start_date == monday_date
+                ).first()
+                
+                if current_week_revenue:
+                    current_week_revenue.streak_rewards_paid += reward_amount
+                    current_week_revenue.total_streak_rewards_paid += reward_amount
+                
+                streak_reward_message = f" You've earned a $5.00 bonus for your {user.streaks}-day streak!"
+                logger.info(f"User {user.account_id} awarded ${reward_amount} for {user.streaks}-day streak")
+            
+            # Check for monthly milestone (30 days) for notification
+            if user.streaks > 0 and user.streaks % 30 == 0:
+                month_milestone = user.streaks // 30
+                monthly_notification = Notification(
+                    account_id=user.account_id,
+                    notification_type="streak_milestone",
+                    message=f"Congratulations on your {month_milestone}-month streak! Keep it up!"
+                )
+                db.add(monthly_notification)
+        
+        elif user.last_streak_date.date() == two_days_ago and user.streak_saver_count > 0:
+            # Missed one day but has streak saver
+            user.streak_saver_count -= 1
+            streak_saver_used = True
+            user.streaks += 1
+            streak_message = f" Streak saver used. You have {user.streak_saver_count} streak savers remaining."
+            logger.info(f"Used streak saver for user {user.account_id}. Remaining savers: {user.streak_saver_count}")
+        
+        else:
+            # Missed more than one day or no streak saver available
+            user.streaks = 1  # Reset streak and start fresh
+            logger.info(f"Streak reset for user {user.account_id}. More than one day missed.")
+    else:
+        # First login ever
+        user.streaks = 1
+        logger.info(f"User {user.account_id} started first streak.")
+    
+    # Update last streak date
+    user.last_streak_date = now
+
     # Commit all changes
     try:
         db.commit()
@@ -132,11 +249,17 @@ async def process_daily_login(
         
         # Build response message
         reward_message = f"You received {gems_reward} gems{special_reward_message}!"
+        if streak_message:
+            reward_message += streak_message
+        if streak_reward_message:
+            reward_message += streak_reward_message
         
         return {
             "message": reward_message,
             "gems_added": gems_reward,
             "current_gems": user.gems,
+            "current_streak": user.streaks,
+            "streak_saver_used": streak_saver_used,
             "daily_reward_status": get_daily_reward_status(user_rewards, current_day_num)
         }
     except Exception as e:
@@ -247,6 +370,8 @@ async def get_weekly_rewards_status(
     """
     Get the current status of the weekly rewards.
     Returns the status of all 7 days in the current week.
+    Only the current day is available to claim if not already claimed.
+    Past days are marked as missed and future days are locked.
     """
     logger = logging.getLogger(__name__)
 
@@ -301,9 +426,119 @@ async def get_weekly_rewards_status(
             
         db.add(user_rewards)
         db.commit()
+    else:
+        # Reset days to enforce policy - FIXED
+        modified = False
+        
+        # First ensure all past days that are "available" are set to "missed"
+        for day in range(1, current_day_num):
+            day_status = getattr(user_rewards, f"day{day}_status")
+            if day_status == "available":
+                setattr(user_rewards, f"day{day}_status", "missed")
+                logger.info(f"Fixed: Changed day{day} from 'available' to 'missed'")
+                modified = True
+        
+        # Then handle the current day
+        day_status = getattr(user_rewards, f"day{current_day_num}_status")
+        if day_status in ["locked", "missed"]:
+            setattr(user_rewards, f"day{current_day_num}_status", "available")
+            logger.info(f"Updated day{current_day_num} from {day_status} to available")
+            modified = True
+        
+        # Make sure future days are locked
+        for day in range(current_day_num + 1, 8):
+            day_status = getattr(user_rewards, f"day{day}_status")
+            if day_status == "available":
+                setattr(user_rewards, f"day{day}_status", "locked")
+                logger.info(f"Fixed: Changed day{day} from 'available' to 'locked'")
+                modified = True
+                
+        if modified:
+            db.commit()
     
     # Create response with daily reward statuses
     return get_daily_reward_status(user_rewards, current_day_num)
+
+@router.get("/streak-info")
+async def get_streak_info(
+    claims: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the user's current streak information, streak savers, and streak-related notifications.
+    """
+    logger = logging.getLogger(__name__)
+
+    sub = claims.get("sub")
+    user = db.query(User).filter(User.sub == sub).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get streak-related notifications
+    notifications = db.query(Notification).filter(
+        Notification.account_id == user.account_id,
+        Notification.notification_type == "streak_milestone",
+        Notification.is_read == False
+    ).order_by(Notification.created_at.desc()).limit(5).all()
+    
+    # Calculate days until next milestone
+    next_monthly_milestone = 30 * (user.streaks // 30 + 1)
+    days_until_monthly = next_monthly_milestone - user.streaks
+    
+    next_yearly_milestone = 365 * (user.streaks // 365 + 1)
+    days_until_yearly = next_yearly_milestone - user.streaks
+    
+    # Calculate next reward date
+    next_reward_date = None
+    if user.last_streak_date:
+        next_reward_date = (user.last_streak_date + timedelta(days=days_until_yearly)).date().isoformat()
+    
+    notification_list = []
+    for notification in notifications:
+        notification_list.append({
+            "id": notification.id,
+            "message": notification.message,
+            "created_at": notification.created_at.isoformat()
+        })
+    
+    return {
+        "current_streak": user.streaks,
+        "streak_saver_count": user.streak_saver_count,
+        "days_until_monthly_milestone": days_until_monthly,
+        "days_until_yearly_milestone": days_until_yearly,
+        "next_yearly_milestone": next_yearly_milestone,
+        "next_reward_date": next_reward_date,
+        "notifications": notification_list
+    }
+
+@router.post("/notifications/{notification_id}/mark-read")
+async def mark_notification_read(
+    notification_id: int,
+    claims: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Mark a notification as read.
+    """
+    logger = logging.getLogger(__name__)
+
+    sub = claims.get("sub")
+    user = db.query(User).filter(User.sub == sub).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.account_id == user.account_id
+    ).first()
+    
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    notification.is_read = True
+    db.commit()
+    
+    return {"message": "Notification marked as read"}
 
 # Helper function to award a non-premium cosmetic item
 def award_nonpremium_cosmetic(user, db, logger):
