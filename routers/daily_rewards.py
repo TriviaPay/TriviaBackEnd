@@ -160,88 +160,6 @@ async def process_daily_login(
     user.auto_answer_used_today = False
     logger.info(f"Reset daily boost flags for user {user.account_id}")
 
-    # =================================
-    # Streak Logic Implementation
-    # =================================
-    streak_message = ""
-    streak_reward_message = ""
-    streak_saver_used = False
-    
-    # Check if this is a consecutive day login 
-    if user.last_streak_date:
-        yesterday = today - timedelta(days=1)
-        two_days_ago = today - timedelta(days=2)
-        
-        if user.last_streak_date.date() == yesterday:
-            # Consecutive day, increment streak
-            user.streaks += 1
-            logger.info(f"User {user.account_id} continued streak to {user.streaks}")
-            
-            # Check for 365-day milestone
-            if user.streaks > 0 and user.streaks % 365 == 0:
-                # Award $5 bonus for yearly streak
-                reward_amount = 5.0
-                user.wallet_balance += reward_amount
-                
-                # Create transaction record
-                streak_transaction = Transaction(
-                    account_id=user.account_id,
-                    transaction_type="streak_reward",
-                    amount=reward_amount,
-                    description=f"Reward for {user.streaks}-day streak"
-                )
-                db.add(streak_transaction)
-                
-                # Create notification
-                milestone_notification = Notification(
-                    account_id=user.account_id,
-                    notification_type="streak_milestone",
-                    message=f"Congratulations on your {user.streaks}-day streak! You've earned a $5.00 bonus."
-                )
-                db.add(milestone_notification)
-                
-                # Update company revenue
-                current_week_revenue = db.query(CompanyRevenue).filter(
-                    CompanyRevenue.week_start_date == monday_date
-                ).first()
-                
-                if current_week_revenue:
-                    current_week_revenue.streak_rewards_paid += reward_amount
-                    current_week_revenue.total_streak_rewards_paid += reward_amount
-                
-                streak_reward_message = f" You've earned a $5.00 bonus for your {user.streaks}-day streak!"
-                logger.info(f"User {user.account_id} awarded ${reward_amount} for {user.streaks}-day streak")
-            
-            # Check for monthly milestone (30 days) for notification
-            if user.streaks > 0 and user.streaks % 30 == 0:
-                month_milestone = user.streaks // 30
-                monthly_notification = Notification(
-                    account_id=user.account_id,
-                    notification_type="streak_milestone",
-                    message=f"Congratulations on your {month_milestone}-month streak! Keep it up!"
-                )
-                db.add(monthly_notification)
-        
-        elif user.last_streak_date.date() == two_days_ago and user.streak_saver_count > 0:
-            # Missed one day but has streak saver
-            user.streak_saver_count -= 1
-            streak_saver_used = True
-            user.streaks += 1
-            streak_message = f" Streak saver used. You have {user.streak_saver_count} streak savers remaining."
-            logger.info(f"Used streak saver for user {user.account_id}. Remaining savers: {user.streak_saver_count}")
-        
-        else:
-            # Missed more than one day or no streak saver available
-            user.streaks = 1  # Reset streak and start fresh
-            logger.info(f"Streak reset for user {user.account_id}. More than one day missed.")
-    else:
-        # First login ever
-        user.streaks = 1
-        logger.info(f"User {user.account_id} started first streak.")
-    
-    # Update last streak date
-    user.last_streak_date = now
-
     # Commit all changes
     try:
         db.commit()
@@ -249,17 +167,12 @@ async def process_daily_login(
         
         # Build response message
         reward_message = f"You received {gems_reward} gems{special_reward_message}!"
-        if streak_message:
-            reward_message += streak_message
-        if streak_reward_message:
-            reward_message += streak_reward_message
         
         return {
             "message": reward_message,
             "gems_added": gems_reward,
             "current_gems": user.gems,
             "current_streak": user.streaks,
-            "streak_saver_used": streak_saver_used,
             "daily_reward_status": get_daily_reward_status(user_rewards, current_day_num)
         }
     except Exception as e:
@@ -459,6 +372,155 @@ async def get_weekly_rewards_status(
     # Create response with daily reward statuses
     return get_daily_reward_status(user_rewards, current_day_num)
 
+@router.post("/update-streak")
+async def update_streak(
+    claims: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update the user's login streak.
+    - Streaks increment for consecutive day logins
+    - Streak resets if more than one day is missed
+    - Streak saver can be used to maintain streak after missing one day
+    - $5 reward for every 365-day streak milestone
+    - This endpoint can only update the streak once per day
+    """
+    logger = logging.getLogger(__name__)
+
+    sub = claims.get("sub")
+    user = db.query(User).filter(User.sub == sub).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get current date and time
+    today = datetime.now().date()
+    now = datetime.now()
+    
+    # Calculate the Monday of this week
+    current_weekday = today.weekday()
+    monday_date = today - timedelta(days=current_weekday)
+    
+    # Check if streak was already updated today
+    if user.last_streak_date and user.last_streak_date.date() == today:
+        return {
+            "message": "Streak already updated today.",
+            "current_streak": user.streaks,
+            "streak_saver_count": user.streak_saver_count,
+            "streak_updated": False
+        }
+    
+    streak_message = ""
+    streak_reward_message = ""
+    streak_saver_used = False
+    streak_updated = False
+    
+    # Check if this is a consecutive day login 
+    if user.last_streak_date:
+        yesterday = today - timedelta(days=1)
+        two_days_ago = today - timedelta(days=2)
+        
+        if user.last_streak_date.date() == yesterday:
+            # Consecutive day, increment streak
+            user.streaks += 1
+            streak_updated = True
+            logger.info(f"User {user.account_id} continued streak to {user.streaks}")
+            
+            # Check for 365-day milestone
+            if user.streaks > 0 and user.streaks % 365 == 0:
+                # Award $5 bonus for yearly streak
+                reward_amount = 5.0
+                user.wallet_balance += reward_amount
+                
+                # Create transaction record
+                streak_transaction = Transaction(
+                    account_id=user.account_id,
+                    transaction_type="streak_reward",
+                    amount=reward_amount,
+                    description=f"Reward for {user.streaks}-day streak"
+                )
+                db.add(streak_transaction)
+                
+                # Create notification
+                milestone_notification = Notification(
+                    account_id=user.account_id,
+                    notification_type="streak_milestone",
+                    message=f"Congratulations on your {user.streaks}-day streak! You've earned a $5.00 bonus."
+                )
+                db.add(milestone_notification)
+                
+                # Update company revenue
+                current_week_revenue = db.query(CompanyRevenue).filter(
+                    CompanyRevenue.week_start_date == monday_date
+                ).first()
+                
+                if current_week_revenue:
+                    current_week_revenue.streak_rewards_paid += reward_amount
+                    current_week_revenue.total_streak_rewards_paid += reward_amount
+                
+                streak_reward_message = f"You've earned a $5.00 bonus for your {user.streaks}-day streak!"
+                logger.info(f"User {user.account_id} awarded ${reward_amount} for {user.streaks}-day streak")
+            
+            # Check for monthly milestone (30 days) for notification
+            if user.streaks > 0 and user.streaks % 30 == 0:
+                month_milestone = user.streaks // 30
+                monthly_notification = Notification(
+                    account_id=user.account_id,
+                    notification_type="streak_milestone",
+                    message=f"Congratulations on your {month_milestone}-month streak! Keep it up!"
+                )
+                db.add(monthly_notification)
+        
+        elif user.last_streak_date.date() == two_days_ago and user.streak_saver_count > 0:
+            # Missed one day but has streak saver
+            user.streak_saver_count -= 1
+            streak_saver_used = True
+            user.streaks += 1
+            streak_updated = True
+            streak_message = f"Streak saver used. You have {user.streak_saver_count} streak savers remaining."
+            logger.info(f"Used streak saver for user {user.account_id}. Remaining savers: {user.streak_saver_count}")
+        
+        else:
+            # Missed more than one day or no streak saver available
+            user.streaks = 1  # Reset streak and start fresh
+            streak_updated = True
+            logger.info(f"Streak reset for user {user.account_id}. More than one day missed.")
+    else:
+        # First login ever
+        user.streaks = 1
+        streak_updated = True
+        logger.info(f"User {user.account_id} started first streak.")
+    
+    # Update last streak date
+    user.last_streak_date = now
+
+    # Commit all changes
+    try:
+        db.commit()
+        logger.info(f"Committed streak update for user {user.account_id}")
+        
+        # Build response message
+        response_message = "Streak updated successfully."
+        if streak_message:
+            response_message = streak_message
+        if streak_reward_message:
+            response_message = streak_reward_message
+        
+        return {
+            "message": response_message,
+            "current_streak": user.streaks,
+            "streak_saver_count": user.streak_saver_count,
+            "streak_saver_used": streak_saver_used,
+            "streak_updated": streak_updated
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to update streak for user {user.account_id}: {e}", exc_info=True)
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Failed to update streak: {str(e)}"
+        )
+
 @router.get("/streak-info")
 async def get_streak_info(
     claims: dict = Depends(get_current_user),
@@ -491,7 +553,11 @@ async def get_streak_info(
     # Calculate next reward date
     next_reward_date = None
     if user.last_streak_date:
-        next_reward_date = (user.last_streak_date + timedelta(days=days_until_yearly)).date().isoformat()
+        # Instead of adding days_until_yearly to last_streak_date (which is when they last 
+        # logged in), we need to calculate when they'll reach the next yearly milestone
+        # This is today + the remaining days until yearly milestone
+        today = datetime.now().date()
+        next_reward_date = (today + timedelta(days=days_until_yearly)).isoformat()
     
     notification_list = []
     for notification in notifications:

@@ -351,7 +351,7 @@ async def reset_winner_logic(
             config.custom_winner_count = None
             # Note: We don't reset the draw time/timezone in custom_data here,
             # as resetting only affects the winner count logic.
-
+        
         db.commit()
         db.refresh(config) # Refresh to get the committed state
         logger.info(f"Committed reset. DB state: ID={config.id}, is_custom={config.is_custom}, count={config.custom_winner_count}, custom_data='{config.custom_data}'")
@@ -392,7 +392,7 @@ async def reset_winner_logic(
             draw_timezone=resp_timezone,
             custom_data=final_custom_data # Include the parsed custom_data
         )
-
+        
     except Exception as e:
         # Ensure logger is accessible in except block too
         logger = logging.getLogger(__name__)
@@ -401,7 +401,7 @@ async def reset_winner_logic(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error resetting winner logic: {str(e)}"
-        ) 
+        )
 
 # ======== Daily Rewards Endpoints ========
 
