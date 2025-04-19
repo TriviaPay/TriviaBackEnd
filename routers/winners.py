@@ -498,3 +498,77 @@ async def get_all_time_winners(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving all-time winners: {str(e)}"
         )
+
+@router.get("/streaks", response_model=List[Dict[str, Any]])
+async def get_all_user_streaks(
+    skip: int = Query(0, description="Number of records to skip for pagination"),
+    limit: int = Query(50, description="Maximum number of records to return"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get all users' streaks with their profile details.
+    
+    Results are ordered by:
+    1. Streak count (descending)
+    2. Last streak update time (oldest first if streak count is tied)
+    
+    This endpoint is available to all authenticated users.
+    """
+    logger.info(f"Getting all user streaks, skip={skip}, limit={limit}")
+    
+    try:
+        # Fetch users with their streaks and profile details
+        query = (
+            db.query(
+                User.account_id,
+                User.username,
+                User.streaks,
+                User.badge_image_url,
+                User.last_streak_date,
+                User.selected_avatar_id,
+                User.selected_frame_id,
+                User.profile_pic_url,
+                Avatar.image_url.label("avatar_url"),
+                Frame.image_url.label("frame_url"),
+                Badge.name.label("badge_name"),
+                Badge.image_url.label("badge_url"),
+            )
+            .outerjoin(Avatar, User.selected_avatar_id == Avatar.id)
+            .outerjoin(Frame, User.selected_frame_id == Frame.id)
+            .outerjoin(Badge, User.badge_id == Badge.id)
+            .filter(User.streaks > 0)  # Only users with streak > 0
+            .order_by(
+                User.streaks.desc(),  # Primary sort by streak (descending)
+                User.last_streak_date.asc().nullslast()  # Secondary sort by last update (oldest first)
+            )
+        )
+        
+        # Apply pagination
+        user_streaks = query.offset(skip).limit(limit).all()
+        
+        # Format the results
+        result = []
+        for user in user_streaks:
+            display_image = user.avatar_url if user.selected_avatar_id else user.profile_pic_url
+            
+            result.append({
+                "account_id": user.account_id,
+                "username": user.username or f"User{user.account_id}",  # Fallback for users without username
+                "streaks": user.streaks,
+                "last_streak_date": user.last_streak_date.isoformat() if user.last_streak_date else None,
+                "display_image": display_image,
+                "frame_url": user.frame_url,
+                "badge_name": user.badge_name,
+                "badge_url": user.badge_url or user.badge_image_url,  # Use cached badge image as fallback
+            })
+        
+        logger.info(f"Returning {len(result)} user streaks")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error retrieving user streaks: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving user streaks: {str(e)}"
+        )
