@@ -10,7 +10,7 @@ import json
 from sqlalchemy import func # Import func for count
 
 from db import get_db
-from models import TriviaDrawConfig, TriviaDrawWinner, CompanyRevenue, Transaction, User, Avatar, UserAvatar
+from models import TriviaDrawConfig, TriviaDrawWinner, CompanyRevenue, Transaction, User, Avatar, UserAvatar, Frame, UserFrame
 from routers.dependencies import get_admin_user
 from rewards_logic import perform_draw, get_daily_winners, get_weekly_winners
 
@@ -511,4 +511,94 @@ async def check_avatar_integrity(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error checking avatar integrity: {str(e)}"
+        )
+
+@router.get("/db-integrity/frames", response_model=Dict[str, Any])
+async def check_frame_integrity(
+    fix: bool = Query(False, description="Whether to fix inconsistencies"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """
+    Admin endpoint to check database integrity for frame selections
+    """
+    logger.info(f"Admin checking frame database integrity, fix={fix}")
+    
+    try:
+        # Get all users with a selected frame
+        users_with_frames = db.query(User).filter(User.selected_frame_id != None).all()
+        
+        # Get list of all available frame IDs
+        all_frames = {frame.id: frame for frame in db.query(Frame).all()}
+        
+        # Track statistics
+        total_users = len(users_with_frames)
+        valid_count = 0
+        invalid_count = 0
+        fixed_count = 0
+        invalid_details = []
+        
+        for user in users_with_frames:
+            # Check if selected frame exists
+            if user.selected_frame_id not in all_frames:
+                invalid_count += 1
+                
+                # Record details of invalid selection
+                invalid_details.append({
+                    "user_id": user.account_id,
+                    "username": user.username,
+                    "frame_id": user.selected_frame_id,
+                    "owned_frames_count": db.query(UserFrame).filter(UserFrame.user_id == user.account_id).count()
+                })
+                
+                # Fix if requested
+                if fix:
+                    # Try to find a valid owned frame to set instead
+                    owned_frames = db.query(UserFrame).filter(UserFrame.user_id == user.account_id).all()
+                    if owned_frames:
+                        new_frame_id = owned_frames[0].frame_id
+                        if new_frame_id in all_frames:
+                            user.selected_frame_id = new_frame_id
+                            logger.info(f"Fixed user {user.account_id} frame by setting to owned frame: {new_frame_id}")
+                            fixed_count += 1
+                        else:
+                            user.selected_frame_id = None
+                            logger.info(f"Reset user {user.account_id} frame to None as owned frame {new_frame_id} is also invalid")
+                            fixed_count += 1
+                    else:
+                        # User has no owned frames, reset selection
+                        user.selected_frame_id = None
+                        logger.info(f"Reset user {user.account_id} frame to None as they have no owned frames")
+                        fixed_count += 1
+            else:
+                # Frame ID is valid
+                valid_count += 1
+        
+        # Commit any changes if fixes were applied
+        if fix and fixed_count > 0:
+            try:
+                db.commit()
+                logger.info(f"Successfully committed {fixed_count} frame fixes")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error committing frame fixes: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error committing frame fixes: {str(e)}"
+                )
+        
+        return {
+            "status": "success",
+            "total_users_with_frames": total_users,
+            "valid_selections": valid_count,
+            "invalid_selections": invalid_count,
+            "fixed_count": fixed_count if fix else 0,
+            "repair_mode": fix,
+            "invalid_details": invalid_details if len(invalid_details) < 20 else invalid_details[:20]  # Limit output size
+        }
+    except Exception as e:
+        logger.error(f"Error checking frame integrity: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error checking frame integrity: {str(e)}"
         ) 
