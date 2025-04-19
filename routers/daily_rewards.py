@@ -6,7 +6,7 @@ import logging
 
 from db import get_db
 from models import User, UserDailyRewards, Frame, UserFrame, Avatar, UserAvatar, Transaction, Notification, CompanyRevenue
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user, get_admin_user
 
 router = APIRouter(prefix="/daily-rewards", tags=["Daily Rewards"])
 
@@ -605,6 +605,218 @@ async def mark_notification_read(
     db.commit()
     
     return {"message": "Notification marked as read"}
+
+@router.post("/use-streak-saver", 
+    summary="Manually use a streak saver",
+    description="""
+    Manually use a streak saver from your inventory to maintain your streak after missing a day.
+    
+    **Requirements:**
+    - User must have at least one streak saver in inventory
+    - User must have missed 1-2 days since last login (not more)
+    - User must have a previous streak to save
+    - User must not have already logged in today
+    
+    When successful, this endpoint:
+    1. Decrements the streak saver count by 1
+    2. Increments the user's streak by 1
+    3. Updates the last streak date to today
+    
+    **Note:** This endpoint is different from purchasing and automatically using a streak saver in the store.
+    It allows you to use a streak saver you've already purchased.
+    """,
+    responses={
+        200: {
+            "description": "Streak saver used successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Streak saver used successfully. Your streak is now 45 days.",
+                        "current_streak": 45,
+                        "streak_saver_count": 2,
+                        "last_streak_date": "2023-06-15T10:30:00"
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Cannot use streak saver",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "no_savers": {
+                            "summary": "No streak savers available",
+                            "value": {"detail": "No streak savers available. Please purchase one from the store."}
+                        },
+                        "already_updated": {
+                            "summary": "Already logged in today",
+                            "value": {"detail": "You've already logged in today. Your streak is already active."}
+                        },
+                        "too_late": {
+                            "summary": "Too many days missed",
+                            "value": {"detail": "It's been 5 days since your last login. Streak saver can only help if you missed 1 or 2 days."}
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
+async def use_streak_saver(
+    claims: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Manually use a streak saver to prevent losing the current streak.
+    This will:
+    1. Check if the user has streak savers available
+    2. Verify that the user's streak needs saving (last login wasn't today)
+    3. Apply the streak saver and keep the streak active
+    
+    Returns the updated streak saver count and streak info.
+    """
+    logger = logging.getLogger(__name__)
+
+    sub = claims.get("sub")
+    user = db.query(User).filter(User.sub == sub).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get current date and time
+    today = datetime.now().date()
+    now = datetime.now()
+    
+    # Check if streak saver is available
+    if user.streak_saver_count <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No streak savers available. Please purchase one from the store."
+        )
+    
+    # Check if streak was already updated today
+    if user.last_streak_date and user.last_streak_date.date() == today:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You've already logged in today. Your streak is already active."
+        )
+    
+    # Check if user has a streak to save
+    if not user.last_streak_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active streak to save."
+        )
+    
+    # Calculate days since last streak update
+    days_since_last_login = (today - user.last_streak_date.date()).days
+    
+    # If more than 2 days have passed, streak saver can't help
+    if days_since_last_login > 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"It's been {days_since_last_login} days since your last login. Streak saver can only help if you missed 1 or 2 days."
+        )
+    
+    # Use streak saver - increment streak and set last_streak_date to yesterday
+    user.streak_saver_count -= 1
+    user.streaks += 1
+    user.last_streak_date = datetime.now()  # Update to today to maintain streak
+    
+    try:
+        db.commit()
+        logger.info(f"Streak saver used for user {user.account_id}. Streak extended to {user.streaks}.")
+        
+        return {
+            "message": f"Streak saver used successfully. Your streak is now {user.streaks} days.",
+            "current_streak": user.streaks,
+            "streak_saver_count": user.streak_saver_count,
+            "last_streak_date": user.last_streak_date.isoformat()
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to use streak saver for user {user.account_id}: {e}", exc_info=True)
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to use streak saver: {str(e)}"
+        )
+
+# Admin endpoint to reset daily rewards records
+@router.post("/admin/reset-rewards")
+async def reset_daily_rewards(
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Admin endpoint to reset and fix daily rewards records.
+    This will ensure that for each user's current week record:
+    - Only the current day is available
+    - Past days are marked as missed if not claimed
+    - Future days are locked
+    """
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current date
+        today = datetime.now().date()
+        
+        # Find the current weekday (0=Monday, 6=Sunday)
+        current_weekday = today.weekday()
+        current_day_num = current_weekday + 1  # Convert to 1-7 format
+        
+        # Calculate the Monday of this week
+        monday_date = today - timedelta(days=current_weekday)
+        
+        # Get all current week rewards records
+        records = db.query(UserDailyRewards).filter(
+            UserDailyRewards.week_start_date == monday_date
+        ).all()
+        
+        logger.info(f"Found {len(records)} records for current week")
+        
+        fixed_count = 0
+        
+        for record in records:
+            modified = False
+            
+            # Fix past days (should be missed or claimed/doubled)
+            for day in range(1, current_day_num):
+                day_status = getattr(record, f"day{day}_status")
+                if day_status == "available" or day_status == "locked":
+                    setattr(record, f"day{day}_status", "missed")
+                    modified = True
+            
+            # Fix current day (should be available if not claimed/doubled)
+            day_status = getattr(record, f"day{current_day_num}_status")
+            if day_status == "locked" or day_status == "missed":
+                setattr(record, f"day{current_day_num}_status", "available")
+                modified = True
+            
+            # Fix future days (should all be locked)
+            for day in range(current_day_num + 1, 8):
+                day_status = getattr(record, f"day{day}_status")
+                if day_status != "locked":
+                    setattr(record, f"day{day}_status", "locked")
+                    modified = True
+            
+            if modified:
+                fixed_count += 1
+        
+        db.commit()
+        
+        return {
+            "message": f"Daily rewards reset complete. Fixed {fixed_count} out of {len(records)} records.",
+            "current_day": current_day_num,
+            "week_start_date": monday_date.isoformat()
+        }
+    
+    except Exception as e:
+        logger.error(f"Error resetting daily rewards: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reset daily rewards: {str(e)}"
+        )
 
 # Helper function to award a non-premium cosmetic item
 def award_nonpremium_cosmetic(user, db, logger):

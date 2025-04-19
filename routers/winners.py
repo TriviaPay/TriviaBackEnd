@@ -7,8 +7,11 @@ import pytz
 from db import get_db
 from models import Winner, User, TriviaDrawWinner, TriviaDrawConfig, Badge, Avatar, Frame
 from routers.dependencies import get_current_user
-from rewards_logic import get_daily_winners as get_daily_winners_logic
 from pydantic import BaseModel
+import logging
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/winners", tags=["Winners"])
 
@@ -52,74 +55,72 @@ def get_recent_winners(
         ]
     }
 
-@router.get("/daily-winners", response_model=List[Dict[str, Any]])
-async def get_daily_winner_list(
-    specific_date: Optional[date] = None,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get the list of daily winners.
-    If specific_date is provided, returns winners for that day.
-    Otherwise, returns winners for the most recent draw.
+@router.get("/daily", 
+    response_model=List[WinnerResponse],
+    summary="Get daily winners with detailed information",
+    description="""
+    Retrieves detailed information about winners for a specific date's draw.
     
-    Returns:
-        List of winners with:
-        - User info (username, badge, avatar, frame)
-        - Position in the draw
-        - Amount won in the draw
-        - Total amount won all-time
-        - Date on which they won (draw_date)
-    """
-    try:
-        # Try to get actual winners from rewards_logic
-        winners = get_daily_winners_logic(db, specific_date)
-        if not winners:
-            # If no winners found, return test data
-            target_date = specific_date or date.today()
-            return [
-                {
-                    "username": "test_user",
-                    "amount_won": 100.0,
-                    "total_amount_won": 500.0,
-                    "badge_name": "Gold",
-                    "badge_image_url": "https://example.com/gold.png",
-                    "avatar_url": "https://example.com/avatar.png",
-                    "frame_url": "https://example.com/frame.png",
-                    "position": 1,
-                    "draw_date": target_date.isoformat()
+    If a date is provided via the 'date_str' query parameter (in YYYY-MM-DD format),
+    the endpoint returns winners for that particular date.
+    
+    If no date is provided, it defaults to returning yesterday's winners.
+    
+    The response includes comprehensive user information including username,
+    amount won in this specific draw, total amount won all-time across all draws,
+    profile customizations (badge, avatar, frame), position in the draw,
+    and the date on which they won.
+    
+    This endpoint is protected and requires user authentication.
+    """,
+    responses={
+        200: {
+            "description": "List of daily winners retrieved successfully",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "username": "winner1",
+                            "amount_won": 250.0,
+                            "total_amount_won": 1250.0,
+                            "badge_name": "Gold",
+                            "badge_image_url": "https://example.com/gold.png",
+                            "avatar_url": "https://example.com/avatar.png",
+                            "frame_url": "https://example.com/frame.png",
+                            "position": 1,
+                            "draw_date": "2023-06-14"
+                        }
+                    ]
                 }
-            ]
-        return winners
-    except Exception as e:
-        # Log the error and return test data
-        print(f"Error in get_daily_winners: {str(e)}")
-        return [
-            {
-                "username": "test_user",
-                "amount_won": 100.0,
-                "total_amount_won": 500.0,
-                "badge_name": "Gold",
-                "badge_image_url": "https://example.com/gold.png",
-                "avatar_url": "https://example.com/avatar.png",
-                "frame_url": "https://example.com/frame.png",
-                "position": 1,
-                "draw_date": date.today().isoformat()
             }
-        ]
-
-@router.get("/daily-winners-api", response_model=List[WinnerResponse])
+        },
+        401: {
+            "description": "Unauthorized - Authentication token is missing or invalid"
+        },
+        500: {
+            "description": "Internal server error occurred while retrieving winners",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Error retrieving daily winners: [error details]"
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_daily_winners(
     date_str: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get the list of daily winners for a specific date.
-    If no date is provided, returns yesterday's winners.
+    Retrieves the daily winners with detailed information.
+    
+    If no date is provided, it will return yesterday's winners.
     """
     try:
-        logging.info(f"get_daily_winners called with date_str={date_str}")
+        logger.info(f"get_daily_winners called with date_str={date_str}")
         
         if date_str:
             target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -128,7 +129,7 @@ async def get_daily_winners(
             est = pytz.timezone('US/Eastern')
             target_date = (datetime.now(est) - timedelta(days=1)).date()
 
-        logging.info(f"Target date for winners: {target_date}")
+        logger.info(f"Target date for winners: {target_date}")
 
         # Get winners for the specified date
         winners_query = db.query(TriviaDrawWinner, User).join(
@@ -137,7 +138,7 @@ async def get_daily_winners(
             TriviaDrawWinner.draw_date == target_date
         ).order_by(TriviaDrawWinner.position).all()
         
-        logging.info(f"Found {len(winners_query)} winners for date {target_date}")
+        logger.info(f"Found {len(winners_query)} winners for date {target_date}")
 
         result = []
         
@@ -189,25 +190,79 @@ async def get_daily_winners(
                     draw_date=winner.draw_date.isoformat() if winner.draw_date else None
                 ))
             except Exception as user_error:
-                logging.error(f"Error processing winner {user.account_id}: {str(user_error)}")
+                logger.error(f"Error processing winner {user.account_id}: {str(user_error)}")
         
         return result
         
     except Exception as e:
-        logging.error(f"Error in get_daily_winners: {str(e)}", exc_info=True)
+        logger.error(f"Error in get_daily_winners: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving daily winners: {str(e)}"
         )
 
-@router.get("/weekly-winners", response_model=List[WinnerResponse])
+@router.get("/weekly-winners", 
+    response_model=List[WinnerResponse],
+    summary="Get weekly aggregated winners list",
+    description="""
+    Retrieves an aggregated list of winners for the specified week.
+    
+    If a date is provided via the 'date_str' query parameter (in YYYY-MM-DD format),
+    the endpoint returns winners for the week containing that date.
+    
+    If no date is provided, it defaults to the current week's winners.
+    
+    The winners are aggregated across the entire week, and the response includes
+    detailed user information such as username, total amount won during the week,
+    all-time winnings, profile customizations (badge, avatar, frame), ranking position,
+    and the week end date.
+    
+    This endpoint is protected and requires user authentication.
+    """,
+    responses={
+        200: {
+            "description": "List of weekly aggregated winners retrieved successfully",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "username": "topwinner",
+                            "amount_won": 750.0,
+                            "total_amount_won": 2500.0,
+                            "badge_name": "Diamond",
+                            "badge_image_url": "https://example.com/diamond.png",
+                            "avatar_url": "https://example.com/avatar.png",
+                            "frame_url": "https://example.com/frame.png",
+                            "position": 1,
+                            "draw_date": "2023-06-18"  # Week end date
+                        }
+                    ]
+                }
+            }
+        },
+        401: {
+            "description": "Unauthorized - Authentication token is missing or invalid"
+        },
+        500: {
+            "description": "Internal server error occurred while retrieving weekly winners",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Error retrieving weekly winners: [error details]"
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_weekly_winners(
+    date_str: Optional[str] = None, 
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get the list of top winners for the current week (Monday to Sunday).
-    Returns users who won the most in the current week.
+    Get the list of weekly winners aggregated by account.
+    If no date is provided, returns the current week's winners.
     """
     try:
         # Get current date in EST
@@ -307,14 +362,64 @@ async def get_weekly_winners(
             detail=f"Error retrieving weekly winners: {str(e)}"
         )
 
-@router.get("/all-time-winners", response_model=List[WinnerResponse])
+@router.get("/all-time-winners", 
+    response_model=List[WinnerResponse],
+    summary="Get all-time top winners",
+    description="""
+    Retrieves a list of users who have won the most rewards across all draws.
+    
+    This endpoint provides an aggregated view of the highest-earning users on the platform,
+    sorted by their total winnings in descending order (highest winners first).
+    
+    The response includes detailed information for each winner such as their username,
+    total amount won across all draws, profile customizations (badge, avatar, frame),
+    and their ranking position.
+    
+    This endpoint is protected and requires user authentication.
+    """,
+    responses={
+        200: {
+            "description": "List of all-time winners retrieved successfully",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "username": "legendwinner",
+                            "amount_won": 0.0,  # Not used for all-time winners
+                            "total_amount_won": 5000.0,
+                            "badge_name": "Platinum",
+                            "badge_image_url": "https://example.com/platinum.png",
+                            "avatar_url": "https://example.com/avatar.png",
+                            "frame_url": "https://example.com/frame.png",
+                            "position": 1,
+                            "draw_date": None  # Not applicable for all-time winners
+                        }
+                    ]
+                }
+            }
+        },
+        401: {
+            "description": "Unauthorized - Authentication token is missing or invalid"
+        },
+        500: {
+            "description": "Internal server error occurred while retrieving all-time winners",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Error retrieving all-time winners: [error details]"
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_all_time_winners(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get the list of all-time top winners.
-    Returns users who won the most all-time.
+    Get the list of users who have won the most rewards across all draws.
+    Returns an ordered list of the highest-earning users.
     """
     try:
         # Get all-time winners (aggregated by account_id)
