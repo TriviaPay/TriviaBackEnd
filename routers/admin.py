@@ -1,7 +1,7 @@
 import os
 from datetime import date, datetime, time, timedelta
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Body, status
+from fastapi import APIRouter, Depends, HTTPException, Body, status, Request, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import pytz
@@ -10,9 +10,9 @@ import json
 from sqlalchemy import func # Import func for count
 
 from db import get_db
-from models import TriviaDrawConfig, TriviaDrawWinner, CompanyRevenue, Transaction
+from models import TriviaDrawConfig, TriviaDrawWinner, CompanyRevenue, Transaction, User, Avatar, UserAvatar
 from routers.dependencies import get_admin_user
-from rewards_logic import perform_draw
+from rewards_logic import perform_draw, get_daily_winners, get_weekly_winners
 
 # Configure logging at the top level if not already done
 logging.basicConfig(level=logging.INFO)
@@ -52,61 +52,61 @@ DEFAULT_TIMEZONE = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
 
 @router.get("/draw-config", response_model=DrawConfigResponse)
 async def get_draw_config(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_admin_user)
 ):
     """
-    Admin endpoint to get the current draw configuration from the database.
+    Get the current draw configuration
+    
+    This endpoint requires admin privileges.
     """
+    logger.info("Admin accessing draw configuration")
+    
     try:
-        logger.info("--- Entering get_draw_config ---")
+        # Query for the current draw configuration
+        draw_config = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first()
         
-        # Check for multiple config rows (potential issue indicator)
-        config_count = db.query(func.count(TriviaDrawConfig.id)).scalar()
-        if config_count > 1:
-            logger.warning(f"Multiple ({config_count}) rows found in trivia_draw_config table. Only the latest (by ID) will be used.")
+        if not draw_config:
+            # Create default configuration if none exists
+            draw_config = TriviaDrawConfig(
+                daily_pool_amount=1000.0,
+                daily_winners_count=5,
+                weekly_pool_amount=5000.0,
+                weekly_winners_count=10,
+                weekly_draw_day=5,  # Friday
+                automatic_draws=True
+            )
+            db.add(draw_config)
+            db.commit()
+            db.refresh(draw_config)
             
-        config: Optional[TriviaDrawConfig] = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first() # Get the latest one
-
-        custom_data: Dict[str, Any] = {}
-        if config and config.custom_data:
-            try:
-                custom_data = json.loads(config.custom_data)
-                logger.info(f"Parsed custom_data from DB: {custom_data}")
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse custom_data from DB ID={config.id}: {config.custom_data}", exc_info=True)
-                # Proceed with defaults, but log error
-
-        if not config:
-            logger.info("No existing config found. Returning defaults.")
-            # Simulate a default config for response, but don't save it here. Let PUT create it.
-            is_custom_resp = False
-            custom_winner_count_resp = None
-            draw_hour_resp = DEFAULT_DRAW_HOUR
-            draw_minute_resp = DEFAULT_DRAW_MINUTE
-            draw_timezone_resp = DEFAULT_TIMEZONE
-            custom_data_resp = {"draw_time_hour": draw_hour_resp, "draw_time_minute": draw_minute_resp, "draw_timezone": draw_timezone_resp}
-        else:
-            logger.info(f"Found existing config in DB: ID={config.id}, is_custom={config.is_custom}, count={config.custom_winner_count}")
-            is_custom_resp = config.is_custom
-            custom_winner_count_resp = config.custom_winner_count
-            # Get time/timezone from custom_data, falling back to defaults
-            draw_hour_resp = custom_data.get("draw_time_hour", DEFAULT_DRAW_HOUR)
-            draw_minute_resp = custom_data.get("draw_time_minute", DEFAULT_DRAW_MINUTE)
-            draw_timezone_resp = custom_data.get("draw_timezone", DEFAULT_TIMEZONE)
-            custom_data_resp = custom_data # Return the full parsed custom_data
-
-        # Log the final state being used for the response
-        logger.info(f"Final config values for GET response: is_custom={is_custom_resp}, count={custom_winner_count_resp}, hour={draw_hour_resp}, min={draw_minute_resp}, tz={draw_timezone_resp}")
-
-        return DrawConfigResponse(
-            is_custom=is_custom_resp,
-            custom_winner_count=custom_winner_count_resp,
-            draw_time_hour=draw_hour_resp,
-            draw_time_minute=draw_minute_resp,
-            draw_timezone=draw_timezone_resp,
-            custom_data=custom_data_resp # Pass the potentially extended custom_data back
-        )
+            logger.info("Created default draw configuration")
+            
+        # Fetch the last daily and weekly draw timestamps
+        last_daily_draw = db.query(TriviaDrawWinner).filter(
+            TriviaDrawWinner.draw_type == 'daily'
+        ).order_by(TriviaDrawWinner.created_at.desc()).first()
+        
+        last_weekly_draw = db.query(TriviaDrawWinner).filter(
+            TriviaDrawWinner.draw_type == 'weekly'
+        ).order_by(TriviaDrawWinner.created_at.desc()).first()
+        
+        # Return response
+        return {
+            "config": {
+                "daily_pool_amount": draw_config.daily_pool_amount,
+                "daily_winners_count": draw_config.daily_winners_count,
+                "weekly_pool_amount": draw_config.weekly_pool_amount,
+                "weekly_winners_count": draw_config.weekly_winners_count,
+                "weekly_draw_day": draw_config.weekly_draw_day,
+                "automatic_draws": draw_config.automatic_draws
+            },
+            "last_draw_info": {
+                "last_daily_draw": last_daily_draw.created_at if last_daily_draw else None,
+                "last_weekly_draw": last_weekly_draw.created_at if last_weekly_draw else None
+            }
+        }
 
     except Exception as e:
         logger.error(f"Error getting draw configuration: {str(e)}", exc_info=True)
@@ -290,56 +290,49 @@ async def update_draw_config(
             detail=f"Unexpected error updating draw configuration: {str(e)}"
         )
 
-@router.post("/trigger-draw", response_model=DrawResponse)
+@router.post("/trigger-draw", response_model=dict)
 async def trigger_draw(
-    draw_date: date = Body(..., embed=True),
+    request: Request,
+    draw_type: str = Query(..., description="Type of draw to trigger ('daily' or 'weekly')"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_admin_user)
 ):
     """
-    Admin endpoint to manually trigger a draw for a specific date.
+    Trigger a draw manually
+    
+    This endpoint requires admin privileges.
     """
-    try:
-        # If no date provided, use today's date
-        if draw_date is None:
-            draw_date = date.today()
-            
-        # Check if a draw has already been performed for this date
-        existing_draw = db.query(TriviaDrawWinner).filter(
-            TriviaDrawWinner.draw_date == draw_date
-        ).first()
-        
-        if existing_draw:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Draw for {draw_date} has already been performed"
-            )
-        
-        # Perform the draw
-        result = perform_draw(db, draw_date)
-        
-        if result["status"] == "no_participants":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"No eligible participants for draw on {draw_date}"
-            )
-        
-        return DrawResponse(
-            status=result["status"],
-            draw_date=result["draw_date"],
-            total_participants=result["total_participants"],
-            total_winners=result["total_winners"],
-            prize_pool=result["prize_pool"],
-            winners=result["winners"]
+    logger.info(f"Admin triggering {draw_type} draw manually")
+    
+    # Validate draw type
+    if draw_type not in ['daily', 'weekly']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Draw type must be 'daily' or 'weekly'"
         )
+
+    try:
+        # Call the perform_draw function with today's date
+        result = perform_draw(db)
         
-    except HTTPException:
-        raise
+        # Get winners based on draw type
+        if draw_type == 'daily':
+            winners = get_daily_winners(db)
+        else:
+            winners = get_weekly_winners(db)
+            
+        return {
+            "success": True,
+            "message": f"{draw_type.capitalize()} draw successfully triggered",
+            "result": result,
+            "winners": winners
+        }
+        
     except Exception as e:
-        db.rollback()
+        logger.error(f"Error triggering {draw_type} draw: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error triggering draw: {str(e)}"
+            detail=f"Error triggering {draw_type} draw: {str(e)}"
         )
 
 @router.get("/revenue")
@@ -428,4 +421,94 @@ async def get_company_revenue(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving revenue data: {str(e)}"
+        )
+
+@router.get("/db-integrity/avatars", response_model=Dict[str, Any])
+async def check_avatar_integrity(
+    fix: bool = Query(False, description="Whether to fix inconsistencies"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """
+    Admin endpoint to check database integrity for avatar selections
+    """
+    logger.info(f"Admin checking avatar database integrity, fix={fix}")
+    
+    try:
+        # Get all users with a selected avatar
+        users_with_avatars = db.query(User).filter(User.selected_avatar_id != None).all()
+        
+        # Get list of all available avatar IDs
+        all_avatars = {avatar.id: avatar for avatar in db.query(Avatar).all()}
+        
+        # Track statistics
+        total_users = len(users_with_avatars)
+        valid_count = 0
+        invalid_count = 0
+        fixed_count = 0
+        invalid_details = []
+        
+        for user in users_with_avatars:
+            # Check if selected avatar exists
+            if user.selected_avatar_id not in all_avatars:
+                invalid_count += 1
+                
+                # Record details of invalid selection
+                invalid_details.append({
+                    "user_id": user.account_id,
+                    "username": user.username,
+                    "avatar_id": user.selected_avatar_id,
+                    "owned_avatars_count": db.query(UserAvatar).filter(UserAvatar.user_id == user.account_id).count()
+                })
+                
+                # Fix if requested
+                if fix:
+                    # Try to find a valid owned avatar to set instead
+                    owned_avatars = db.query(UserAvatar).filter(UserAvatar.user_id == user.account_id).all()
+                    if owned_avatars:
+                        new_avatar_id = owned_avatars[0].avatar_id
+                        if new_avatar_id in all_avatars:
+                            user.selected_avatar_id = new_avatar_id
+                            logger.info(f"Fixed user {user.account_id} avatar by setting to owned avatar: {new_avatar_id}")
+                            fixed_count += 1
+                        else:
+                            user.selected_avatar_id = None
+                            logger.info(f"Reset user {user.account_id} avatar to None as owned avatar {new_avatar_id} is also invalid")
+                            fixed_count += 1
+                    else:
+                        # User has no owned avatars, reset selection
+                        user.selected_avatar_id = None
+                        logger.info(f"Reset user {user.account_id} avatar to None as they have no owned avatars")
+                        fixed_count += 1
+            else:
+                # Avatar ID is valid
+                valid_count += 1
+        
+        # Commit any changes if fixes were applied
+        if fix and fixed_count > 0:
+            try:
+                db.commit()
+                logger.info(f"Successfully committed {fixed_count} avatar fixes")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error committing avatar fixes: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error committing avatar fixes: {str(e)}"
+                )
+        
+        return {
+            "status": "success",
+            "total_users_with_avatars": total_users,
+            "valid_selections": valid_count,
+            "invalid_selections": invalid_count,
+            "fixed_count": fixed_count if fix else 0,
+            "repair_mode": fix,
+            "invalid_details": invalid_details if len(invalid_details) < 20 else invalid_details[:20]  # Limit output size
+        }
+    except Exception as e:
+        logger.error(f"Error checking avatar integrity: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error checking avatar integrity: {str(e)}"
         ) 

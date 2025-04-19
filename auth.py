@@ -207,6 +207,16 @@ def verify_access_token(access_token: str, check_expiration: bool = True, requir
             # Clean up the token if needed
             token = access_token.strip()
             
+            # Handle case where token might have been concatenated with another token
+            # This can happen in certain client-side implementations
+            if '.' in token:
+                parts = token.split('.')
+                if len(parts) > 3:
+                    logger.warning(f"Token has {len(parts)} parts, which suggests concatenated tokens. Extracting first valid token.")
+                    # Try to extract just the first valid token (first 3 parts)
+                    token = '.'.join(parts[:3])
+                    logger.info(f"Using modified token for validation: {token[:20]}...")
+            
             # Handle case where the token might be an invalid format (like a number or query parameter)
             if token.isdigit() or '=' in token:
                 # This might be a query parameter or numeric value, not a JWT

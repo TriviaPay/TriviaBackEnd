@@ -179,7 +179,88 @@ def verify_admin(current_user: dict, db: Session) -> None:
         )
 
 
-def get_admin_user(claims: dict = Depends(verify_access_token), db: Session = Depends(get_db)):
-    """Verify user is admin using cosmetics.py logic"""
-    verify_admin(claims, db)
-    return claims
+def get_admin_user(request: Request = None, claims: dict = None, db: Session = Depends(get_db)):
+    """
+    Verify user is admin using admin access logic.
+    
+    This function can be called in two ways:
+    1. Directly with claims already verified
+    2. With a request to verify the token first
+    
+    Args:
+        request: The request object, used to extract token if claims not provided
+        claims: Optional pre-verified claims. If None, extract from request
+        db: Database session
+        
+    Returns:
+        dict: Admin user claims
+        
+    Raises:
+        HTTPException: If user is not an admin or authentication fails
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Processing admin authentication")
+    
+    # If no claims provided, extract and verify token from request
+    if claims is None:
+        if request is None:
+            # If neither claims nor request is provided, use the get_current_user dependency
+            claims = get_current_user(request)
+        else:
+            # Extract token from request - handle various formats
+            token = None
+            
+            # Check Authorization header
+            auth_header = request.headers.get('authorization', '').strip()
+            if auth_header and auth_header.lower().startswith('bearer '):
+                token = auth_header[7:].strip()
+                logger.info("Found token in Authorization header for admin endpoint")
+            
+            # Check query parameters
+            if not token:
+                token = request.query_params.get('access_token', '').strip()
+                if token:
+                    logger.info("Found token in query parameters for admin endpoint")
+            
+            # If no token found, raise exception
+            if not token:
+                logger.error("No token found for admin authentication")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Admin access requires authentication token",
+                    headers={"WWW-Authenticate": "Bearer"}
+                )
+            
+            # Handle case where token might have been concatenated
+            if '.' in token:
+                parts = token.split('.')
+                if len(parts) > 3:
+                    logger.warning(f"Admin token has {len(parts)} parts, extracting first valid token.")
+                    token = '.'.join(parts[:3])
+            
+            # Verify the token with focus on admin validation
+            try:
+                logger.info(f"Verifying admin token: {token[:20]}...")
+                claims = verify_access_token(token, check_expiration=True, require_email=True)
+            except Exception as e:
+                logger.error(f"Admin token verification failed: {str(e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Invalid admin token: {str(e)}",
+                    headers={"WWW-Authenticate": "Bearer"}
+                )
+    
+    # Now verify admin status
+    try:
+        verify_admin(claims, db)
+        logger.info(f"Admin access granted for user: {claims.get('email', 'unknown')}")
+        return claims
+    except HTTPException as e:
+        logger.error(f"Admin access denied: {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"Error checking admin status: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access check failed: " + str(e)
+        )
