@@ -252,25 +252,45 @@ async def select_avatar(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    logging.info(f"User found: account_id={user.account_id}, sub={user.sub}, current selected_avatar_id={user.selected_avatar_id}")
+    
     # Check if user owns this avatar or if it's a default avatar
     avatar = db.query(Avatar).filter(Avatar.id == avatar_id).first()
     if not avatar:
         raise HTTPException(status_code=404, detail=f"Avatar with ID {avatar_id} not found")
+    
+    logging.info(f"Avatar found: id={avatar.id}, name={avatar.name}, is_default={getattr(avatar, 'is_default', False)}")
     
     ownership = db.query(UserAvatar).filter(
         UserAvatar.user_id == user.account_id,
         UserAvatar.avatar_id == avatar_id
     ).first()
     
-    if not ownership and not avatar.is_default:
+    is_default = getattr(avatar, 'is_default', False)
+    
+    if not ownership and not is_default:
+        logging.warning(f"User {user.account_id} doesn't own avatar {avatar_id} and it's not a default avatar")
         raise HTTPException(
             status_code=403,
             detail=f"You don't own the avatar with ID {avatar_id}"
         )
     
+    logging.info(f"Setting user.selected_avatar_id to {avatar_id}")
+    
     # Update the user's selected avatar
+    old_avatar_id = user.selected_avatar_id
     user.selected_avatar_id = avatar_id
-    db.commit()
+    try:
+        db.commit()
+        logging.info(f"Successfully updated user avatar from {old_avatar_id} to {avatar_id}")
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error updating avatar: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error updating avatar: {str(e)}")
+    
+    # Verify the change was saved
+    db.refresh(user)
+    logging.info(f"After commit, user.selected_avatar_id = {user.selected_avatar_id}")
     
     return SelectResponse(
         status="success",
@@ -915,4 +935,62 @@ async def get_avatar_stats(
         "gem_purchasable": gem_purchasable,
         "usd_purchasable": usd_purchasable,
         "top_avatars": top_avatars_data
+    }
+
+# Admin endpoint to get detailed information about frames usage
+@router.get("/admin/frames/stats", response_model=Dict[str, Any])
+async def get_frame_stats(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Admin endpoint to get statistics about frames usage
+    """
+    # Check admin access
+    verify_admin(current_user, db)
+    
+    total_frames = db.query(Frame).count()
+    default_frames = db.query(Frame).filter(Frame.is_premium == False).count()
+    premium_frames = db.query(Frame).filter(Frame.is_premium == True).count()
+    
+    # Count frames by price range
+    free_frames = db.query(Frame).filter(
+        Frame.price_gems.is_(None), 
+        Frame.price_usd.is_(None)
+    ).count()
+    
+    gem_purchasable = db.query(Frame).filter(
+        Frame.price_gems.isnot(None)
+    ).count()
+    
+    usd_purchasable = db.query(Frame).filter(
+        Frame.price_usd.isnot(None)
+    ).count()
+    
+    # Get top 5 most popular frames
+    top_frames = db.query(
+        Frame.id,
+        Frame.name,
+        db.func.count(UserFrame.frame_id).label('purchase_count')
+    ).join(
+        UserFrame, UserFrame.frame_id == Frame.id
+    ).group_by(
+        Frame.id, Frame.name
+    ).order_by(
+        db.desc('purchase_count')
+    ).limit(5).all()
+    
+    top_frames_data = [
+        {"id": frame.id, "name": frame.name, "purchase_count": frame.purchase_count}
+        for frame in top_frames
+    ]
+    
+    return {
+        "total_frames": total_frames,
+        "default_frames": default_frames,
+        "premium_frames": premium_frames,
+        "free_frames": free_frames,
+        "gem_purchasable": gem_purchasable,
+        "usd_purchasable": usd_purchasable,
+        "top_frames": top_frames_data
     }

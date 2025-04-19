@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Path, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc
@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from db import get_db
 from models import Badge, User
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user, get_admin_user
 
 router = APIRouter(prefix="/badges", tags=["Badges"])
 
@@ -116,80 +116,135 @@ async def get_badge(
 
 # ======== Admin Endpoints ========
 
-@router.post("/admin", response_model=BadgeResponse)
+@router.post("/admin/badges", response_model=BadgeResponse)
 async def create_badge(
+    request: Request,
     badge: BadgeCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_admin_user)
 ):
     """
-    Admin endpoint to create a new badge
+    Create a new badge
+    
+    This endpoint requires admin privileges
     """
-    # Check admin access
-    verify_admin(current_user, db)
+    logger.info(f"Admin creating new badge: {badge.name}")
     
-    # Use provided ID or generate a new one
-    badge_id = badge.id if badge.id else str(uuid.uuid4())
-    
-    # Check if a badge with this ID already exists
-    if badge.id:
-        existing = db.query(Badge).filter(Badge.id == badge_id).first()
-        if existing:
+    try:
+        # Check if badge with same name exists
+        existing_badge = db.query(Badge).filter(Badge.name == badge.name).first()
+        if existing_badge:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Badge with ID {badge_id} already exists"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Badge with name '{badge.name}' already exists"
             )
-    
-    # Create a new badge
-    new_badge = Badge(
-        id=badge_id,
-        name=badge.name,
-        description=badge.description,
-        image_url=badge.image_url,
-        level=badge.level,
-        created_at=datetime.utcnow()
-    )
-    
-    db.add(new_badge)
-    db.commit()
-    db.refresh(new_badge)
-    
-    return new_badge
+            
+        # Create new badge
+        new_badge = Badge(
+            name=badge.name,
+            description=badge.description,
+            image_url=badge.image_url,
+            requirement_type=badge.requirement_type,
+            requirement_value=badge.requirement_value,
+            rarity=badge.rarity
+        )
+        
+        db.add(new_badge)
+        db.commit()
+        db.refresh(new_badge)
+        
+        return BadgeResponse.from_orm(new_badge)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating badge: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating badge: {str(e)}"
+        )
 
 @router.put("/admin/{badge_id}", response_model=BadgeResponse)
 async def update_badge(
+    request: Request,
     badge_id: str = Path(..., description="The ID of the badge to update"),
-    badge_update: BadgeUpdate = Body(..., description="Updated badge data"),
+    badge_update: BadgeUpdate = Body(...),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_admin_user)
 ):
     """
-    Admin endpoint to update an existing badge
+    Update an existing badge
+    
+    This endpoint requires admin privileges
     """
-    # Check admin access
-    verify_admin(current_user, db)
+    logger.info(f"Admin updating badge {badge_id}: {badge_update.dict(exclude_unset=True)}")
     
-    # Find the badge
-    badge = db.query(Badge).filter(Badge.id == badge_id).first()
-    if not badge:
-        raise HTTPException(status_code=404, detail=f"Badge with ID {badge_id} not found")
+    try:
+        # Get the badge
+        badge = db.query(Badge).filter(Badge.id == badge_id).first()
+        if not badge:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Badge with ID {badge_id} not found"
+            )
+        
+        # Update badge fields
+        update_data = badge_update.dict(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(badge, key, value)
+        
+        db.commit()
+        db.refresh(badge)
+        
+        return BadgeResponse.from_orm(badge)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating badge {badge_id}: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating badge: {str(e)}"
+        )
+
+@router.delete("/admin/{badge_id}", response_model=dict)
+async def delete_badge(
+    request: Request,
+    badge_id: str = Path(..., description="The ID of the badge to delete"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """
+    Delete a badge
     
-    # Update badge fields
-    badge.name = badge_update.name
-    badge.description = badge_update.description
-    badge.image_url = badge_update.image_url
-    badge.level = badge_update.level
+    This endpoint requires admin privileges
+    """
+    logger.info(f"Admin deleting badge {badge_id}")
     
-    # Now update all users who have this badge to use the new image URL
-    db.query(User).filter(User.badge_id == badge_id).update(
-        {"badge_image_url": badge_update.image_url},
-        synchronize_session=False
-    )
-    
-    db.commit()
-    db.refresh(badge)
-    
-    return badge
+    try:
+        # Get the badge
+        badge = db.query(Badge).filter(Badge.id == badge_id).first()
+        if not badge:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Badge with ID {badge_id} not found"
+            )
+        
+        # Delete the badge
+        db.delete(badge)
+        db.commit()
+        
+        return {"message": f"Badge {badge_id} deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting badge {badge_id}: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting badge: {str(e)}"
+        )
 
 # Endpoint to get badge assignments
 @router.get("/admin/assignments", response_model=Dict[str, Any])
