@@ -574,25 +574,45 @@ async def select_frame(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    logging.info(f"User found: account_id={user.account_id}, sub={user.sub}, current selected_frame_id={user.selected_frame_id}")
+    
     # Check if user owns this frame or if it's a default frame
     frame = db.query(Frame).filter(Frame.id == frame_id).first()
     if not frame:
         raise HTTPException(status_code=404, detail=f"Frame with ID {frame_id} not found")
+    
+    logging.info(f"Frame found: id={frame.id}, name={frame.name}, is_default={getattr(frame, 'is_default', False)}")
     
     ownership = db.query(UserFrame).filter(
         UserFrame.user_id == user.account_id,
         UserFrame.frame_id == frame_id
     ).first()
     
-    if not ownership and not frame.is_default:
+    is_default = getattr(frame, 'is_default', False)
+    
+    if not ownership and not is_default:
+        logging.warning(f"User {user.account_id} doesn't own frame {frame_id} and it's not a default frame")
         raise HTTPException(
             status_code=403,
             detail=f"You don't own the frame with ID {frame_id}"
         )
     
+    logging.info(f"Setting user.selected_frame_id to {frame_id}")
+    
     # Update the user's selected frame
+    old_frame_id = user.selected_frame_id
     user.selected_frame_id = frame_id
-    db.commit()
+    try:
+        db.commit()
+        logging.info(f"Successfully updated user frame from {old_frame_id} to {frame_id}")
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error updating frame: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error updating frame: {str(e)}")
+    
+    # Verify the change was saved
+    db.refresh(user)
+    logging.info(f"After commit, user.selected_frame_id = {user.selected_frame_id}")
     
     return SelectResponse(
         status="success",
