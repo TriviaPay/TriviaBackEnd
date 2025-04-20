@@ -9,7 +9,7 @@ from pathlib import Path as FilePath
 from sqlalchemy.sql import func
 
 from db import get_db
-from models import User, Trivia, DailyQuestion
+from models import User, Trivia, DailyQuestion, UserQuestionAnswer
 from routers.dependencies import get_current_user
 
 # Load store configuration
@@ -322,15 +322,23 @@ async def purchase_gameplay_boost(
     # Get daily question allocation
     today = datetime.utcnow().date()
     daily_question = db.query(DailyQuestion).filter(
-        DailyQuestion.account_id == user.account_id,
         DailyQuestion.question_number == request.question_number,
-        func.date(DailyQuestion.date) == today
+        DailyQuestion.date == today
     ).first()
 
     if not daily_question:
         raise HTTPException(status_code=400, detail="Question not allocated for today")
-
-    if daily_question.is_used and request.boost_type not in ["extra_chance"]:
+        
+    # Check if user has already answered this question
+    user_answer = db.query(UserQuestionAnswer).filter(
+        UserQuestionAnswer.account_id == user.account_id,
+        UserQuestionAnswer.question_number == request.question_number,
+        UserQuestionAnswer.date == today
+    ).first()
+    
+    question_already_used = user_answer is not None
+    
+    if question_already_used and request.boost_type not in ["extra_chance"]:
         raise HTTPException(status_code=400, detail="Question already attempted")
 
     # Process boost (rest of the implementation)

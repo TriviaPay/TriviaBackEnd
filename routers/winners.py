@@ -5,10 +5,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text, desc
 import pytz
 from db import get_db
-from models import Winner, User, TriviaDrawWinner, TriviaDrawConfig, Badge, Avatar, Frame
+from models import Winner, User, TriviaDrawWinner, TriviaDrawConfig, Badge, Avatar, Frame, UserQuestionAnswer
 from routers.dependencies import get_current_user
 from pydantic import BaseModel
 import logging
+import os
+import calendar
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -571,4 +573,228 @@ async def get_all_user_streaks(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving user streaks: {str(e)}"
+        )
+
+@router.get("/draw-config", response_model=dict)
+async def get_draw_config(
+    recalculate: bool = Query(False, description="Force recalculation of winner count and prize pool"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get the current draw configuration with dynamically calculated winner count and prize pool.
+    
+    This endpoint returns:
+    - Current draw configuration settings
+    - Calculated winner count based on number of subscribed users
+    - Calculated prize pool based on subscribed users and revenue
+    - Draw time settings
+    - Last draw info
+    - Subscription counts and eligible participants
+    
+    If the recalculate flag is True or it's within 1 hour of the scheduled draw time,
+    it will recalculate values and store them.
+    """
+    try:
+        logger.info("Retrieving draw configuration")
+        
+        # Query for the current draw configuration
+        draw_config = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first()
+        
+        if not draw_config:
+            # Create default configuration if none exists
+            draw_config = TriviaDrawConfig(
+                is_custom=False,
+                custom_winner_count=None,
+                daily_pool_amount=0.0,
+                daily_winners_count=1,
+                automatic_draws=True,
+                draw_time_hour=int(os.environ.get("DRAW_TIME_HOUR", "20")),
+                draw_time_minute=int(os.environ.get("DRAW_TIME_MINUTE", "0")),
+                draw_timezone=os.environ.get("DRAW_TIMEZONE", "US/Eastern"),
+                use_dynamic_calculation=True
+            )
+            db.add(draw_config)
+            db.commit()
+            db.refresh(draw_config)
+            
+            logger.info("Created default draw configuration")
+        
+        # Fetch the last daily draw timestamp
+        last_daily_draw = db.query(TriviaDrawWinner).filter(
+            TriviaDrawWinner.draw_type == 'daily'
+        ).order_by(TriviaDrawWinner.created_at.desc()).first()
+        
+        # Count subscribed users
+        subscribed_users_count = db.query(func.count(User.account_id)).filter(
+            User.subscription_flag == True
+        ).scalar() or 0
+        
+        # Count eligible participants (users who answered correctly today)
+        today = datetime.now().date()
+        eligible_users_count = db.query(func.count(User.account_id.distinct())).join(
+            UserQuestionAnswer, 
+            User.account_id == UserQuestionAnswer.account_id
+        ).filter(
+            UserQuestionAnswer.date == today,
+            UserQuestionAnswer.is_correct == True
+        ).scalar() or 0
+        
+        # Count subscribed eligible users
+        subscribed_eligible_count = db.query(func.count(User.account_id.distinct())).join(
+            UserQuestionAnswer, 
+            User.account_id == UserQuestionAnswer.account_id
+        ).filter(
+            User.subscription_flag == True,
+            UserQuestionAnswer.date == today,
+            UserQuestionAnswer.is_correct == True
+        ).scalar() or 0
+        
+        # Check if we need to calculate values
+        should_calculate = recalculate or draw_config.use_dynamic_calculation
+        
+        # Also check if we're within 1 hour of draw time
+        if should_calculate and not recalculate:
+            now = datetime.now(pytz.timezone(draw_config.draw_timezone))
+            draw_time = datetime(
+                now.year, now.month, now.day,
+                draw_config.draw_time_hour, draw_config.draw_time_minute, 
+                tzinfo=pytz.timezone(draw_config.draw_timezone)
+            )
+            
+            # If draw time is in the past for today, use tomorrow's date
+            if now > draw_time:
+                tomorrow = now + timedelta(days=1)
+                draw_time = datetime(
+                    tomorrow.year, tomorrow.month, tomorrow.day,
+                    draw_config.draw_time_hour, draw_config.draw_time_minute, 
+                    tzinfo=pytz.timezone(draw_config.draw_timezone)
+                )
+            
+            time_until_draw = draw_time - now
+            should_calculate = time_until_draw.total_seconds() <= 3600  # Within 1 hour
+            
+            logger.info(f"Time until draw: {time_until_draw}, should_calculate: {should_calculate}")
+        
+        # Calculate dynamic values if needed
+        if should_calculate and draw_config.use_dynamic_calculation:
+            logger.info("Calculating dynamic draw values")
+            
+            logger.info(f"Found {subscribed_users_count} subscribed users")
+            
+            # Calculate winner count based on table
+            winner_count = 1  # Default
+            if subscribed_users_count >= 2000:
+                winner_count = 53
+            elif subscribed_users_count >= 1300:
+                winner_count = 47
+            elif subscribed_users_count >= 1200:
+                winner_count = 43
+            elif subscribed_users_count >= 1100:
+                winner_count = 41
+            elif subscribed_users_count >= 1000:
+                winner_count = 37
+            elif subscribed_users_count >= 900:
+                winner_count = 31
+            elif subscribed_users_count >= 800:
+                winner_count = 29
+            elif subscribed_users_count >= 700:
+                winner_count = 23
+            elif subscribed_users_count >= 600:
+                winner_count = 19
+            elif subscribed_users_count >= 500:
+                winner_count = 17
+            elif subscribed_users_count >= 400:
+                winner_count = 13
+            elif subscribed_users_count >= 300:
+                winner_count = 11
+            elif subscribed_users_count >= 200:
+                winner_count = 7
+            elif subscribed_users_count >= 100:
+                winner_count = 5
+            elif subscribed_users_count >= 50:
+                winner_count = 3
+            
+            # Calculate prize pool:
+            # Each subscriber contributes $5, with $0.70 platform fee, 
+            # leaving $4.30 per user for the prize pool
+            total_subscription_amount = subscribed_users_count * 5.0
+            platform_fees = subscribed_users_count * 0.70
+            available_amount = total_subscription_amount - platform_fees
+            
+            # If more than 200 subscribers, add 18% revenue cut
+            revenue_cut = 0
+            if subscribed_users_count > 200:
+                revenue_cut = available_amount * 0.18
+                available_amount -= revenue_cut
+            
+            # Calculate daily amount by dividing by days in current month
+            days_in_month = calendar.monthrange(datetime.now().year, datetime.now().month)[1]
+            daily_pool_amount = round(available_amount / days_in_month, 2) if days_in_month > 0 else 0.0
+            
+            logger.info(f"Calculated winner count: {winner_count}, daily pool: ${daily_pool_amount}")
+            
+            # Update calculated values in database
+            draw_config.calculated_winner_count = winner_count
+            draw_config.calculated_pool_amount = daily_pool_amount
+            draw_config.daily_pool_amount = daily_pool_amount  # Also update daily_pool_amount
+            draw_config.last_calculation_time = datetime.now()
+            db.commit()
+        
+        # Determine the effective winner count and pool amount
+        effective_winner_count = None
+        effective_pool_amount = None
+        
+        if draw_config.is_custom and draw_config.custom_winner_count is not None:
+            effective_winner_count = draw_config.custom_winner_count
+            logger.info(f"Using custom winner count: {effective_winner_count}")
+        elif draw_config.calculated_winner_count is not None:
+            effective_winner_count = draw_config.calculated_winner_count
+            logger.info(f"Using calculated winner count: {effective_winner_count}")
+        else:
+            effective_winner_count = draw_config.daily_winners_count
+            logger.info(f"Using default winner count: {effective_winner_count}")
+            
+        if draw_config.is_custom and draw_config.daily_pool_amount is not None:
+            effective_pool_amount = draw_config.daily_pool_amount
+            logger.info(f"Using custom pool amount: {effective_pool_amount}")
+        elif draw_config.calculated_pool_amount is not None:
+            effective_pool_amount = draw_config.calculated_pool_amount
+            logger.info(f"Using calculated pool amount: {effective_pool_amount}")
+        else:
+            effective_pool_amount = 0.0  # Default to 0
+            logger.info(f"Using default pool amount: {effective_pool_amount}")
+        
+        # Return response
+        return {
+            "config": {
+                "is_custom": draw_config.is_custom,
+                "custom_winner_count": draw_config.custom_winner_count,
+                "daily_pool_amount": draw_config.daily_pool_amount,
+                "daily_winners_count": draw_config.daily_winners_count,
+                "automatic_draws": draw_config.automatic_draws,
+                "draw_time_hour": draw_config.draw_time_hour,
+                "draw_time_minute": draw_config.draw_time_minute,
+                "draw_timezone": draw_config.draw_timezone,
+                "use_dynamic_calculation": draw_config.use_dynamic_calculation,
+                "effective_winner_count": effective_winner_count,
+                "effective_pool_amount": effective_pool_amount,
+                "last_calculation_time": draw_config.last_calculation_time
+            },
+            "last_draw_info": {
+                "last_daily_draw": last_daily_draw.created_at if last_daily_draw else None
+            },
+            "participation_stats": {
+                "total_subscribed_users": subscribed_users_count,
+                "eligible_participants_today": eligible_users_count,
+                "subscribed_eligible_participants": subscribed_eligible_count,
+                "date": today.isoformat()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting draw configuration: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting draw configuration: {str(e)}"
         )

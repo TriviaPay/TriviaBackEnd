@@ -419,7 +419,22 @@ class TriviaDrawConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     is_custom = Column(Boolean, default=False)  # Whether using custom winner count
     custom_winner_count = Column(Integer, nullable=True)  # Custom number of winners
+    daily_pool_amount = Column(Float, default=0.0)  # Amount in the daily draw pool
+    daily_winners_count = Column(Integer, default=1)  # Number of winners for daily draw
+    automatic_draws = Column(Boolean, default=True)  # Whether draws happen automatically
     custom_data = Column(String, nullable=True)  # JSON string for additional configuration
+    
+    # Adding explicit columns for draw time settings instead of relying on custom_data
+    draw_time_hour = Column(Integer, default=20)  # Hour of day for the draw (0-23)
+    draw_time_minute = Column(Integer, default=0)  # Minute of hour for the draw (0-59)
+    draw_timezone = Column(String, default="US/Eastern")  # Timezone for the draw
+    
+    # Adding explicit columns for dynamic calculation tracking
+    calculated_pool_amount = Column(Float, nullable=True)  # Last calculated pool amount
+    calculated_winner_count = Column(Integer, nullable=True)  # Last calculated winner count
+    last_calculation_time = Column(DateTime, nullable=True)  # When values were last calculated
+    use_dynamic_calculation = Column(Boolean, default=True)  # Whether to use dynamic calculations
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -434,6 +449,7 @@ class TriviaDrawWinner(Base):
     prize_amount = Column(Float, nullable=False)
     position = Column(Integer, nullable=False)  # Winner position (1st, 2nd, etc.)
     draw_date = Column(Date, nullable=False)  # Date of the draw
+    draw_type = Column(String, default="daily", nullable=False)  # Type of draw (only 'daily' is supported)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship
