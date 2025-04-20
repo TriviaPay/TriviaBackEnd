@@ -663,10 +663,11 @@ async def get_question_status(
     
     # Get today's daily question allocation for this question
     today = datetime.utcnow().date()
+    
+    # Get the global daily question allocation
     daily_question = db.query(DailyQuestion).filter(
-        DailyQuestion.account_id == user.account_id,
         DailyQuestion.question_number == question_number,
-        func.date(DailyQuestion.date) == today
+        DailyQuestion.date == today
     ).first()
     
     if not daily_question:
@@ -676,16 +677,34 @@ async def get_question_status(
     question = db.query(Trivia).filter(Trivia.question_number == question_number).first()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
+        
+    # Check if user has already answered this question (user-specific data)
+    user_answer = db.query(UserQuestionAnswer).filter(
+        UserQuestionAnswer.account_id == user.account_id,
+        UserQuestionAnswer.question_number == question_number,
+        UserQuestionAnswer.date == today
+    ).first()
+    
+    is_answered = False
+    is_correct = False
+    answer = None
+    answered_at = None
+    
+    if user_answer:
+        is_answered = True
+        is_correct = user_answer.is_correct
+        answer = user_answer.answer
+        answered_at = user_answer.answered_at
     
     # Return the status
     return {
         "question_number": question_number,
-        "is_answered": daily_question.is_used,
-        "is_correct": daily_question.is_correct,
-        "user_answer": daily_question.answer,
-        "correct_answer": question.correct_answer if daily_question.is_used else None,
-        "answered_at": daily_question.answered_at,
-        "explanation": question.explanation if daily_question.is_used else None
+        "is_answered": is_answered,
+        "is_correct": is_correct,
+        "user_answer": answer,
+        "correct_answer": question.correct_answer if is_answered else None,
+        "answered_at": answered_at,
+        "explanation": question.explanation if is_answered else None
     }
 
 @router.get("/boost-status", response_model=BoostStatusResponse)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Path, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, desc
 from datetime import datetime, timedelta, date
@@ -17,6 +17,8 @@ from sqlalchemy.sql import extract
 import os
 import json
 import logging
+from rewards_logic import perform_draw
+from scheduler import update_draw_scheduler
 
 router = APIRouter(tags=["Rewards"])
 
@@ -31,15 +33,20 @@ class DrawConfigResponse(BaseModel):
     custom_data: Optional[Dict[str, Any]] = None
 
 class DrawResponse(BaseModel):
+    status: str
+    draw_date: date
     total_participants: int
     total_winners: int
     winners: List[WinnerResponse]
     prize_pool: float
 
 class DrawConfigUpdateRequest(BaseModel):
-    draw_time_hour: Optional[int] = Field(None, ge=0, le=23, description="Hour for daily draw (0-23)")
-    draw_time_minute: Optional[int] = Field(None, ge=0, le=59, description="Minute for daily draw (0-59)")
+    custom_winner_count: Optional[int] = Field(None, description="Custom number of winners")
+    draw_time_hour: Optional[int] = Field(20, ge=0, le=23, description="Hour for daily draw (0-23)")
+    draw_time_minute: Optional[int] = Field(0, ge=0, le=59, description="Minute for daily draw (0-59)")
     draw_timezone: Optional[str] = Field(None, description="Timezone for daily draw (e.g., 'US/Eastern')")
+    is_custom: Optional[bool] = Field(None, description="Whether to use custom winner count")
+    automatic_draws: Optional[bool] = Field(None, description="Whether draws happen automatically")
 
 # ======== Helper Functions ========
 
@@ -187,6 +194,8 @@ async def trigger_draw(
         if participant_count == 0:
             logging.warning(f"No eligible participants found for draw on {target_date}")
             return DrawResponse(
+                status="no_participants",
+                draw_date=target_date,
                 total_participants=0,
                 total_winners=0,
                 winners=[],
@@ -194,34 +203,134 @@ async def trigger_draw(
             )
         
         # Get draw configuration
-        config = db.query(TriviaDrawConfig).first()
-        logging.info(f"Using draw config: is_custom={config.is_custom if config else False}, custom_winner_count={config.custom_winner_count if config else None}")
-    
-        # Determine number of winners
-        if config and config.is_custom and config.custom_winner_count is not None:
-            winner_count = min(config.custom_winner_count, participant_count)
-            logging.info(f"Using custom winner count: {winner_count}")
-        else:
-            winner_count = calculate_winner_count(participant_count)
-            logging.info(f"Using calculated winner count: {winner_count}")
+        config = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first()
         
-        # Calculate prize pool
-        prize_pool = calculate_prize_pool(db, target_date)
-        logging.info(f"Prize pool for draw: ${prize_pool}")
+        if not config:
+            logging.warning("No draw configuration found, using defaults")
+            config = TriviaDrawConfig(
+                is_custom=False,
+                custom_winner_count=None,
+                daily_pool_amount=100.0, 
+                daily_winners_count=3,
+                automatic_draws=True,
+                draw_time_hour=int(os.environ.get("DRAW_TIME_HOUR", "23")),
+                draw_time_minute=int(os.environ.get("DRAW_TIME_MINUTE", "59")),
+                draw_timezone=os.environ.get("DRAW_TIMEZONE", "EST"),
+                use_dynamic_calculation=True
+            )
+            db.add(config)
+            db.commit()
+            db.refresh(config)
+        
+        # If we need to do a last-minute calculation
+        if config.use_dynamic_calculation and (config.calculated_pool_amount is None or 
+                                              config.calculated_winner_count is None or
+                                              config.last_calculation_time is None or
+                                              datetime.now() - config.last_calculation_time > timedelta(hours=12)):
+            # Count subscribed users
+            subscribed_users = db.query(func.count(User.account_id)).filter(
+                User.subscription_flag == True
+            ).scalar() or 0
+            
+            # Calculate winner count based on the predefined table
+            winner_count = 3  # Default
+            if subscribed_users >= 2000:
+                winner_count = 53
+            elif subscribed_users >= 1300:
+                winner_count = 47
+            elif subscribed_users >= 1200:
+                winner_count = 43
+            elif subscribed_users >= 1100:
+                winner_count = 41
+            elif subscribed_users >= 1000:
+                winner_count = 37
+            elif subscribed_users >= 900:
+                winner_count = 31
+            elif subscribed_users >= 800:
+                winner_count = 29
+            elif subscribed_users >= 700:
+                winner_count = 23
+            elif subscribed_users >= 600:
+                winner_count = 19
+            elif subscribed_users >= 500:
+                winner_count = 17
+            elif subscribed_users >= 400:
+                winner_count = 13
+            elif subscribed_users >= 300:
+                winner_count = 11
+            elif subscribed_users >= 200:
+                winner_count = 7
+            elif subscribed_users >= 100:
+                winner_count = 5
+            elif subscribed_users >= 50:
+                winner_count = 3
+            
+            # Calculate prize pool:
+            # Each subscriber contributes $5, with $0.70 platform fee, 
+            # leaving $4.30 per user for the prize pool
+            total_subscription_amount = subscribed_users * 5.0
+            platform_fees = subscribed_users * 0.70
+            available_amount = total_subscription_amount - platform_fees
+            
+            # If more than 200 subscribers, add 18% revenue cut
+            revenue_cut = 0
+            if subscribed_users > 200:
+                revenue_cut = available_amount * 0.18
+                available_amount -= revenue_cut
+            
+            # Calculate daily amount by dividing by days in current month
+            days_in_month = calendar.monthrange(datetime.now().year, datetime.now().month)[1]
+            daily_pool_amount = round(available_amount / days_in_month, 2)
+            
+            # Update config
+            config.calculated_winner_count = winner_count
+            config.calculated_pool_amount = daily_pool_amount
+            config.last_calculation_time = datetime.now()
+            db.commit()
+            
+            logging.info(f"Updated calculated values: winners={winner_count}, pool=${daily_pool_amount}")
+        
+        # Determine effective winner count and pool amount
+        effective_winner_count = None
+        effective_pool_amount = None
+        
+        if config.is_custom and config.custom_winner_count is not None:
+            effective_winner_count = config.custom_winner_count
+            logging.info(f"Using custom winner count: {effective_winner_count}")
+        elif config.calculated_winner_count is not None:
+            effective_winner_count = config.calculated_winner_count
+            logging.info(f"Using calculated winner count: {effective_winner_count}")
+        else:
+            effective_winner_count = config.daily_winners_count
+            logging.info(f"Using default winner count: {effective_winner_count}")
+            
+        if config.is_custom and config.daily_pool_amount is not None:
+            effective_pool_amount = config.daily_pool_amount
+            logging.info(f"Using custom pool amount: {effective_pool_amount}")
+        elif config.calculated_pool_amount is not None:
+            effective_pool_amount = config.calculated_pool_amount
+            logging.info(f"Using calculated pool amount: {effective_pool_amount}")
+        else:
+            effective_pool_amount = 100.0
+            logging.info(f"Using default pool amount: {effective_pool_amount}")
+        
+        # Cap winner count by participant count
+        actual_winner_count = min(effective_winner_count, participant_count)
+        logging.info(f"Final winner count: {actual_winner_count}")
         
         # Calculate prize distribution
-        prizes = calculate_prize_distribution(prize_pool, winner_count)
+        prizes = calculate_prize_distribution(effective_pool_amount, actual_winner_count)
         logging.info(f"Prize distribution: {prizes}")
         
         # Select winners randomly
-        if participant_count <= winner_count:
+        if participant_count <= actual_winner_count:
             # If there are fewer participants than winners, everyone wins
             winners = eligible_users
             logging.info("All participants selected as winners (fewer participants than winner slots)")
         else:
             # Otherwise, randomly select winners
-            winners = random.sample(eligible_users, winner_count)
-            logging.info(f"Randomly selected {winner_count} winners from {participant_count} participants")
+            winners = random.sample(eligible_users, actual_winner_count)
+            logging.info(f"Randomly selected {actual_winner_count} winners from {participant_count} participants")
         
         # Save winners to database
         winner_responses = []
@@ -232,25 +341,21 @@ async def trigger_draw(
                 logging.info(f"Processing winner {i+1}: User {winner.account_id} ({winner.username}), prize: ${prize_amount}")
                 
                 # Save to database
-                draw_winner = TriviaDrawWinner(
+                db_winner = TriviaDrawWinner(
                     account_id=winner.account_id,
                     prize_amount=prize_amount,
                     position=i+1,
-                    draw_date=target_date
+                    draw_date=target_date,
+                    draw_type='daily',
+                    created_at=datetime.now()
                 )
-                db.add(draw_winner)
+                db.add(db_winner)
                 
                 # Update user's wallet balance
                 winner.wallet_balance = (winner.wallet_balance or 0) + prize_amount
                 winner.last_wallet_update = datetime.utcnow()
                 
-                # Calculate total amount won by user all-time (including this win)
-                total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-                    TriviaDrawWinner.account_id == winner.account_id
-                ).scalar() or 0
-                total_won += prize_amount
-                
-                # Get badge information
+                # Get winner details
                 badge_name = None
                 badge_image_url = None
                 if hasattr(winner, 'badge_info') and winner.badge_info:
@@ -260,51 +365,51 @@ async def trigger_draw(
                 # Get avatar URL
                 avatar_url = None
                 if hasattr(winner, 'selected_avatar_id') and winner.selected_avatar_id:
-                    avatar_query = text("""
-                        SELECT image_url FROM avatars 
-                        WHERE id = :avatar_id
-                    """)
-                    avatar_result = db.execute(avatar_query, {"avatar_id": winner.selected_avatar_id}).first()
-                    if avatar_result:
-                        avatar_url = avatar_result[0]
+                    avatar = db.query(Avatar).filter(Avatar.id == winner.selected_avatar_id).first()
+                    if avatar:
+                        avatar_url = avatar.image_url
                 
                 # Get frame URL
                 frame_url = None
                 if hasattr(winner, 'selected_frame_id') and winner.selected_frame_id:
-                    frame_query = text("""
-                        SELECT image_url FROM frames 
-                        WHERE id = :frame_id
-                    """)
-                    frame_result = db.execute(frame_query, {"frame_id": winner.selected_frame_id}).first()
-                    if frame_result:
-                        frame_url = frame_result[0]
+                    frame = db.query(Frame).filter(Frame.id == winner.selected_frame_id).first()
+                    if frame:
+                        frame_url = frame.image_url
                 
+                # Calculate total amount won by this user
+                total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
+                    TriviaDrawWinner.account_id == winner.account_id
+                ).scalar() or 0
+                
+                # Add to response
                 winner_responses.append(WinnerResponse(
                     username=winner.username or f"User{winner.account_id}",
                     amount_won=prize_amount,
-                    total_amount_won=total_won,
+                    total_amount_won=total_won + prize_amount,  # Include today's prize
                     badge_name=badge_name,
                     badge_image_url=badge_image_url,
                     avatar_url=avatar_url,
                     frame_url=frame_url,
-                    position=i+1
+                    position=i+1,
+                    draw_date=target_date.isoformat()
                 ))
         
+        # Commit all winners to database
         db.commit()
-        logging.info(f"Draw completed successfully with {len(winner_responses)} winners")
         
+        # Return response
         return DrawResponse(
+            status="success",
+            draw_date=target_date,
             total_participants=participant_count,
-            total_winners=len(winner_responses),
+            total_winners=actual_winner_count,
             winners=winner_responses,
-            prize_pool=prize_pool
+            prize_pool=effective_pool_amount
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
         db.rollback()
-        logging.error(f"Error in trigger_draw: {str(e)}", exc_info=True)
+        logger.error(f"Error triggering draw: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error triggering draw: {str(e)}"
@@ -316,91 +421,156 @@ async def reset_winner_logic(
     current_user: dict = Depends(get_admin_user)
 ):
     """
-    Admin endpoint to reset to the default winner logic.
-    Updates the latest config record ensuring consistency with GET /admin/draw-config.
+    Admin endpoint to reset the draw winner logic to default calculation.
+    This sets is_custom to False and clears all custom values.
     """
-    # Ensure logger is accessible within the function scope
-    logger = logging.getLogger(__name__)
     try:
-        logger.info("--- Entering reset_winner_logic ---")
-        # Fetch the LATEST config record
+        logging.info("Resetting winner logic to defaults")
+        
+        # Get current configuration or create new one
         config = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first()
-
-        # Define default values within the function scope to ensure availability
-        DEFAULT_DRAW_HOUR = int(os.environ.get("DRAW_TIME_HOUR", "20"))
-        DEFAULT_DRAW_MINUTE = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
-        DEFAULT_TIMEZONE = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
-
+        
         if not config:
-            # If no config exists, create one with defaults
-            logger.info("No config found, creating new default config.")
+            # Create default configuration
             config = TriviaDrawConfig(
                 is_custom=False,
                 custom_winner_count=None,
-                custom_data=json.dumps({ # Initialize custom_data with defaults
-                    "draw_time_hour": DEFAULT_DRAW_HOUR,
-                    "draw_time_minute": DEFAULT_DRAW_MINUTE,
-                    "draw_timezone": DEFAULT_TIMEZONE
-                })
+                daily_pool_amount=None,
+                daily_winners_count=3,
+                automatic_draws=True,
+                draw_time_hour=int(os.environ.get("DRAW_TIME_HOUR", "20")),
+                draw_time_minute=int(os.environ.get("DRAW_TIME_MINUTE", "00")),
+                draw_timezone=os.environ.get("DRAW_TIMEZONE", "EST"),
+                use_dynamic_calculation=True,
+                calculated_pool_amount=None,
+                calculated_winner_count=None,
+                last_calculation_time=None
             )
             db.add(config)
         else:
-            # If config exists, update it
-            logger.info(f"Found config ID={config.id}. Resetting is_custom and custom_winner_count.")
+            # Reset the existing configuration
             config.is_custom = False
             config.custom_winner_count = None
-            # Note: We don't reset the draw time/timezone in custom_data here,
-            # as resetting only affects the winner count logic.
-        
+            config.daily_pool_amount = None
+            config.use_dynamic_calculation = True
+            
+            # Force recalculation
+            config.calculated_pool_amount = None
+            config.calculated_winner_count = None
+            config.last_calculation_time = None
+            
+            # Keep draw time settings but make sure they have values
+            if config.draw_time_hour is None:
+                config.draw_time_hour = int(os.environ.get("DRAW_TIME_HOUR", "20"))
+            if config.draw_time_minute is None:
+                config.draw_time_minute = int(os.environ.get("DRAW_TIME_MINUTE", "00"))
+            if config.draw_timezone is None or not config.draw_timezone:
+                config.draw_timezone = os.environ.get("DRAW_TIMEZONE", "EST")
+            
         db.commit()
-        db.refresh(config) # Refresh to get the committed state
-        logger.info(f"Committed reset. DB state: ID={config.id}, is_custom={config.is_custom}, count={config.custom_winner_count}, custom_data='{config.custom_data}'")
-
-        # --- Read response values from the refreshed DB state --- 
-        final_custom_data = {}
-        if config.custom_data:
-            try:
-                final_custom_data = json.loads(config.custom_data)
-            except json.JSONDecodeError:
-                 logger.error(f"Failed to parse custom_data after reset ID={config.id}: {config.custom_data}. Using defaults for response.", exc_info=True)
-                 final_custom_data = {
-                     "draw_time_hour": DEFAULT_DRAW_HOUR,
-                     "draw_time_minute": DEFAULT_DRAW_MINUTE,
-                     "draw_timezone": DEFAULT_TIMEZONE
-                 }
-        else: # Handle case where custom_data might be None
-             logger.warning(f"custom_data is None after reset for ID={config.id}. Using defaults for response time/tz.")
-             final_custom_data = {
-                 "draw_time_hour": DEFAULT_DRAW_HOUR,
-                 "draw_time_minute": DEFAULT_DRAW_MINUTE,
-                 "draw_timezone": DEFAULT_TIMEZONE
-             }
-
-        # Get time/timezone from the parsed custom_data, falling back to defaults
-        resp_hour = final_custom_data.get("draw_time_hour", DEFAULT_DRAW_HOUR)
-        resp_minute = final_custom_data.get("draw_time_minute", DEFAULT_DRAW_MINUTE)
-        resp_timezone = final_custom_data.get("draw_timezone", DEFAULT_TIMEZONE)
-
-        logger.info(f"Final reset_winner_logic response values: is_custom={config.is_custom}, count={config.custom_winner_count}, hour={resp_hour}, min={resp_minute}, tz={resp_timezone}")
-
-        # Construct the response using DB values and include custom_data
+        db.refresh(config)
+        
+        logging.info("Successfully reset winner logic to defaults")
+        
+        # Return the updated configuration
         return DrawConfigResponse(
             is_custom=config.is_custom,
             custom_winner_count=config.custom_winner_count,
-            draw_time_hour=resp_hour,
-            draw_time_minute=resp_minute,
-            draw_timezone=resp_timezone,
-            custom_data=final_custom_data # Include the parsed custom_data
+            draw_time_hour=config.draw_time_hour,
+            draw_time_minute=config.draw_time_minute,
+            draw_timezone=config.draw_timezone,
+            custom_data=None
         )
-        
+    
     except Exception as e:
-        # Ensure logger is accessible in except block too
-        logger = logging.getLogger(__name__)
-        db.rollback()
-        logger.error(f"Error resetting winner logic: {str(e)}", exc_info=True)
+        logging.error(f"Error resetting winner logic: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error resetting winner logic: {str(e)}"
+        )
+
+@router.put("/update-draw-config", response_model=dict)
+async def update_draw_config(
+    request: Request,
+    req_config: DrawConfigUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """
+    Update the draw configuration in the database.
+    Simplified to only allow updating custom_winner_count, draw_time_hour, and draw_time_minute.
+    """
+    try:
+        logger.info(f"--- Entering update_draw_config with payload: {req_config.dict(exclude_unset=True)} ---")
+        
+        # Check for multiple config rows (potential issue indicator)
+        config_count = db.query(func.count(TriviaDrawConfig.id)).scalar()
+        if config_count > 1:
+            logger.warning(f"Multiple ({config_count}) rows found in trivia_draw_config table. Only the latest (by ID) will be updated.")
+
+        # Get the latest config record to update, or create if none exists
+        db_config = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first()
+
+        if not db_config:
+            logger.info("No existing config found. Creating new one.")
+            db_config = TriviaDrawConfig(
+                is_custom=False,
+                custom_winner_count=None,
+                daily_pool_amount=0.0,
+                daily_winners_count=1,
+                automatic_draws=True,
+                draw_time_hour=20,
+                draw_time_minute=0,
+                draw_timezone="US/Eastern",
+                use_dynamic_calculation=True
+            )
+            db.add(db_config)
+        
+        # --- Prepare updates ---
+        updated_fields = []
+        
+        # Update custom winner count if provided
+        if req_config.custom_winner_count is not None:
+            db_config.custom_winner_count = req_config.custom_winner_count
+            db_config.is_custom = True  # Automatically set is_custom to True
+            updated_fields.append(f"custom_winner_count={req_config.custom_winner_count}")
+            updated_fields.append("is_custom=True")
+        
+        # Update draw time hour if provided
+        if req_config.draw_time_hour is not None:
+            db_config.draw_time_hour = req_config.draw_time_hour
+            updated_fields.append(f"draw_time_hour={req_config.draw_time_hour}")
+        
+        # Update draw time minute if provided
+        if req_config.draw_time_minute is not None:
+            db_config.draw_time_minute = req_config.draw_time_minute
+            updated_fields.append(f"draw_time_minute={req_config.draw_time_minute}")
+        
+        db.commit()
+        db.refresh(db_config)
+        
+        # Update the scheduler if the draw time was changed
+        if (req_config.draw_time_hour is not None or 
+            req_config.draw_time_minute is not None):
+            
+            # Update the scheduler
+            update_success = update_draw_scheduler()
+            if not update_success:
+                logger.warning("Failed to update draw scheduler with new configuration")
+        
+        if updated_fields:
+            logger.info(f"Updated fields: {', '.join(updated_fields)}")
+        else:
+            logger.info("No fields were updated (values unchanged)")
+            
+        # Return the updated configuration
+        return get_draw_config(request, db, current_user)
+        
+    except Exception as e:
+        logger.error(f"Error updating draw configuration: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating draw configuration: {str(e)}"
         )
 
 # ======== Daily Rewards Endpoints ========

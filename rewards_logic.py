@@ -9,7 +9,7 @@ from sqlalchemy import func, desc, and_, or_
 import pytz
 from fastapi import HTTPException
 
-from models import User, TriviaDrawWinner, TriviaDrawConfig, Entry, Badge, Avatar, Frame, DailyQuestion
+from models import User, TriviaDrawWinner, TriviaDrawConfig, Entry, Badge, Avatar, Frame, DailyQuestion, UserQuestionAnswer
 from db import get_db
 
 # Configure logging
@@ -20,9 +20,19 @@ def get_draw_config(db: Session) -> TriviaDrawConfig:
     """
     Get the current draw configuration. Create a default one if it doesn't exist.
     """
-    config = db.query(TriviaDrawConfig).first()
+    config = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first()
     if not config:
-        config = TriviaDrawConfig(is_custom=False, custom_winner_count=None)
+        config = TriviaDrawConfig(
+            is_custom=False, 
+            custom_winner_count=None,
+            daily_pool_amount=0.0,
+            daily_winners_count=1,
+            automatic_draws=True,
+            draw_time_hour=int(os.environ.get("DRAW_TIME_HOUR", "20")),
+            draw_time_minute=int(os.environ.get("DRAW_TIME_MINUTE", "0")),
+            draw_timezone=os.environ.get("DRAW_TIMEZONE", "US/Eastern"),
+            use_dynamic_calculation=True
+        )
         db.add(config)
         db.commit()
         db.refresh(config)
@@ -74,10 +84,10 @@ def get_eligible_participants(db: Session, draw_date: date) -> List[User]:
     # Method 1: Find users who answered daily questions correctly
     eligible_users_query = (
         db.query(User)
-        .join(DailyQuestion, User.id == DailyQuestion.account_id)
+        .join(UserQuestionAnswer, User.account_id == UserQuestionAnswer.account_id)
         .filter(
-            DailyQuestion.date_created == draw_date,
-            DailyQuestion.correct == True
+            UserQuestionAnswer.date == draw_date,
+            UserQuestionAnswer.is_correct == True
         )
         .distinct()
     )
@@ -126,7 +136,7 @@ def get_eligible_participants(db: Session, draw_date: date) -> List[User]:
 
 def perform_draw(db: Session, draw_date: date = None) -> Dict[str, Any]:
     """
-    Perform the trivia draw for the specified date (or today if not specified).
+    Perform the daily trivia draw for the specified date (or today if not specified).
     
     This function:
     1. Gets the draw configuration
@@ -146,13 +156,18 @@ def perform_draw(db: Session, draw_date: date = None) -> Dict[str, Any]:
     if draw_date is None:
         draw_date = date.today()
     
-    logging.info(f"Performing draw for date: {draw_date}")
+    logging.info(f"Performing daily draw for date: {draw_date}")
     
     # Get draw configuration
-    draw_config = db.query(TriviaDrawConfig).first()
-    winner_count = draw_config.custom_winner_count if draw_config and draw_config.is_custom else 3
+    draw_config = get_draw_config(db)
     
-    logging.info(f"Draw configuration: is_custom={(draw_config.is_custom if draw_config else False)}, winner_count={winner_count}")
+    # Determine winner count from configuration
+    if draw_config.is_custom and draw_config.custom_winner_count is not None:
+        winner_count = draw_config.custom_winner_count
+    else:
+        winner_count = draw_config.daily_winners_count
+    
+    logging.info(f"Draw configuration: winner_count={winner_count}")
     
     # Get eligible participants
     eligible_participants = get_eligible_participants(db, draw_date)
@@ -177,26 +192,31 @@ def perform_draw(db: Session, draw_date: date = None) -> Dict[str, Any]:
     
     logging.info(f"Selected {len(winners)} winners")
     
-    # Calculate prize amounts (total prize pool of $100)
-    total_prize_pool = 100.0
-    individual_prize = round(total_prize_pool / len(winners), 2) if winners else 0
+    # Always use the calculated pool amount and update the configuration
+    total_prize_pool = draw_config.calculated_pool_amount
+    draw_config.daily_pool_amount = total_prize_pool  # Update the configuration to match
+    db.commit()  # Save the updated configuration
     
+    logging.info(f"Using calculated prize pool: ${total_prize_pool}")
+    
+    individual_prize = round(total_prize_pool / len(winners), 2) if winners and total_prize_pool > 0 else 0
     logging.info(f"Prize distribution: ${individual_prize} per winner")
     
     # Record winners and prepare return data
     winner_records = []
     for position, winner in enumerate(winners, start=1):
         db_winner = TriviaDrawWinner(
-            account_id=winner.account_id,  # User.account_id is the correct field
+            account_id=winner.account_id,
             prize_amount=individual_prize,
             position=position,
             draw_date=draw_date,
+            draw_type="daily",
             created_at=datetime.now()
         )
         db.add(db_winner)
         winner_records.append({
             "user_id": winner.account_id,
-            "username": winner.username or f"User{winner.account_id}",  # Fallback if username is None
+            "username": winner.username or f"User{winner.account_id}",
             "position": position,
             "prize_amount": individual_prize,
             "draw_date": draw_date.isoformat()

@@ -7,11 +7,15 @@ from datetime import datetime, timedelta
 import logging
 import pytz
 
-from models import DailyQuestion, Trivia, User
+from models import DailyQuestion, Trivia, User, TriviaDrawConfig, TriviaDrawWinner
 from db import get_db
+from rewards_logic import perform_draw, is_draw_time
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# Create a global scheduler instance that can be accessed by other modules
+scheduler = BackgroundScheduler()
 
 @contextmanager
 def get_session():
@@ -126,13 +130,101 @@ def reset_boost_usage_flags():
     except Exception as e:
         logger.error(f"Error in reset_boost_usage_flags: {str(e)}", exc_info=True)
 
+def run_daily_draw():
+    """Perform the daily trivia draw"""
+    logger.info("Running scheduled task: run_daily_draw")
+    try:
+        with get_session() as db:
+            # Get today's date
+            today = datetime.utcnow().date()
+            
+            # Check if draw already performed for today
+            existing_draw = db.query(TriviaDrawWinner).filter(
+                TriviaDrawWinner.draw_date == today
+            ).first()
+            
+            if existing_draw:
+                logger.info(f"Draw already performed for {today}, skipping")
+                return
+                
+            # Check if automatic draws are enabled
+            config = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first()
+            if config and not config.automatic_draws:
+                logger.info("Automatic draws are disabled in configuration, skipping")
+                return
+            
+            # Perform the draw
+            draw_result = perform_draw(db, today)
+            logger.info(f"Daily draw completed with status: {draw_result['status']}")
+            logger.info(f"Total participants: {draw_result['total_participants']}, Total winners: {draw_result['total_winners']}")
+    except Exception as e:
+        logger.error(f"Error in run_daily_draw: {str(e)}", exc_info=True)
+
+def get_configured_draw_time():
+    """Get the draw time from the database configuration"""
+    try:
+        with get_session() as db:
+            config = db.query(TriviaDrawConfig).order_by(TriviaDrawConfig.id.desc()).first()
+            
+            # Default values if no config is found
+            hour = 23
+            minute = 0
+            timezone_str = "US/Eastern"
+            
+            if config:
+                # Use configuration values if available
+                hour = config.draw_time_hour if config.draw_time_hour is not None else hour
+                minute = config.draw_time_minute if config.draw_time_minute is not None else minute
+                timezone_str = config.draw_timezone if config.draw_timezone else timezone_str
+            
+            # Convert to UTC for scheduler
+            timezone = pytz.timezone(timezone_str)
+            utc = pytz.UTC
+            local_time = timezone.localize(datetime.combine(datetime.now().date(), 
+                                                         datetime.strptime(f"{hour}:{minute}", "%H:%M").time()))
+            utc_time = local_time.astimezone(utc)
+            
+            logger.info(f"Configured draw time: {hour}:{minute} {timezone_str} (UTC: {utc_time.hour}:{utc_time.minute})")
+            return utc_time.hour, utc_time.minute
+            
+    except Exception as e:
+        logger.error(f"Error getting configured draw time: {str(e)}", exc_info=True)
+        # Fallback to default: 11 PM EST
+        return 3, 0  # 11 PM EST is typically 3 AM UTC
+
+def update_draw_scheduler():
+    """
+    Update the draw scheduler with the latest configuration.
+    This can be called when an admin changes the draw time.
+    """
+    try:
+        # Get the configured draw time
+        draw_hour, draw_minute = get_configured_draw_time()
+        
+        # Remove existing job if it exists
+        if scheduler.get_job('run_daily_draw'):
+            scheduler.remove_job('run_daily_draw')
+            logger.info("Removed existing draw scheduler job")
+        
+        # Add job with new configuration
+        scheduler.add_job(
+            run_daily_draw,
+            CronTrigger(hour=draw_hour, minute=draw_minute, second=0),
+            id='run_daily_draw',
+            replace_existing=True
+        )
+        
+        logger.info(f"Updated draw scheduler to run at {draw_hour}:{draw_minute} UTC")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating draw scheduler: {str(e)}", exc_info=True)
+        return False
+
 # ========= Scheduler Setup =========
 
 def start_scheduler():
     """Initialize and start the scheduler"""
     try:
-        scheduler = BackgroundScheduler()
-        
         # Schedule daily reset tasks
         # Note: Using UTC time
         
@@ -157,6 +249,16 @@ def start_scheduler():
             reset_boost_usage_flags,
             CronTrigger(hour=0, minute=0, second=0),
             id='reset_boost_usage_flags',
+            replace_existing=True
+        )
+        
+        # Run daily draw at the configured time (converted to UTC)
+        draw_hour, draw_minute = get_configured_draw_time()
+        
+        scheduler.add_job(
+            run_daily_draw,
+            CronTrigger(hour=draw_hour, minute=draw_minute, second=0),
+            id='run_daily_draw',
             replace_existing=True
         )
         

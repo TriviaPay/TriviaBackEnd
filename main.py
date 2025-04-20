@@ -73,9 +73,15 @@ def custom_openapi():
         All endpoints except /login and /auth/refresh require a valid access token.
         
         Format: `Authorization: Bearer <your_access_token>`
+        
+        ## Admin Endpoints
+        Admin endpoints at `/admin/*` require admin privileges.
+        Use the exact format shown in the examples for each endpoint.
         """,
         routes=app.routes,
     )
+    
+    # Add security schemes
     openapi_schema["components"]["securitySchemes"] = {
         "bearerAuth": {
             "type": "http",
@@ -83,8 +89,31 @@ def custom_openapi():
             "bearerFormat": "JWT",
         }
     }
+    
     # Apply security globally to all routes except login and refresh
     openapi_schema["security"] = [{"bearerAuth": []}]
+    
+    # Fix endpoints and ensure proper examples
+    for path in openapi_schema["paths"]:
+        for method in openapi_schema["paths"][path]:
+            # Remove request body from GET endpoints
+            if method.lower() == "get" and "requestBody" in openapi_schema["paths"][path][method]:
+                del openapi_schema["paths"][path][method]["requestBody"]
+                
+            # Ensure example values are provided for key admin endpoints
+            if path == "/admin/draw-config" and method.lower() == "put":
+                # Make sure the example is correct
+                if "requestBody" in openapi_schema["paths"][path][method]:
+                    if "content" not in openapi_schema["paths"][path][method]["requestBody"]:
+                        continue
+                    content = openapi_schema["paths"][path][method]["requestBody"]["content"]
+                    if "application/json" in content:
+                        content["application/json"]["example"] = {
+                            "custom_winner_count": 1,
+                            "draw_time_hour": 20,
+                            "draw_time_minute": 0
+                        }
+    
     app.openapi_schema = openapi_schema
     return openapi_schema
 
