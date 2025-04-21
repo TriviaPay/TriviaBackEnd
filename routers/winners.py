@@ -233,9 +233,9 @@ async def get_daily_winners(
                             "total_amount_won": 2500.0,
                             "badge_name": "Diamond",
                             "badge_image_url": "https://example.com/diamond.png",
-                            "avatar_url": "https://example.com/avatar.png",
-                            "frame_url": "https://example.com/frame.png",
-                            "position": 1,
+                    "avatar_url": "https://example.com/avatar.png",
+                    "frame_url": "https://example.com/frame.png",
+                    "position": 1,
                             "draw_date": "2023-06-18"  # Week end date
                         }
                     ]
@@ -391,9 +391,9 @@ async def get_weekly_winners(
                             "total_amount_won": 5000.0,
                             "badge_name": "Platinum",
                             "badge_image_url": "https://example.com/platinum.png",
-                            "avatar_url": "https://example.com/avatar.png",
-                            "frame_url": "https://example.com/frame.png",
-                            "position": 1,
+                "avatar_url": "https://example.com/avatar.png",
+                "frame_url": "https://example.com/frame.png",
+                "position": 1,
                             "draw_date": None  # Not applicable for all-time winners
                         }
                     ]
