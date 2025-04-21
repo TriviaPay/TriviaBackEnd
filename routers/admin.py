@@ -154,7 +154,7 @@ async def get_admin_draw_config(
                 "date": today.isoformat()
             }
         }
-
+        
     except Exception as e:
         logger.error(f"Error getting draw configuration: {str(e)}", exc_info=True)
         raise HTTPException(
@@ -279,6 +279,7 @@ async def trigger_draw(
     db: Session = Depends(get_db),
     admin_user: dict = Depends(get_admin_user)
 ):
+
     """
     Trigger a daily draw manually
     
@@ -294,28 +295,35 @@ async def trigger_draw(
             "winners": list
         }
     """
-    try:
-        logger.info("Admin triggering daily draw manually")
-
-        # Call the perform_draw function with today's date
-        result = perform_draw(db)
-        
-        # Get daily winners
-        winners = get_daily_winners(db)
+    max_attempts = 5
+    delay = 2  # seconds
+    attempt = 0
+    
+    while attempt < max_attempts:
+        try:
+            logger.info(f"Attempt {attempt + 1} to trigger daily draw")
+            # Call the perform_draw function with today's date
+            result = perform_draw(db)
             
-        return {
-            "success": True,
-            "message": "Daily draw successfully triggered",
-            "result": result,
-            "winners": winners
-        }
-        
-    except Exception as e:
-        logger.error(f"Error triggering daily draw: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error triggering daily draw: {str(e)}"
-        )
+            # Get daily winners
+            winners = get_daily_winners(db)
+            
+            return {
+                "success": True,
+                "message": "Daily draw successfully triggered",
+                "result": result,
+                "winners": winners
+            }
+        except Exception as e:
+            logger.error(f"Error triggering daily draw on attempt {attempt + 1}: {str(e)}", exc_info=True)
+            attempt += 1
+            if attempt < max_attempts:
+                time.sleep(delay)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to trigger daily draw after {max_attempts} attempts: {str(e)}"
+                )
 
 @router.get("/revenue")
 async def get_company_revenue(
@@ -474,7 +482,7 @@ async def check_avatar_integrity(
             except Exception as e:
                 db.rollback()
                 logger.error(f"Error committing avatar fixes: {str(e)}", exc_info=True)
-                raise HTTPException(
+            raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Error committing avatar fixes: {str(e)}"
                 )
