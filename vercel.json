@@ -5,7 +5,12 @@
       "src": "api/index.py",
       "use": "@vercel/python",
       "config": {
-        "pythonVersion": "3.11"
+        "pythonVersion": "3.11",
+        "postInstallCommand": "bash api/postinstall.sh",
+        "includeFiles": [
+          "api/postinstall.sh",
+          "api/requirements.txt"
+        ]
       }
     }
   ],
