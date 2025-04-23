@@ -1,6 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date,
-    PrimaryKeyConstraint, UniqueConstraint
+    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date
 )
 from sqlalchemy.orm import relationship
 from db import Base
@@ -67,33 +66,14 @@ class User(Base):
     selected_avatar_id = Column(String, nullable=True)  # Currently selected avatar ID
     selected_frame_id = Column(String, nullable=True)  # Currently selected frame ID
 
-    # --- Gameplay Boosts --- #
-    streak_saver_count = Column(Integer, default=0, nullable=False)
-    question_reroll_count = Column(Integer, default=0, nullable=False)
-    extra_chance_count = Column(Integer, default=0, nullable=False)
-    hint_count = Column(Integer, default=0, nullable=False)
-    fifty_fifty_count = Column(Integer, default=0, nullable=False)
-    auto_answer_count = Column(Integer, default=0, nullable=False)
-    # Daily usage flags (need to be reset daily)
-    hint_used_today = Column(Boolean, default=False, nullable=False)
-    fifty_fifty_used_today = Column(Boolean, default=False, nullable=False)
-    auto_answer_used_today = Column(Boolean, default=False, nullable=False)
-
     # Relationships
     winners = relationship("Winner", back_populates="user")
     entries = relationship("Entry", back_populates="user")
     payments = relationship("Payment", back_populates="user")
-    question_answers = relationship("UserQuestionAnswer", back_populates="user")
-    badge_info = relationship("Badge", foreign_keys=[badge_id], back_populates="users")
+    daily_questions = relationship("DailyQuestion", back_populates="user")
+    badge_info = relationship("Badge", back_populates="users")
     # You could add a relationship for Comments, Chats, or Withdrawals if needed
     # (depending on whether they link to a user table).
-
-    # Daily rewards relationship
-    daily_rewards = relationship("UserDailyRewards", back_populates="user", uselist=True)
-
-    # These relationships for transactions and notifications
-    transactions = relationship("Transaction", back_populates="user", uselist=True)
-    notifications = relationship("Notification", back_populates="user", uselist=True)
 
 def generate_account_id():
     """Generate a 10-digit random unique number."""
@@ -105,14 +85,12 @@ def generate_account_id():
 class Entry(Base):
     __tablename__ = "entries"
 
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=False)
-    date = Column(Date, default=datetime.utcnow().date(), nullable=False, primary_key=False)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
+    number_of_entries = Column(Integer, nullable=False)
     ques_attempted = Column(Integer, nullable=False)
     correct_answers = Column(Integer, nullable=False)
     wrong_answers = Column(Integer, nullable=False)
-    
-    # Define composite primary key
-    __table_args__ = (PrimaryKeyConstraint('account_id', 'date'), {})
+    date = Column(Date, default=datetime.utcnow().date(), primary_key=True, nullable=False)
 
     # Relationship
     user = relationship("User", back_populates="entries")
@@ -177,7 +155,6 @@ class Payment(Base):
 
     # Relationship
     user = relationship("User", back_populates="payments")
-
 
 
 # =================================
@@ -311,19 +288,22 @@ class DailyQuestion(Base):
     __tablename__ = "daily_questions"
 
     id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
-    date = Column(Date, default=datetime.utcnow().date, nullable=False)
+    date = Column(DateTime, default=datetime.utcnow, nullable=False)
     is_common = Column(Boolean, default=False)  # True for first question
     question_order = Column(Integer, nullable=False)  # 1-4 for ordering
     is_used = Column(Boolean, default=False)  # Track if question was attempted
     was_changed = Column(Boolean, default=False)  # Track if question was changed via lifeline
-    correct_answer = Column(String, nullable=True)  # Store the correct answer for convenience
+    
+    # New fields to track answers and correctness
+    answer = Column(String, nullable=True)  # User's answer
+    is_correct = Column(Boolean, nullable=True)  # Whether the answer was correct
+    answered_at = Column(DateTime, nullable=True)  # When the answer was submitted
     
     # Relationships
+    user = relationship("User", back_populates="daily_questions")
     question = relationship("Trivia", backref="daily_allocations")
-    
-    # Define unique constraint
-    __table_args__ = (UniqueConstraint('date', 'question_number', name='unique_date_question'),)
 
 # =================================
 #  Cosmetics - Avatars Table
@@ -419,22 +399,7 @@ class TriviaDrawConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     is_custom = Column(Boolean, default=False)  # Whether using custom winner count
     custom_winner_count = Column(Integer, nullable=True)  # Custom number of winners
-    daily_pool_amount = Column(Float, default=0.0)  # Amount in the daily draw pool
-    daily_winners_count = Column(Integer, default=1)  # Number of winners for daily draw
-    automatic_draws = Column(Boolean, default=True)  # Whether draws happen automatically
     custom_data = Column(String, nullable=True)  # JSON string for additional configuration
-    
-    # Adding explicit columns for draw time settings instead of relying on custom_data
-    draw_time_hour = Column(Integer, default=20)  # Hour of day for the draw (0-23)
-    draw_time_minute = Column(Integer, default=0)  # Minute of hour for the draw (0-59)
-    draw_timezone = Column(String, default="US/Eastern")  # Timezone for the draw
-    
-    # Adding explicit columns for dynamic calculation tracking
-    calculated_pool_amount = Column(Float, nullable=True)  # Last calculated pool amount
-    calculated_winner_count = Column(Integer, nullable=True)  # Last calculated winner count
-    last_calculation_time = Column(DateTime, nullable=True)  # When values were last calculated
-    use_dynamic_calculation = Column(Boolean, default=True)  # Whether to use dynamic calculations
-    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -449,7 +414,6 @@ class TriviaDrawWinner(Base):
     prize_amount = Column(Float, nullable=False)
     position = Column(Integer, nullable=False)  # Winner position (1st, 2nd, etc.)
     draw_date = Column(Date, nullable=False)  # Date of the draw
-    draw_type = Column(String, default="daily", nullable=False)  # Type of draw (only 'daily' is supported)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship
@@ -468,116 +432,45 @@ class DrawConfig(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 # =================================
-#  User Question Answer Table
+#  Gem Package Configuration
 # =================================
-class UserQuestionAnswer(Base):
-    """Tracks when users answer specific questions - only created on answer submission"""
-    __tablename__ = "user_question_answers"
-    
-    # Composite primary key
-    id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
-    date = Column(Date, default=datetime.utcnow().date(), nullable=False)
-    
-    # Answer data
-    answer = Column(String, nullable=True)
-    is_correct = Column(Boolean, nullable=True)
-    answered_at = Column(DateTime, nullable=True)
-    is_common = Column(Boolean, default=False, nullable=False)  # Was this the common question?
-    
-    # Relationships
-    user = relationship("User", back_populates="question_answers")
-    trivia = relationship("Trivia", foreign_keys=[question_number])
-    
-    # Define unique constraint
-    __table_args__ = (UniqueConstraint('account_id', 'question_number', 'date', name='unique_user_question_date'),)
-
-# =================================
-#  User Daily Rewards Table
-# =================================
-class UserDailyRewards(Base):
-    """
-    Tracks the user's daily rewards status for the current week.
-    Each row represents one user's current week rewards status.
-    """
-    __tablename__ = "user_daily_rewards"
+class GemPackageConfig(Base):
+    __tablename__ = "gem_package_config"
     
     id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    week_start_date = Column(Date, nullable=False)  # Monday of current week
-    
-    # Status for each day: "claimed", "doubled", "missed", "locked", "available"
-    day1_status = Column(String, nullable=False, default="locked")
-    day2_status = Column(String, nullable=False, default="locked")
-    day3_status = Column(String, nullable=False, default="locked")
-    day4_status = Column(String, nullable=False, default="locked")
-    day5_status = Column(String, nullable=False, default="locked")
-    day6_status = Column(String, nullable=False, default="locked")
-    day7_status = Column(String, nullable=False, default="locked")
-    
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relationships
-    user = relationship("User", back_populates="daily_rewards")
-
-# =================================
-#  Company Revenue Table
-# =================================
-class CompanyRevenue(Base):
-    """
-    Tracks company revenue on a weekly basis and streak rewards paid.
-    New records are created at the beginning of each week (Monday 12:00 AM).
-    """
-    __tablename__ = "company_revenue"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    week_start_date = Column(Date, nullable=False, unique=True)  # Monday of the week
-    week_end_date = Column(Date, nullable=False)  # Sunday of the week
-    weekly_revenue = Column(Float, nullable=False, default=0.0)  # Revenue for this week
-    total_revenue = Column(Float, nullable=False, default=0.0)  # Total revenue until this point
-    streak_rewards_paid = Column(Float, nullable=False, default=0.0)  # Streak rewards paid this week
-    total_streak_rewards_paid = Column(Float, nullable=False, default=0.0)  # Total streak rewards paid
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-    notes = Column(String, nullable=True)
-
-# =================================
-#  Transaction Table
-# =================================
-class Transaction(Base):
-    """
-    Tracks all monetary transactions (wallet balance changes) for users.
-    This includes purchases, streak rewards, etc.
-    """
-    __tablename__ = "transactions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    transaction_type = Column(String, nullable=False)  # "streak_reward", "purchase", "refund", etc.
-    amount = Column(Float, nullable=False)  # Positive for additions, negative for deductions
+    price_usd = Column(Float, nullable=False)
+    gems_amount = Column(Integer, nullable=False)
+    is_one_time = Column(Boolean, default=False)  # For one-time offers
     description = Column(String, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    
-    # Relationships
-    user = relationship("User", back_populates="transactions")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 # =================================
-#  Notification Table
+#  Boost Configuration
 # =================================
-class Notification(Base):
-    """
-    Stores user notifications for various events.
-    """
-    __tablename__ = "notifications"
+class BoostConfig(Base):
+    __tablename__ = "boost_config"
+    
+    boost_type = Column(String, primary_key=True, index=True)  # e.g. "fifty_fifty", "hint", etc.
+    gems_cost = Column(Integer, nullable=False)
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# =================================
+#  User Gem Purchases
+# =================================
+class UserGemPurchase(Base):
+    __tablename__ = "user_gem_purchases"
     
     id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    notification_type = Column(String, nullable=False)  # "streak_milestone", "reward", etc.
-    message = Column(String, nullable=False)
-    is_read = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    package_id = Column(Integer, ForeignKey("gem_package_config.id"), nullable=False)
+    purchase_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    price_paid = Column(Float, nullable=False)
+    gems_received = Column(Integer, nullable=False)
     
     # Relationships
-    user = relationship("User", back_populates="notifications")
+    user = relationship("User", backref="gem_purchases")
+    package = relationship("GemPackageConfig", backref="purchases")

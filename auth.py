@@ -117,102 +117,6 @@ def verify_access_token(access_token: str, check_expiration: bool = True, requir
     # Maximum number of retries for JWKS fetching
     max_retries = MAX_RETRIES
     
-    # Check if this is a development environment
-    is_dev_env = os.getenv("APP_ENV", "development") == "development"
-    
-    # Allow test tokens in development mode (starting with 'eyJhbGci')
-    if is_dev_env and access_token and isinstance(access_token, str) and access_token.startswith("eyJhbGci"):
-        try:
-            # For development mode, skip token verification
-            logger.info("Development mode detected. Accepting test token with minimal verification.")
-            
-            # Basic JWT format validation (header.payload.signature)
-            parts = access_token.split('.')
-            if len(parts) != 3:
-                logger.warning("Invalid test token format - should have 3 parts")
-            
-            # Try to decode the token without verification
-            payload = jwt.decode(
-                access_token,
-                "dev_key_not_used",  # Add a placeholder key parameter
-                options={
-                    "verify_signature": False,
-                    "verify_aud": False,
-                    "verify_iss": False,
-                    "verify_exp": check_expiration
-                }
-            )
-            
-            # Validate basic claims
-            if "sub" not in payload:
-                logger.warning("Test token missing 'sub' claim")
-                
-            # Make sure email is present if required
-            if require_email and "email" not in payload:
-                logger.warning("Test token missing required 'email' claim")
-                # If email is required but not in token, try to get it from userinfo
-                if "sub" in payload:
-                    logger.info("No email in token, attempting to retrieve from userinfo")
-                    userinfo = get_email_from_userinfo(access_token, return_full_info=True)
-                    if userinfo and "email" in userinfo:
-                        # Add email to payload
-                        payload["email"] = userinfo["email"]
-                        payload["email_verified"] = userinfo.get("email_verified", False)
-                        logger.info(f"Added email from userinfo: {userinfo['email']}")
-                    else:
-                        # If we can't get the email from userinfo, but the sub claim is valid, allow it
-                        admin_subs_str = os.getenv("ADMIN_SUBS", "email|67c00b4245db3e9383e93bf")
-                        admin_subs = [sub.strip() for sub in admin_subs_str.split(',')]
-                        if payload.get('sub') in admin_subs:
-                            logger.info(f"Token missing email but sub claim {payload.get('sub')} is in admin list")
-                            # Add a placeholder email for admin checks
-                            payload["email"] = os.getenv("ADMIN_EMAIL", "triviapay3@gmail.com")
-                            payload["email_verified"] = True
-                
-            logger.info(f"Successfully verified token in dev mode for: {payload.get('email', 'unknown')}")
-            return payload
-            
-        except Exception as e:
-            logger.error(f"Error validating test token: {str(e)}")
-            # Try another method - parse manually for development mode
-            try:
-                if len(parts) == 3:
-                    # Manually decode the payload (middle part)
-                    payload_part = parts[1]
-                    # Add padding if necessary
-                    payload_part += "=" * ((4 - len(payload_part) % 4) % 4)
-                    # Decode from base64
-                    decoded_bytes = base64.urlsafe_b64decode(payload_part)
-                    # Convert to JSON
-                    decoded_payload = json.loads(decoded_bytes.decode('utf-8'))
-                    
-                    logger.info(f"Manually decoded payload: {decoded_payload}")
-                    
-                    # Check required fields
-                    if "sub" not in decoded_payload:
-                        logger.warning("Manually decoded token missing 'sub' claim")
-                    
-                    # If email is required but not in token, attempt to retrieve it
-                    if require_email and "email" not in decoded_payload:
-                        logger.info("Attempting to retrieve email from userinfo for manually decoded token")
-                        userinfo = get_email_from_userinfo(access_token, return_full_info=True)
-                        if userinfo and "email" in userinfo:
-                            decoded_payload["email"] = userinfo["email"]
-                            decoded_payload["email_verified"] = userinfo.get("email_verified", False)
-                        else:
-                            # If we can't get the email from userinfo, but the sub claim is valid, allow it
-                            admin_subs_str = os.getenv("ADMIN_SUBS", "email|67c00b4245db3e9383e93bf")
-                            admin_subs = [sub.strip() for sub in admin_subs_str.split(',')]
-                            if decoded_payload.get('sub') in admin_subs:
-                                logger.info(f"Token missing email but sub claim {decoded_payload.get('sub')} is in admin list")
-                                # Add a placeholder email for admin checks
-                                decoded_payload["email"] = os.getenv("ADMIN_EMAIL", "triviapay3@gmail.com")
-                                decoded_payload["email_verified"] = True
-                    
-                    return decoded_payload
-            except Exception as manual_e:
-                logger.error(f"Manual decoding also failed: {manual_e}")
-    
     for retry in range(max_retries):
         try:
             # Log the raw token for debugging
@@ -224,16 +128,6 @@ def verify_access_token(access_token: str, check_expiration: bool = True, requir
 
             # Clean up the token if needed
             token = access_token.strip()
-            
-            # Handle case where token might have been concatenated with another token
-            # This can happen in certain client-side implementations
-            if '.' in token:
-                parts = token.split('.')
-                if len(parts) > 3:
-                    logger.warning(f"Token has {len(parts)} parts, which suggests concatenated tokens. Extracting first valid token.")
-                    # Try to extract just the first valid token (first 3 parts)
-                    token = '.'.join(parts[:3])
-                    logger.info(f"Using modified token for validation: {token[:20]}...")
             
             # Handle case where the token might be an invalid format (like a number or query parameter)
             if token.isdigit() or '=' in token:
@@ -247,90 +141,215 @@ def verify_access_token(access_token: str, check_expiration: bool = True, requir
                 
                 # Only do this in development mode!
                 if os.getenv("APP_ENV", "development") == "development":
+                    # Create a simple payload for development
                     payload = {
-                        "sub": "email|67c00b4245db3e9383e93bf",
+                        "sub": "email|admin",
                         "email": os.getenv("ADMIN_EMAIL", "triviapay3@gmail.com"),
-                        "email_verified": True,
                         "iat": int(iat.timestamp()),
-                        "exp": int(exp_time.timestamp())
+                        "exp": int(exp_time.timestamp()),
+                        "email_verified": True,
+                        "name": "Admin User (Dev)"
                     }
                     return payload
                 else:
-                    raise JWTError("Invalid token format")
-            
-            # Get the JWKS from Auth0
-            jwks_url = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json"
-            jwks = requests.get(jwks_url).json()
-            
-            # Get the key ID from the token header
-            unverified_header = jwt.get_unverified_header(token)
-            rsa_key = {}
-            
-            for key in jwks["keys"]:
-                if key["kid"] == unverified_header["kid"]:
-                    rsa_key = {
-                        "kty": key["kty"],
-                        "kid": key["kid"],
-                        "use": key["use"],
-                        "n": key["n"],
-                        "e": key["e"]
-                    }
-            
+                    # In production, we should still validate properly
+                    raise JWTError(f"Invalid token format in production: {token[:10]}...")
+                
+            # Check format - the token should have 3 parts separated by periods
+            parts = token.split('.')
+            if len(parts) != 3:
+                raise JWTError(f"Invalid token format. Expected 3 parts (header.payload.signature), got {len(parts)} parts")
+
+            # First, try to get the unverified header
+            try:
+                unverified_header = jwt.get_unverified_header(token)
+                logger.debug(f"Unverified Token Header: {unverified_header}")
+            except Exception as header_error:
+                logger.error(f"Error decoding token headers: {header_error}")
+                logger.error(f"Full token: {token}")
+                raise JWTError(f"Error decoding token headers: {header_error}")
+
+            # Check if this is a local test token (HS256 algorithm)
+            if unverified_header.get('alg') == 'HS256':
+                logger.debug("Detected local test token, using client secret for verification")
+                try:
+                    payload = jwt.decode(
+                        token, 
+                        AUTH0_CLIENT_SECRET, 
+                        algorithms=['HS256'],
+                        options={
+                            "verify_aud": False,
+                            "verify_iss": False,
+                            "require_exp": check_expiration,
+                            "require_iat": True,
+                        }
+                    )
+                    return payload
+                except Exception as decode_error:
+                    logger.error(f"Error decoding local test token: {decode_error}")
+                    raise JWTError(f"Invalid local test token: {decode_error}")
+
+            # For Auth0 tokens, proceed with JWKS verification
+            try:
+                jwks_url = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json"
+                jwks_response = requests.get(jwks_url, timeout=10)
+                if not jwks_response.ok:
+                    # Retry on server errors
+                    if 500 <= jwks_response.status_code < 600 and retry < max_retries - 1:
+                        sleep_time = RETRY_BACKOFF_FACTOR * (2 ** retry) + random.uniform(0, 1)
+                        logger.warning(f"JWKS fetch failed with status {jwks_response.status_code}, retrying in {sleep_time:.2f} seconds (attempt {retry+1}/{max_retries})")
+                        time.sleep(sleep_time)
+                        continue
+                    raise JWTError(f"Failed to fetch JWKS: HTTP {jwks_response.status_code}")
+                jwks_data = jwks_response.json()
+                logger.debug(f"Successfully fetched JWKS from Auth0")
+            except requests.RequestException as e:
+                # Handle network errors with retry
+                if retry < max_retries - 1:
+                    sleep_time = RETRY_BACKOFF_FACTOR * (2 ** retry) + random.uniform(0, 1)
+                    logger.warning(f"Network error fetching JWKS: {e}, retrying in {sleep_time:.2f} seconds (attempt {retry+1}/{max_retries})")
+                    time.sleep(sleep_time)
+                    continue
+                logger.error(f"Error fetching JWKS after {max_retries} attempts: {e}")
+                raise JWTError(f"Could not fetch JWKS after {max_retries} attempts: {e}")
+            except Exception as jwks_error:
+                logger.error(f"Error processing JWKS: {jwks_error}")
+                raise JWTError(f"Could not process JWKS: {jwks_error}")
+
+            kid = unverified_header.get("kid")
+            if not kid:
+                logger.error("No key ID (kid) found in token header")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token: no key ID found"
+                )
+
+            # Find the right key
+            rsa_key = None
+            for key in jwks_data["keys"]:
+                if key["kid"] == kid:
+                    rsa_key = key
+                    break
+
             if not rsa_key:
-                raise JWTError("Unable to find appropriate key")
-            
-            # Verify the token
-            payload = jwt.decode(
-                token,
-                rsa_key,
-                algorithms=AUTH0_ALGORITHMS,
-                audience=API_AUDIENCE,
-                issuer=f"https://{AUTH0_DOMAIN}/"
-            )
-            
-            # If email is required but not in token, try to get it from userinfo
-            if require_email and "email" not in payload:
-                logger.info("No email in token, attempting to retrieve from userinfo")
-                userinfo = get_email_from_userinfo(access_token, return_full_info=True)
-                if userinfo and "email" in userinfo:
-                    payload["email"] = userinfo["email"]
-                    payload["email_verified"] = userinfo.get("email_verified", False)
-                else:
-                    # If we can't get the email from userinfo, but the sub claim is valid, allow it
-                    admin_subs_str = os.getenv("ADMIN_SUBS", "email|67c00b4245db3e9383e93bf")
-                    admin_subs = [sub.strip() for sub in admin_subs_str.split(',')]
-                    if payload.get('sub') in admin_subs:
-                        logger.info(f"Token missing email but sub claim {payload.get('sub')} is in admin list")
-                        # Add a placeholder email for admin checks
-                        payload["email"] = os.getenv("ADMIN_EMAIL", "triviapay3@gmail.com")
-                        payload["email_verified"] = True
-            
-            return payload
-            
-        except JWTError as e:
-            logger.error(f"JWT validation error: {str(e)}")
-            if retry < max_retries - 1:
-                sleep_time = RETRY_BACKOFF_FACTOR * (2 ** retry) + random.uniform(0, 1)
-                logger.info(f"Retrying in {sleep_time:.2f} seconds")
-                time.sleep(sleep_time)
-            else:
+                logger.error(f"No matching key found for kid: {kid}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token",
-                    headers={"WWW-Authenticate": "Bearer"}
+                    detail="Invalid token: no matching key ID"
                 )
-        except Exception as e:
-            logger.error(f"Error verifying token: {str(e)}")
-            if retry < max_retries - 1:
+
+            # Decode the token using the JWKS
+            try:
+                # Modify decode options based on check_expiration
+                decode_options = {
+                    "verify_exp": check_expiration,
+                    "verify_aud": True,
+                    "verify_iss": True
+                }
+                
+                payload = jwt.decode(
+                    token,
+                    jwks_data,
+                    algorithms=['RS256'],
+                    audience=API_AUDIENCE,
+                    issuer=f"https://{AUTH0_DOMAIN}/",
+                    options=decode_options
+                )
+
+                # Try to extract email from the token directly if not present
+                # This works for Auth0 tokens where email is embedded in the sub claim
+                if not payload.get('email') and 'sub' in payload:
+                    sub = payload.get('sub')
+                    # Auth0 often has emails in sub claim in format "email|..."
+                    if sub and '|' in sub and sub.startswith('email'):
+                        try:
+                            email_part = sub.split('|')[1]
+                            if '@' in email_part:
+                                logger.info(f"Extracted email from sub claim: {email_part}")
+                                payload['email'] = email_part
+                        except Exception as e:
+                            logger.warning(f"Failed to extract email from sub: {e}")
+
+                # Only try to get email from userinfo if it's required, not in the token,
+                # and we haven't already extracted it from the sub claim
+                if not payload.get('email') and require_email:
+                    logger.info("No email in token, attempting to retrieve from userinfo")
+                    try:
+                        email = get_email_from_userinfo(token)
+                        if email:
+                            payload['email'] = email
+                        elif require_email:  # Only raise error if email is required
+                            logger.error("Could not retrieve email from userinfo")
+                            raise HTTPException(
+                                status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="Could not retrieve user email"
+                            )
+                    except Exception as e:
+                        if not require_email:
+                            logger.warning(f"Skipping email requirement due to error: {e}")
+                        else:
+                            raise
+
+                return payload
+
+            except jwt.ExpiredSignatureError:
+                # If expiration is being checked and token is expired
+                if check_expiration:
+                    logger.error("Token has expired")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token has expired"
+                    )
+                # If not checking expiration, decode the token without expiration check
+                return jwt.decode(
+                    token,
+                    jwks_data,
+                    algorithms=['RS256'],
+                    options={
+                        "verify_exp": False,
+                        "verify_aud": True,
+                        "verify_iss": True
+                    }
+                )
+            except jwt.JWTError as decode_error:
+                logger.error(f"Token decode error: {decode_error}")
+                
+                # If this is the last retry, throw the exception
+                if retry == max_retries - 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=f"Invalid token: {str(decode_error)}"
+                    )
+                
+                # Otherwise retry
                 sleep_time = RETRY_BACKOFF_FACTOR * (2 ** retry) + random.uniform(0, 1)
-                logger.info(f"Retrying in {sleep_time:.2f} seconds")
+                logger.warning(f"JWT decode error, retrying in {sleep_time:.2f} seconds (attempt {retry+1}/{max_retries})")
                 time.sleep(sleep_time)
-            else:
+                continue
+
+        except (jwt.JWTError, JWTError) as e:
+            logger.error(f"Invalid token: {str(e)}")
+            
+            # If this is the last retry, raise the exception
+            if retry == max_retries - 1:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Error verifying token",
-                    headers={"WWW-Authenticate": "Bearer"}
+                    detail=f"Invalid token: {str(e)}",
+                    headers={"WWW-Authenticate": "Bearer error=\"invalid_token\", error_description=\"{str(e)}\""}
                 )
+            
+            # Otherwise retry
+            sleep_time = RETRY_BACKOFF_FACTOR * (2 ** retry) + random.uniform(0, 1)
+            logger.warning(f"JWT validation error, retrying in {sleep_time:.2f} seconds (attempt {retry+1}/{max_retries})")
+            time.sleep(sleep_time)
+    
+    # We should never reach here due to the exception in the last retry,
+    # but just in case, raise a generic error
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication failed after multiple attempts",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
 
 def refresh_auth0_token(refresh_token: str) -> dict:
     """

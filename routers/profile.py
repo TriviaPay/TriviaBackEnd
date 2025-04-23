@@ -1,248 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Path, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from pydantic import BaseModel, Field
 from datetime import datetime, date
 import random
 import string
-import os
-import io
-from PIL import Image, ImageDraw, ImageFont
-import base64
 from db import get_db
-from models import User, Badge, Avatar, Frame, UserAvatar, UserFrame
+from models import User, Badge
 from routers.dependencies import get_current_user
 import logging
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
-
-# Response schema for profile information
-class ProfileInfoResponse(BaseModel):
-    username: str
-    account_id: int
-    email: str
-    display_type: str  # "avatar" or "letter"
-    display_image_url: str  # The URL of the profile picture (either avatar or letter-based)
-    selected_avatar_id: Optional[str] = None
-    frame_url: Optional[str] = None
-    selected_frame_id: Optional[str] = None
-    badge_name: Optional[str] = None
-    badge_image_url: Optional[str] = None
-    badge_id: Optional[str] = None
-    gems: int
-    streaks: int
-    wallet_balance: float
-    
-# Schema for selecting profile display type
-class ProfileDisplaySelect(BaseModel):
-    display_type: str = Field(..., description="The display type to use: 'avatar' or 'letter'")
-
-@router.get("/info", response_model=ProfileInfoResponse)
-async def get_profile_info(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get complete user profile information including avatar, frame, and badge details.
-    Only returns one profile picture URL based on selected display type.
-    """
-    user = db.query(User).filter(User.sub == current_user['sub']).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Determine display type and image URL
-    display_type = "letter" if user.profile_pic_url else "avatar"
-    display_image_url = user.profile_pic_url
-    
-    # If display type is avatar, get the avatar URL
-    if display_type == "avatar":
-        if user.selected_avatar_id:
-            avatar = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
-            if avatar:
-                display_image_url = avatar.image_url
-        
-        # If no avatar is selected or found, generate a letter-based image
-        if not display_image_url and user.username:
-            display_type = "letter"
-            first_letter = user.username[0]
-            display_image_url = generate_letter_image(first_letter)
-            # Note: We don't save this to the database here
-    
-    # Get frame information if selected
-    frame_url = None
-    if user.selected_frame_id:
-        frame = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
-        if frame:
-            frame_url = frame.image_url
-    
-    # Get badge information
-    badge_name = None
-    badge_image_url = None
-    if user.badge_id:
-        badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
-        if badge:
-            badge_name = badge.name
-            badge_image_url = badge.image_url
-    
-    return {
-        "username": user.username or "",
-        "account_id": user.account_id,
-        "email": user.email,
-        "display_type": display_type,
-        "display_image_url": display_image_url or "",
-        "selected_avatar_id": user.selected_avatar_id,
-        "frame_url": frame_url,
-        "selected_frame_id": user.selected_frame_id,
-        "badge_name": badge_name,
-        "badge_image_url": user.badge_image_url or badge_image_url,
-        "badge_id": user.badge_id,
-        "gems": user.gems,
-        "streaks": user.streaks,
-        "wallet_balance": user.wallet_balance
-    }
-
-# Helper function to generate a letter-based profile picture
-def generate_letter_image(letter, size=200, bg_color=None, text_color=(255, 255, 255)):
-    """
-    Generate a profile picture with the first letter of username.
-    
-    Args:
-        letter: The letter to display (usually first letter of username)
-        size: Size of the square image in pixels
-        bg_color: Background color as RGB tuple. If None, a random color is generated.
-        text_color: Text color as RGB tuple.
-    
-    Returns:
-        Base64 encoded PNG image
-    """
-    if not bg_color:
-        # Generate a random but visually pleasing background color
-        # Using pastel colors for a friendly appearance
-        r = random.randint(100, 200)
-        g = random.randint(100, 200)
-        b = random.randint(100, 200)
-        bg_color = (r, g, b)
-    
-    # Create a new image with the given background color
-    image = Image.new('RGB', (size, size), bg_color)
-    draw = ImageDraw.Draw(image)
-    
-    # Try to load a font, fall back to default if not available
-    try:
-        # Using a larger font size to make the letter prominent
-        font_size = int(size * 0.6)
-        font = ImageFont.truetype("Arial", font_size)
-    except IOError:
-        # If Arial is not available, use default font
-        font = ImageFont.load_default()
-    
-    # Get letter dimensions to center it
-    letter = letter.upper()  # Convert to uppercase for better visibility
-    # For default font, estimate text size
-    w, h = draw.textsize(letter, font=font) if hasattr(draw, 'textsize') else (font_size * 0.6, font_size)
-    
-    # Draw the letter centered on the image
-    position = ((size - w) / 2, (size - h) / 2 - h * 0.1)  # Slight upward adjustment for visual center
-    draw.text(position, letter, fill=text_color, font=font)
-    
-    # Convert to base64 encoded PNG
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    return f"data:image/png;base64,{base64.b64encode(buffered.getvalue()).decode('utf-8')}"
-
-@router.post("/display-select", response_model=Dict[str, Any])
-async def select_profile_display(
-    selection: ProfileDisplaySelect,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Select whether to display an avatar or letter-based profile picture.
-    If letter is selected, it generates a profile picture based on the first letter of username.
-    """
-    user = db.query(User).filter(User.sub == current_user['sub']).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if not user.username:
-        raise HTTPException(status_code=400, detail="Username is required to generate a letter profile picture")
-    
-    if selection.display_type not in ["avatar", "letter"]:
-        raise HTTPException(status_code=400, detail="Invalid display type. Must be 'avatar' or 'letter'")
-    
-    if selection.display_type == "avatar":
-        # Clear profile_pic_url if avatar is selected
-        user.profile_pic_url = None
-        
-        # Ensure user has a selected avatar
-        if not user.selected_avatar_id:
-            # Try to find a default avatar to assign
-            default_avatar = db.query(Avatar).filter(Avatar.is_default == True).first()
-            if default_avatar:
-                user.selected_avatar_id = default_avatar.id
-            else:
-                raise HTTPException(status_code=400, detail="No avatar selected and no default avatar available")
-        
-        avatar = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
-        if not avatar:
-            raise HTTPException(status_code=404, detail="Selected avatar not found")
-        
-        db.commit()
-        
-        return {
-            "status": "success",
-            "message": "Avatar display selected successfully",
-            "display_type": "avatar",
-            "avatar_url": avatar.image_url,
-            "avatar_id": avatar.id
-        }
-    
-    else:  # letter
-        # Generate letter image based on first letter of username
-        if not user.username or len(user.username) < 1:
-            raise HTTPException(status_code=400, detail="Username is required and must be at least 1 character")
-        
-        first_letter = user.username[0]
-        letter_image_base64 = generate_letter_image(first_letter)
-        
-        # Save the base64 image URL to user's profile_pic_url
-        user.profile_pic_url = letter_image_base64
-        # Clear selected avatar to ensure letter is used
-        user.selected_avatar_id = None
-        
-        db.commit()
-        
-        return {
-            "status": "success",
-            "message": "Letter profile picture selected successfully",
-            "display_type": "letter",
-            "profile_pic_url": letter_image_base64
-        }
-
-@router.get("/generate-letter-pic")
-async def generate_letter_profile_pic(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Generate a letter-based profile picture from the user's username without saving it.
-    """
-    user = db.query(User).filter(User.sub == current_user['sub']).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if not user.username or len(user.username) < 1:
-        raise HTTPException(status_code=400, detail="Username is required and must be at least 1 character")
-    
-    first_letter = user.username[0]
-    letter_image_base64 = generate_letter_image(first_letter)
-    
-    return {
-        "username": user.username,
-        "first_letter": first_letter,
-        "profile_pic_url": letter_image_base64
-    }
 
 class ProfileUpdate(BaseModel):
     username: str
@@ -254,53 +23,44 @@ def generate_referral_code():
     """Generate a unique 5-digit referral code"""
     return ''.join(random.choices(string.digits, k=5))
 
-@router.post("/update")
+@router.post("/update", status_code=200)
 async def update_profile(
-    profile: ProfileUpdate,
     request: Request,
+    profile: ProfileUpdate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Update the user profile with the provided information.
-    Updates username, date of birth, country, and processes referral code.
-    Also regenerates letter-based profile pic if username changes and user is using letter profile.
-    """
+    """Update user profile with username, DOB, country, and process referral"""
     try:
-        # Get the user from database
+        # Get the current user from database
         user = db.query(User).filter(User.sub == current_user['sub']).first()
         if not user:
             raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
         
-        # Check if username exists for another user
+        # Check if username already exists for another user - moved up for clearer error handling
         existing_user = db.query(User).filter(
             User.username == profile.username, 
             User.sub != current_user['sub']
         ).first()
         
         if existing_user:
-            # Username is taken by another user
+            # Log the info but return a clean, user-friendly error message
+            logging.info(f"Username '{profile.username}' is already taken by account_id: {existing_user.account_id}")
             return {
                 "status": "error",
                 "message": f"The username '{profile.username}' is already taken. Please choose a different username.",
                 "code": "USERNAME_TAKEN"
             }
         
-        # Update username and check if it changed
+        # Remember the old username for logging
         old_username = user.username
-        username_changed = old_username != profile.username
         
-        # Update username
+        # Update username - ensure it's set even if there was no previous username
         user.username = profile.username
         logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with sub: {user.sub}")
         
-        # If username changed and using letter-based profile pic, regenerate it
-        if username_changed and user.profile_pic_url and not user.selected_avatar_id:
-            first_letter = user.username[0]
-            user.profile_pic_url = generate_letter_image(first_letter)
-            logging.info(f"Regenerated letter-based profile picture for user {user.username} with first letter: {first_letter}")
-        
-        # Update date of birth
+        # Store date_of_birth as a Date object (not DateTime)
+        # No need to combine with time since the model now uses Date type
         user.date_of_birth = profile.date_of_birth
         logging.info(f"Updating date_of_birth to {profile.date_of_birth} for user with sub: {user.sub}")
         
@@ -544,24 +304,21 @@ class ProfileFinalUpdate(BaseModel):
     # Add flag to skip validation if already validated in previous steps
     skip_validations: bool = Field(default=False, description="Set to true if username and referral code were already validated")
 
-@router.post("/final-update", status_code=200)
-async def profile_final_update(
-    profile: ProfileFinalUpdate,
+@router.post("/perform-update", status_code=200)
+async def perform_profile_update(
     request: Request,
+    profile: ProfileFinalUpdate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Finalize user profile updates with ability to skip validations.
-    Also regenerates letter-based profile pic if username changes and user is using letter profile.
-    """
+    """Perform the actual profile update after validation"""
     try:
         # Get the current user from database
         user = db.query(User).filter(User.sub == current_user['sub']).first()
         if not user:
             raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
         
-        # Check username uniqueness if we're not skipping validations
+        # Check username availability unless skip_validations is True
         if not profile.skip_validations:
             existing_user = db.query(User).filter(
                 User.username == profile.username, 
@@ -569,7 +326,6 @@ async def profile_final_update(
             ).first()
             
             if existing_user:
-                # Log the info but return a clean, user-friendly error message
                 logging.info(f"Username '{profile.username}' is already taken by account_id: {existing_user.account_id}")
                 return {
                     "status": "error",
@@ -577,22 +333,16 @@ async def profile_final_update(
                     "code": "USERNAME_TAKEN"
                 }
         
-        # Remember the old username for logging and checking changes
+        # Remember old username for logging
         old_username = user.username
-        username_changed = old_username != profile.username
         
-        # Update username - ensure it's set even if there was no previous username
+        # Update username
         user.username = profile.username
         logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with sub: {user.sub}")
         
-        # If username changed and using letter-based profile pic, regenerate it
-        if username_changed and user.profile_pic_url and not user.selected_avatar_id:
-            first_letter = user.username[0]
-            user.profile_pic_url = generate_letter_image(first_letter)
-            logging.info(f"Regenerated letter-based profile picture for user {user.username} with first letter: {first_letter}")
-            
-        # Store date_of_birth as a Date object (not DateTime)
+        # Update date_of_birth
         user.date_of_birth = profile.date_of_birth
+        logging.info(f"Updating date_of_birth to {profile.date_of_birth} for user with sub: {user.sub}")
         
         # Update country
         user.country = profile.country 

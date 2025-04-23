@@ -136,7 +136,6 @@ def get_current_user_simple(claims: dict = Depends(verify_access_token)):
 def is_admin(current_user: dict, db: Session) -> bool:
     """
     Check if the current user is an admin based on their email matching ADMIN_EMAIL in env
-    or their sub claim matching an authorized admin
     
     Args:
         current_user (dict): The current user's JWT claims
@@ -148,42 +147,17 @@ def is_admin(current_user: dict, db: Session) -> bool:
     # Get admin email from environment or use default
     admin_email = os.getenv("ADMIN_EMAIL", "triviapay3@gmail.com")
     
-    # Log detailed info about admin checks
-    logger.info(f"Checking admin status for user with sub: {current_user.get('sub')}, email: {current_user.get('email')}")
-    
-    # Get list of authorized admin subs from env or use default
-    admin_subs_str = os.getenv("ADMIN_SUBS", "email|67c00b4245db3e9383e93bf")
-    admin_subs = [sub.strip() for sub in admin_subs_str.split(',')]
-    
-    # Check if sub is in the list of admin subs
-    sub = current_user.get('sub')
-    if sub and sub in admin_subs:
-        logger.info(f"User authorized as admin based on sub: {sub}")
-        return True
-    
     # Admin check is based on email
     email = current_user.get('email')
     if email and email.lower() == admin_email.lower():
-        logger.info(f"User authorized as admin based on email: {email}")
         return True
         
     # Check in database
     if email:
         user = db.query(User).filter(User.email == email).first()
         if user and user.email.lower() == admin_email.lower():
-            logger.info(f"User authorized as admin based on database email: {user.email}")
             return True
-    
-    # If sub looks like an email reference, try to extract email part
-    if sub and '|' in sub and sub.split('|')[0] == 'email':
-        # Get the email identifier part and check against admin list
-        email_id = sub.split('|')[1]
-        for admin_sub in admin_subs:
-            if admin_sub.endswith(email_id):
-                logger.info(f"User authorized as admin based on email ID in sub: {email_id}")
-                return True
-    
-    logger.info(f"User NOT authorized as admin")
+            
     return False
 
 
@@ -205,56 +179,7 @@ def verify_admin(current_user: dict, db: Session) -> None:
         )
 
 
-def get_admin_user(
-    request: Request,
-    db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)  # Ensure this is a valid dependency
-):
-    logger = logging.getLogger(__name__)
-    logger.info("Processing admin authentication")
-    
-    # Now verify admin status
-    try:
-        # Ensure email is present for admin check
-        if not claims.get('email'):
-            admin_email = os.getenv("ADMIN_EMAIL", "triviapay3@gmail.com")
-            logger.info(f"Email missing from claims for admin check, admin_email={admin_email}")
-            
-            # Check if sub claim looks like an email
-            sub = claims.get('sub', '')
-            if sub and '|' in sub and sub.split('|')[0] == 'email':
-                # Try looking up user in database by sub
-                user = db.query(User).filter(User.sub == sub).first()
-                if user and user.email:
-                    claims['email'] = user.email
-                    logger.info(f"Added email {user.email} from database lookup")
-                else:
-                    # If we can't find the user in the database, check if the sub is in admin_subs
-                    admin_subs_str = os.getenv("ADMIN_SUBS", "email|67c00b4245db3e9383e93bf")
-                    admin_subs = [sub.strip() for sub in admin_subs_str.split(',')]
-                    if sub in admin_subs:
-                        claims['email'] = admin_email
-                        logger.info(f"Added admin email {admin_email} based on sub claim")
-        
-        # Log the claims before admin check
-        logger.info(f"Checking admin status with claims: {claims}")
-        
-        # Verify admin status
-        if not is_admin(claims, db):
-            logger.error("Admin access denied: User is not an admin")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access required for this endpoint"
-            )
-        
-        logger.info(f"Admin access granted for user: {claims.get('email', 'unknown')}")
-        return claims
-    except HTTPException as e:
-        logger.error(f"Admin access denied: {e.detail}")
-        raise
-    except Exception as e:
-        logger.error(f"Error checking admin status: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access check failed: " + str(e)
-        )
+def get_admin_user(claims: dict = Depends(verify_access_token), db: Session = Depends(get_db)):
+    """Verify user is admin using cosmetics.py logic"""
+    verify_admin(claims, db)
+    return claims
