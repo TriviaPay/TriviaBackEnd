@@ -21,7 +21,7 @@ git add .
 
 # Commit changes
 echo "💾 Committing changes..."
-git commit -m "Fix Swagger UI: Switch to FastAPI application with proper docs endpoints"
+git commit -m "Fix Vercel handler: Use BaseHTTPRequestHandler class for compatibility"
 
 # Push to origin
 echo "⬆️ Pushing to origin..."
