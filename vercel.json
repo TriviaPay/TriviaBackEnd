@@ -3,11 +3,9 @@
     "builds": [
         {
             "src": "main.py",
-            "use": "@vercel/python@3.1.31",
+            "use": "@vercel/python",
             "config": {
-                "maxLambdaSize": "15mb",
-                "runtime": "python3.9",
-                "installCommand": "pip install -r requirements.txt"
+                "maxLambdaSize": "15mb"
             }
         }
     ],
@@ -28,9 +26,5 @@
             "src": "/(.*)",
             "dest": "main.py"
         }
-    ],
-    "env": {
-        "PYTHONPATH": ".",
-        "PYTHON_VERSION": "3.9"
-    }
+    ]
 } 
