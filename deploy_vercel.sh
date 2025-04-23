@@ -21,7 +21,7 @@ git add .
 
 # Commit changes
 echo "💾 Committing changes..."
-git commit -m "Fix Vercel deployment: Simple HTTP handler and include alembic migrations"
+git commit -m "Fix Swagger UI: Switch to FastAPI application with proper docs endpoints"
 
 # Push to origin
 echo "⬆️ Pushing to origin..."
