@@ -2,14 +2,15 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/index.py",
+      "src": "api/standalone.py",
       "use": "@vercel/python",
       "config": {
-        "pythonVersion": "3.11",
+        "pythonVersion": "3.12",
         "postInstallCommand": "bash api/postinstall.sh",
         "includeFiles": [
           "api/postinstall.sh",
-          "api/requirements.txt"
+          "api/requirements.txt",
+          "requirements.txt"
         ]
       }
     }
@@ -17,7 +18,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "/api/index.py"
+      "dest": "/api/standalone.py"
     }
   ]
 }
