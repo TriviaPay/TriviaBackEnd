@@ -1,10 +1,21 @@
 # Exclude testing and development files
-__pycache__
-*.pyc
-.pytest_cache
+__pycache__/
+*.py[cod]
+*$py.class
+.env
 .venv
-venv
-env
+env/
+venv/
+ENV/
+*.db
+.pytest_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+*.log
+*.sqlite
+*.sqlite3
 .env.local
 .DS_Store
 
