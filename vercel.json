@@ -1,5 +1,16 @@
 {
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/api/hello.py" }
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/hello.py",
+      "use": "@vercel/python",
+      "config": {
+        "pythonVersion": "3.9",
+        "includeFiles": ["alembic/**", "requirements.txt"]
+      }
+    }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "/api/hello.py" }
   ]
 }

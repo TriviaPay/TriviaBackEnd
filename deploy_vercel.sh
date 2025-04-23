@@ -3,6 +3,14 @@ set -e  # Exit immediately if a command exits with a non-zero status
 
 echo "🚀 Starting Vercel deployment process..."
 
+# Make sure alembic directory exists
+if [ ! -d "alembic/versions" ]; then
+    echo "Creating alembic directory structure..."
+    mkdir -p alembic/versions
+    touch alembic/versions/init_boost_config.py
+    echo "# Initial migration file - placeholder" > alembic/versions/init_boost_config.py
+fi
+
 # Show what files have been modified
 echo "📋 Modified files:"
 git status --porcelain
@@ -13,7 +21,7 @@ git add .
 
 # Commit changes
 echo "💾 Committing changes..."
-git commit -m "Fix Vercel deployment: Simplify ASGI handler and use FastAPI 0.109.2 with Pydantic 2.6.4"
+git commit -m "Fix Vercel deployment: Simple HTTP handler and include alembic migrations"
 
 # Push to origin
 echo "⬆️ Pushing to origin..."

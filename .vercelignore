@@ -23,5 +23,9 @@ htmlcov/
 .git
 .gitignore
 
-# Exclude large data directories
-data/* 
+# Exclude large data directories, but keep alembic migrations
+data/*
+
+# Make sure we don't ignore alembic migrations
+!alembic/
+!alembic/versions/ 
