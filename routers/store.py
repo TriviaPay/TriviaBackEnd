@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Path, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Path, Body, Query
 from sqlalchemy.orm import Session
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal, Dict, Any, List
 from pydantic import BaseModel, Field
 import json
 import random
@@ -9,25 +9,15 @@ from pathlib import Path as FilePath
 from sqlalchemy.sql import func
 
 from db import get_db
-from models import User, Trivia, DailyQuestion, UserQuestionAnswer
-from routers.dependencies import get_current_user
+from models import User, Trivia, DailyQuestion, GemPackageConfig, BoostConfig, UserGemPurchase
+from routers.dependencies import get_current_user, get_admin_user
+
+router = APIRouter(prefix="/store", tags=["Store"])
 
 # Load store configuration
 STORE_CONFIG_PATH = FilePath("config/store_items.json")
 with open(STORE_CONFIG_PATH) as f:
     store_config = json.load(f)
-
-# Create a router with enhanced documentation
-router = APIRouter(
-    prefix="/store", 
-    tags=["Store"],
-    responses={
-        status.HTTP_401_UNAUTHORIZED: {"description": "User not authenticated"},
-        status.HTTP_403_FORBIDDEN: {"description": "User not authorized"},
-        status.HTTP_404_NOT_FOUND: {"description": "Item not found"},
-        status.HTTP_400_BAD_REQUEST: {"description": "Invalid request parameters or insufficient funds"}
-    }
-)
 
 class PurchaseRequest(BaseModel):
     """Model for purchase requests"""
@@ -44,53 +34,132 @@ class PurchaseRequest(BaseModel):
             }
         }
 
+class PurchaseResponse(BaseModel):
+    """Model for purchase responses"""
+    success: bool
+    remaining_gems: Optional[int] = None
+    remaining_balance: Optional[float] = None
+    message: str
+
 class UseBoostRequest(BaseModel):
     """Model for using a gameplay boost"""
     boost_type: str = Field(
-        ..., 
-        description="Type of boost to use. Available options: 'streak_saver', 'question_reroll', 'extra_chance', 'hint', 'fifty_fifty', 'auto_answer'",
-        example="streak_saver"
-    )
-    payment_type: str = Field(
-        ..., 
-        description="Type of payment (gems or usd)",
-        example="gems"
+        ...,
+        description="Type of boost to use",
+        example="hint"
     )
     question_number: Optional[int] = Field(
-        None, 
-        description="Question number (required for question-related boosts)",
-        example=123
+        None,
+        description="Question number to use the boost on",
+        example=1
     )
-    use_immediately: bool = Field(
-        True, 
-        description="Whether to use the boost immediately or just purchase it",
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "boost_type": "hint",
+                "question_number": 1
+            }
+        }
+
+class BuyGemsRequest(BaseModel):
+    """Model for buying gems with wallet balance"""
+    package_id: int = Field(
+        ...,
+        description="ID of the gem package to purchase",
+        example=1
+    )
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "package_id": 1
+            }
+        }
+
+class GemPackageRequest(BaseModel):
+    """Model for creating/updating a gem package"""
+    price_usd: float = Field(
+        ...,
+        description="Price in USD",
+        example=0.99
+    )
+    gems_amount: int = Field(
+        ...,
+        description="Number of gems in the package",
+        example=150
+    )
+    is_one_time: bool = Field(
+        False,
+        description="Whether this is a one-time offer",
         example=False
     )
+    description: Optional[str] = Field(
+        None,
+        description="Description of the package",
+        example="Best value!"
+    )
 
     class Config:
         schema_extra = {
             "example": {
-                "boost_type": "streak_saver",
-                "payment_type": "gems",
-                "use_immediately": False
+                "price_usd": 0.99,
+                "gems_amount": 150,
+                "is_one_time": False,
+                "description": "Great value!"
             }
         }
 
-class PurchaseResponse(BaseModel):
-    """Model for purchase responses"""
-    success: bool = Field(..., description="Whether the purchase was successful")
-    remaining_gems: Optional[int] = Field(None, description="Remaining gems after purchase if paid with gems")
-    remaining_balance: Optional[float] = Field(None, description="Remaining wallet balance after purchase if paid with USD")
-    message: str = Field(..., description="A descriptive message about the purchase")
+class BoostConfigRequest(BaseModel):
+    """Model for setting boost configuration"""
+    boost_type: str = Field(
+        ...,
+        description="Type of boost",
+        example="fifty_fifty"
+    )
+    gems_cost: int = Field(
+        ...,
+        description="Cost in gems",
+        example=50
+    )
+    description: Optional[str] = Field(
+        None,
+        description="Description of the boost",
+        example="Remove two wrong answers"
+    )
 
     class Config:
         schema_extra = {
             "example": {
-                "success": True,
-                "remaining_gems": 250,
-                "message": "Successfully purchased streak_saver"
+                "boost_type": "fifty_fifty",
+                "gems_cost": 50,
+                "description": "Remove two wrong answers"
             }
         }
+
+class GemPackageResponse(BaseModel):
+    """Model for gem package response"""
+    id: int
+    price_usd: float
+    gems_amount: int
+    is_one_time: bool
+    description: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class BoostConfigResponse(BaseModel):
+    """Model for boost config response"""
+    boost_type: str
+    gems_cost: int
+    description: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
 
 def validate_and_process_cosmetic_purchase(
     item_id: str,
@@ -137,11 +206,11 @@ def validate_and_process_cosmetic_purchase(
             raise HTTPException(status_code=400, detail="Item cannot be purchased with USD")
         
         cost = item['usd']
-        if user.wallet_balance < cost:
-            raise HTTPException(status_code=400, detail="Insufficient wallet balance")
+        if user.balance < cost:
+            raise HTTPException(status_code=400, detail="Insufficient balance")
         
         # Deduct balance
-        user.wallet_balance -= cost
+        user.balance -= cost
         
         # Update user's inventory
         owned_cosmetics = json.loads(user.owned_cosmetics or '{}')
@@ -152,25 +221,16 @@ def validate_and_process_cosmetic_purchase(
         
         return PurchaseResponse(
             success=True,
-            remaining_balance=user.wallet_balance,
+            remaining_balance=user.balance,
             message=f"Successfully purchased {item_id} for ${cost}"
         )
     
     else:
         raise HTTPException(status_code=400, detail="Invalid payment type")
 
-@router.post(
-    "/cosmetics/{item_id}", 
-    response_model=PurchaseResponse,
-    summary="Purchase a cosmetic item",
-    description="""
-    Purchase a cosmetic item using either gems or USD.
-    Available cosmetics: 'avatar_pack', 'answer_button_skins', 'confetti_win_fx', 'profile_borders', 'chat_bubble_skins', 'reaction_emojis'.
-    Each item has a different cost in gems or USD and will be added to the user's inventory once purchased.
-    """
-)
+@router.post("/cosmetics/{item_id}", response_model=PurchaseResponse)
 async def purchase_cosmetic(
-    item_id: str = Path(..., description="ID of the cosmetic item to purchase", example="profile_borders"),
+    item_id: str = Path(..., description="ID of the cosmetic item to purchase", example="avatar_pack"),
     purchase: PurchaseRequest = Body(..., description="Purchase details"),
     claims: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -187,106 +247,42 @@ async def purchase_cosmetic(
         db=db
     )
 
-@router.post(
-    "/gameplay-boosts", 
-    response_model=PurchaseResponse,
-    summary="Purchase and optionally use a gameplay boost",
-    description="""
-    Purchase and optionally use a gameplay boost. Available boost types:
-    
-    - **streak_saver**: Preserves streak after missing a day. Costs 100 gems or $0.49.
-    - **question_reroll**: Changes to a different question. Costs 80 gems.
-    - **extra_chance**: Extra attempt if you answer wrong. Costs 150 gems or $0.99.
-    - **hint**: Get a hint for the current question. Costs 30 gems.
-    - **fifty_fifty**: Removes two wrong answers. Costs 50 gems.
-    - **auto_answer**: Automatically answers correctly. Costs 300 gems.
-    
-    Set `use_immediately=false` to add the boost to your inventory without using it immediately.
-    When `use_immediately=true`, question_number is required for question-related boosts.
-    """
-)
-async def purchase_gameplay_boost(
-    request: UseBoostRequest = Body(..., description="Boost purchase details"),
+@router.post("/gameplay-boosts", response_model=Dict[str, Any])
+async def use_gameplay_boost(
+    request: UseBoostRequest = Body(..., description="Boost usage details"),
     claims: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Purchase a gameplay boost. 
-    Set use_immediately=false to only add it to inventory without using it.
-    """
+    """Purchase and use a gameplay boost immediately using gems"""
     sub = claims.get("sub")
     user = db.query(User).filter(User.sub == sub).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Validate boost type exists
-    if request.boost_type not in store_config["gameplay_boosts"]:
-        raise HTTPException(status_code=404, detail=f"Boost {request.boost_type} not found")
-
-    item = store_config["gameplay_boosts"][request.boost_type]
-
-    # Validate and process payment
-    if request.payment_type == 'gems':
+    # Get boost config from database
+    boost_config = db.query(BoostConfig).filter(BoostConfig.boost_type == request.boost_type).first()
+    
+    # If boost config is not in database, use default from config file as fallback
+    if not boost_config:
+        if request.boost_type not in store_config["gameplay_boosts"]:
+            raise HTTPException(status_code=404, detail=f"Boost {request.boost_type} not found")
+        
+        item = store_config["gameplay_boosts"][request.boost_type]
         if 'gems' not in item:
             raise HTTPException(status_code=400, detail="Boost cannot be purchased with gems")
         
         cost = item['gems']
-        if user.gems < cost:
-            raise HTTPException(status_code=400, detail="Insufficient gems")
-        
-        # Deduct gems
-        user.gems -= cost
-        
-    elif request.payment_type == 'usd':
-        if 'usd' not in item:
-            raise HTTPException(status_code=400, detail="Boost cannot be purchased with USD")
-        
-        cost = item['usd']
-        if user.wallet_balance < cost:
-            raise HTTPException(status_code=400, detail="Insufficient wallet balance")
-        
-        # Deduct balance
-        user.wallet_balance -= cost
-    
     else:
-        raise HTTPException(status_code=400, detail="Invalid payment type")
-
-    # Add the boost to the user's inventory
-    if request.boost_type == "streak_saver":
-        user.streak_saver_count += 1
-        boost_count = user.streak_saver_count
-    elif request.boost_type == "question_reroll":
-        user.question_reroll_count += 1
-        boost_count = user.question_reroll_count
-    elif request.boost_type == "extra_chance":
-        user.extra_chance_count += 1
-        boost_count = user.extra_chance_count
-    elif request.boost_type == "hint":
-        user.hint_count += 1
-        boost_count = user.hint_count
-    elif request.boost_type == "fifty_fifty":
-        user.fifty_fifty_count += 1
-        boost_count = user.fifty_fifty_count
-    elif request.boost_type == "auto_answer":
-        user.auto_answer_count += 1
-        boost_count = user.auto_answer_count
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown boost type: {request.boost_type}")
-
-    # Commit the purchase
-    db.commit()
+        cost = boost_config.gems_cost
     
-    # If not using immediately, return the purchase response
-    if not request.use_immediately:
-        return PurchaseResponse(
-            success=True,
-            remaining_gems=user.gems if request.payment_type == 'gems' else None,
-            remaining_balance=user.wallet_balance if request.payment_type == 'usd' else None,
-            message=f"Successfully purchased {request.boost_type}. You now have {boost_count} available."
-        )
+    # Check if user has enough gems
+    if user.gems < cost:
+        raise HTTPException(status_code=400, detail=f"Insufficient gems. You have {user.gems} gems, but this boost costs {cost} gems")
+    
+    # Deduct gems (will commit after boost is used)
+    user.gems -= cost
 
-    # Handle immediate usage of boost - this part only executes if use_immediately=true
-    # For streak saver, check requirements for usage
+    # Handle streak saver separately as it doesn't need a question
     if request.boost_type == "streak_saver":
         if not user.last_streak_date:
             raise HTTPException(status_code=400, detail="No active streak to save")
@@ -297,22 +293,16 @@ async def purchase_gameplay_boost(
         
         # Save the streak by updating last_streak_date to yesterday
         user.last_streak_date = datetime.utcnow().replace(day=today.day-1)
-        
-        # Decrement the counter since we're using one
-        user.streak_saver_count -= 1
-        
         db.commit()
         
-        return PurchaseResponse(
-            success=True,
-            remaining_gems=user.gems if request.payment_type == 'gems' else None,
-            remaining_balance=user.wallet_balance if request.payment_type == 'usd' else None,
-            message="Streak saver purchased and used successfully"
-        )
+        return {
+            "message": "Streak saved successfully",
+            "remaining_gems": user.gems
+        }
 
-    # For all other boosts that require immediate usage, we need a question number
+    # For all other boosts, we need a question number
     if not request.question_number:
-        raise HTTPException(status_code=400, detail="Question number is required for this boost type when use_immediately is true")
+        raise HTTPException(status_code=400, detail="Question number is required for this boost type")
 
     # Get the question
     question = db.query(Trivia).filter(Trivia.question_number == request.question_number).first()
@@ -322,49 +312,341 @@ async def purchase_gameplay_boost(
     # Get daily question allocation
     today = datetime.utcnow().date()
     daily_question = db.query(DailyQuestion).filter(
+        DailyQuestion.account_id == user.account_id,
         DailyQuestion.question_number == request.question_number,
-        DailyQuestion.date == today
+        func.date(DailyQuestion.date) == today
     ).first()
 
     if not daily_question:
         raise HTTPException(status_code=400, detail="Question not allocated for today")
-        
-    # Check if user has already answered this question
-    user_answer = db.query(UserQuestionAnswer).filter(
-        UserQuestionAnswer.account_id == user.account_id,
-        UserQuestionAnswer.question_number == request.question_number,
-        UserQuestionAnswer.date == today
-    ).first()
-    
-    question_already_used = user_answer is not None
-    
-    if question_already_used and request.boost_type not in ["extra_chance"]:
+
+    if daily_question.is_used and request.boost_type not in ["extra_chance"]:
         raise HTTPException(status_code=400, detail="Question already attempted")
 
-    # Process boost (rest of the implementation)
-    # This part would handle the usage of other boosts for specific questions
+    # Process boost
+    response = {}
+    if request.boost_type == "fifty_fifty":
+        # Get correct answer and one random wrong answer
+        options = ["a", "b", "c", "d"]
+        # Find which option letter corresponds to the correct answer
+        correct_option = None
+        for opt in options:
+            if getattr(question, f"option_{opt}").lower() == question.correct_answer.lower():
+                correct_option = opt
+                break
+        
+        if not correct_option:
+            raise HTTPException(status_code=500, detail="Could not find correct option")
+            
+        wrong_options = [opt for opt in options if opt != correct_option]
+        random_wrong = random.choice(wrong_options)
+        
+        response = {
+            "options": {
+                correct_option: getattr(question, f"option_{correct_option}"),
+                random_wrong: getattr(question, f"option_{random_wrong}")
+            }
+        }
+
+    elif request.boost_type in ["question_reroll", "change_question"]:
+        # Get a new unused question
+        new_question = db.query(Trivia).filter(
+            Trivia.question_done == False
+        ).order_by(func.random()).first()
+
+        if not new_question:
+            raise HTTPException(status_code=400, detail="No questions available")
+
+        # Update daily question
+        daily_question.question_number = new_question.question_number
+        daily_question.was_changed = True
+        
+        # Mark new question as used
+        new_question.question_done = True
+        new_question.que_displayed_date = datetime.utcnow()
+        
+        response = {
+            "question_number": new_question.question_number,
+            "question": new_question.question,
+            "options": {
+                "a": new_question.option_a,
+                "b": new_question.option_b,
+                "c": new_question.option_c,
+                "d": new_question.option_d
+            },
+            "category": new_question.category,
+            "difficulty": new_question.difficulty_level,
+            "picture_url": new_question.picture_url
+        }
+
+    elif request.boost_type == "hint":
+        response = {
+            "hint": question.explanation
+        }
+    
+    elif request.boost_type == "extra_chance":
+        if not daily_question.is_used:
+            raise HTTPException(status_code=400, detail="Question hasn't been attempted yet")
+        
+        # Reset the question state completely
+        daily_question.is_used = False
+        daily_question.was_changed = False  # Reset any previous changes
+        
+        response = {
+            "message": "Question has been reset for a fresh attempt",
+            "question": {
+                "question_number": question.question_number,
+                "question": question.question,
+                "options": {
+                    "a": question.option_a,
+                    "b": question.option_b,
+                    "c": question.option_c,
+                    "d": question.option_d
+                },
+                "category": question.category,
+                "difficulty": question.difficulty_level,
+                "picture_url": question.picture_url
+            }
+        }
+    
+    elif request.boost_type == "auto_submit":
+        if daily_question.is_used:
+            raise HTTPException(status_code=400, detail="Question already attempted")
+        
+        # Mark question as used and record correct answer
+        daily_question.is_used = True
+        
+        # Return the correct answer and mark it as auto-submitted
+        response = {
+            "correct_answer": question.correct_answer,
+            "explanation": question.explanation,
+            "auto_submit": True,
+            "is_correct": True  # Auto-submit always counts as correct
+        }
+
+        # Update user's progress (similar to submit-answer endpoint)
+        # Note: We're marking it as correct since they paid for auto-submit
+        daily_question.is_used = True
+        daily_question.answer = question.correct_answer
+        daily_question.is_correct = True
+        daily_question.answered_at = datetime.utcnow()
+
+    # Commit the transaction after boost is used
+    db.commit()
+
+    # Add payment info to response
+    response["remaining_gems"] = user.gems
+
+    return response
+
+@router.post("/buy-gems", response_model=PurchaseResponse)
+async def buy_gems_with_wallet(
+    request: BuyGemsRequest = Body(..., description="Gem purchase details"),
+    claims: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Buy gems using wallet balance"""
+    sub = claims.get("sub")
+    user = db.query(User).filter(User.sub == sub).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get gem package from database
+    gem_package = db.query(GemPackageConfig).filter(GemPackageConfig.id == request.package_id).first()
+    if not gem_package:
+        raise HTTPException(status_code=404, detail=f"Gem package with ID {request.package_id} not found")
+    
+    # Check if user has enough wallet balance
+    if user.wallet_balance < gem_package.price_usd:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Insufficient wallet balance. You have ${user.wallet_balance}, but this package costs ${gem_package.price_usd}"
+        )
+    
+    # Check if this is a one-time offer that the user has already purchased
+    if gem_package.is_one_time:
+        # Check if THIS user has already purchased this one-time package
+        existing_purchase = db.query(UserGemPurchase).filter(
+            UserGemPurchase.user_id == user.account_id,
+            UserGemPurchase.package_id == gem_package.id
+        ).first()
+        
+        if existing_purchase:
+            raise HTTPException(
+                status_code=400,
+                detail=f"You have already purchased this one-time offer on {existing_purchase.purchase_date}"
+            )
+    
+    # Deduct from wallet and add gems
+    user.wallet_balance -= gem_package.price_usd
+    user.gems += gem_package.gems_amount
+    user.last_wallet_update = datetime.utcnow()
+    
+    # Record the purchase in the user_gem_purchases table
+    purchase_record = UserGemPurchase(
+        user_id=user.account_id,
+        package_id=gem_package.id,
+        price_paid=gem_package.price_usd,
+        gems_received=gem_package.gems_amount
+    )
+    db.add(purchase_record)
+    
+    db.commit()
     
     return PurchaseResponse(
         success=True,
-        remaining_gems=user.gems if request.payment_type == 'gems' else None,
-        remaining_balance=user.wallet_balance if request.payment_type == 'usd' else None,
-        message=f"{request.boost_type} purchased and used successfully"
+        remaining_gems=user.gems,
+        remaining_balance=user.wallet_balance,
+        message=f"Successfully purchased {gem_package.gems_amount} gems for ${gem_package.price_usd}"
     )
 
-@router.get(
-    "/items",
-    summary="Get all available store items",
-    description="""
-    Returns a complete catalog of all items available in the store, organized by category.
-    The response includes:
+@router.get("/gem-packages", response_model=List[GemPackageResponse])
+async def get_gem_packages(
+    claims: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all available gem packages"""
+    packages = db.query(GemPackageConfig).all()
+    return packages
+
+@router.get("/boost-configs", response_model=List[BoostConfigResponse])
+async def get_boost_configs(
+    claims: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all boost configurations"""
+    boosts = db.query(BoostConfig).all()
+    return boosts
+
+@router.post("/admin/gem-packages", response_model=GemPackageResponse)
+async def create_gem_package(
+    package: GemPackageRequest = Body(..., description="Gem package details"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to create a new gem package"""
+    new_package = GemPackageConfig(
+        price_usd=package.price_usd,
+        gems_amount=package.gems_amount,
+        is_one_time=package.is_one_time,
+        description=package.description
+    )
     
-    - **daily_rewards**: Information about daily login rewards and streak bonuses
-    - **gameplay_boosts**: All available gameplay boosts and their costs in gems/USD
-    - **cosmetics**: All available cosmetic items and their costs in gems/USD
+    db.add(new_package)
+    db.commit()
+    db.refresh(new_package)
     
-    Each item includes a description and price information (gems and/or USD).
-    """
-)
+    return new_package
+
+@router.put("/admin/gem-packages/{package_id}", response_model=GemPackageResponse)
+async def update_gem_package(
+    package_id: int = Path(..., description="ID of the gem package to update"),
+    package: GemPackageRequest = Body(..., description="Updated gem package details"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to update an existing gem package"""
+    db_package = db.query(GemPackageConfig).filter(GemPackageConfig.id == package_id).first()
+    if not db_package:
+        raise HTTPException(status_code=404, detail=f"Gem package with ID {package_id} not found")
+    
+    # Update fields
+    db_package.price_usd = package.price_usd
+    db_package.gems_amount = package.gems_amount
+    db_package.is_one_time = package.is_one_time
+    db_package.description = package.description
+    db_package.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(db_package)
+    
+    return db_package
+
+@router.delete("/admin/gem-packages/{package_id}", response_model=Dict[str, Any])
+async def delete_gem_package(
+    package_id: int = Path(..., description="ID of the gem package to delete"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to delete a gem package"""
+    db_package = db.query(GemPackageConfig).filter(GemPackageConfig.id == package_id).first()
+    if not db_package:
+        raise HTTPException(status_code=404, detail=f"Gem package with ID {package_id} not found")
+    
+    db.delete(db_package)
+    db.commit()
+    
+    return {"message": f"Gem package with ID {package_id} deleted successfully"}
+
+@router.post("/admin/boost-configs", response_model=BoostConfigResponse)
+async def create_boost_config(
+    boost: BoostConfigRequest = Body(..., description="Boost configuration details"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to create a new boost configuration"""
+    # Check if boost config already exists
+    existing = db.query(BoostConfig).filter(BoostConfig.boost_type == boost.boost_type).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Boost configuration for {boost.boost_type} already exists. Use PUT to update."
+        )
+    
+    new_boost = BoostConfig(
+        boost_type=boost.boost_type,
+        gems_cost=boost.gems_cost,
+        description=boost.description
+    )
+    
+    db.add(new_boost)
+    db.commit()
+    db.refresh(new_boost)
+    
+    return new_boost
+
+@router.put("/admin/boost-configs/{boost_type}", response_model=BoostConfigResponse)
+async def update_boost_config(
+    boost_type: str = Path(..., description="Type of boost to update"),
+    boost: BoostConfigRequest = Body(..., description="Updated boost configuration details"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to update an existing boost configuration"""
+    if boost_type != boost.boost_type:
+        raise HTTPException(status_code=400, detail="Path boost_type does not match request body boost_type")
+    
+    db_boost = db.query(BoostConfig).filter(BoostConfig.boost_type == boost_type).first()
+    if not db_boost:
+        raise HTTPException(status_code=404, detail=f"Boost configuration for {boost_type} not found")
+    
+    # Update fields
+    db_boost.gems_cost = boost.gems_cost
+    db_boost.description = boost.description
+    db_boost.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(db_boost)
+    
+    return db_boost
+
+@router.delete("/admin/boost-configs/{boost_type}", response_model=Dict[str, Any])
+async def delete_boost_config(
+    boost_type: str = Path(..., description="Type of boost to delete"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to delete a boost configuration"""
+    db_boost = db.query(BoostConfig).filter(BoostConfig.boost_type == boost_type).first()
+    if not db_boost:
+        raise HTTPException(status_code=404, detail=f"Boost configuration for {boost_type} not found")
+    
+    db.delete(db_boost)
+    db.commit()
+    
+    return {"message": f"Boost configuration for {boost_type} deleted successfully"}
+
+@router.get("/items")
 async def get_store_items():
     """Get all available store items"""
     return store_config 
