@@ -5,23 +5,12 @@
             "src": "main.py",
             "use": "@vercel/python",
             "config": {
-                "maxLambdaSize": "15mb"
+                "runtime": "python3.9",
+                "buildCommand": "chmod +x vercel_build.sh && ./vercel_build.sh"
             }
         }
     ],
     "routes": [
-        {
-            "src": "/docs",
-            "dest": "main.py"
-        },
-        {
-            "src": "/openapi.json",
-            "dest": "main.py"
-        },
-        {
-            "src": "/redoc",
-            "dest": "main.py"
-        },
         {
             "src": "/(.*)",
             "dest": "main.py"

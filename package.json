@@ -1,13 +1,11 @@
 {
-  "name": "trivia-pay-backend",
+  "name": "trivia-backend",
   "version": "1.0.0",
-  "description": "Backend API for TriviaPay application",
+  "private": true,
   "engines": {
-    "node": ">=14.x"
+    "node": ">=14.0.0"
   },
   "scripts": {
-    "start": "python main.py",
-    "dev": "uvicorn main:app --reload",
-    "test": "pytest"
+    "start": "python main.py"
   }
 } 
