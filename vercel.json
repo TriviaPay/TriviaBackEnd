@@ -2,7 +2,7 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/standalone.py",
+      "src": "api/index.py",
       "use": "@vercel/python",
       "config": {
         "pythonVersion": "3.12",
@@ -18,7 +18,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "/api/standalone.py"
+      "dest": "/api/index.py"
     }
   ]
 }

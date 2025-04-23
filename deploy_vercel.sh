@@ -13,7 +13,7 @@ git add .
 
 # Commit changes
 echo "💾 Committing changes..."
-git commit -m "Update FastAPI and Pydantic for Python 3.12 compatibility on Vercel"
+git commit -m "Fix Vercel deployment: Simplify ASGI handler and use FastAPI 0.109.2 with Pydantic 2.6.4"
 
 # Push to origin
 echo "⬆️ Pushing to origin..."

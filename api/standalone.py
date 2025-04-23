@@ -1,6 +1,6 @@
 import sys
 import os
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Print environment info
@@ -19,7 +19,7 @@ try:
 except ImportError as e:
     print(f"❌ Failed to import fastapi: {str(e)}")
 
-# Create a minimal standalone app for Vercel
+# Create a standalone app for Vercel
 app = FastAPI(
     title="TriviaPay API",
     description="Backend API for TriviaPay application (Vercel Deployment)",
@@ -61,5 +61,6 @@ async def health_check():
         "pydantic_version": pydantic.__version__
     }
 
-# Export the app for Vercel serverless
+# Export the app as ASGI application
+# This is what Vercel expects
 handler = app 
