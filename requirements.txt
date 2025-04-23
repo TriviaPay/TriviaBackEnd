@@ -3,7 +3,7 @@ uvicorn==0.15.0
 sqlalchemy==1.4.27
 python-jose[cryptography]==3.3.0
 cryptography==36.0.0
-pydantic==1.8.2
+pydantic==1.10.2
 python-multipart==0.0.5
 passlib==1.7.4
 python-dotenv==0.19.2
