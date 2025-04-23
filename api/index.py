@@ -1,3 +1,15 @@
+import pydantic
+import fastapi
+import sys
+import os
+
+print("===== ENVIRONMENT DEBUG INFO =====")
+print(f"Pydantic version: {pydantic.__version__}")
+print(f"FastAPI version: {fastapi.__version__}")
+print(f"Python version: {sys.version}")
+print(f"Current working directory: {os.getcwd()}")
+print("=================================")
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import sys
