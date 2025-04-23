@@ -2,7 +2,7 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/hello.py",
+      "src": "api/app.py",
       "use": "@vercel/python",
       "config": {
         "pythonVersion": "3.9",
@@ -11,6 +11,9 @@
     }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "/api/hello.py" }
+    { "src": "/docs", "dest": "/api/app.py" },
+    { "src": "/openapi.json", "dest": "/api/app.py" },
+    { "src": "/redoc", "dest": "/api/app.py" },
+    { "src": "/(.*)", "dest": "/api/app.py" }
   ]
 }
