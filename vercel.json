@@ -8,9 +8,14 @@
         "pythonVersion": "3.9",
         "includeFiles": ["alembic/**", "requirements.txt"]
       }
+    },
+    {
+      "src": "api/swagger/**",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
+    { "src": "/swagger", "dest": "/api/swagger/index.html" },
     { "src": "/(.*)", "dest": "/api/index.py" }
   ]
 }
