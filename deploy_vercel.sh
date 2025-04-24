@@ -11,6 +11,12 @@ if [ ! -d "alembic/versions" ]; then
     echo "# Initial migration file - placeholder" > alembic/versions/init_boost_config.py
 fi
 
+# Make sure swagger directory exists
+if [ ! -d "api/swagger" ]; then
+    echo "Creating swagger directory..."
+    mkdir -p api/swagger
+fi
+
 # Show what files have been modified
 echo "📋 Modified files:"
 git status --porcelain
@@ -21,7 +27,7 @@ git add .
 
 # Commit changes
 echo "💾 Committing changes..."
-git commit -m "Fix Vercel handler: Use BaseHTTPRequestHandler class for compatibility"
+git commit -m "Add static Swagger UI and redirect from /docs"
 
 # Push to origin
 echo "⬆️ Pushing to origin..."

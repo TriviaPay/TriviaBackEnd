@@ -1,4 +1,8 @@
 #!/bin/bash
+# Start script for Render deployment
+
+# Set environment variables if needed
+export PYTHONPATH=.
 
 # Default port
 PORT=8000
@@ -10,4 +14,6 @@ while [ $(lsof -i:$PORT -t | wc -l) -gt 0 ]; do
 done
 
 echo "Starting app on port $PORT"
-python3 -m uvicorn main:app --reload --port $PORT 
+
+# Start the FastAPI application using uvicorn
+exec uvicorn main:app --host 0.0.0.0 --port $PORT 

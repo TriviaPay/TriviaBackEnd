@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TriviaPay API Documentation</title>
+  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui.css">
+  <style>
+    html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
+    *, *:before, *:after { box-sizing: inherit; }
+    body { margin: 0; padding: 0; }
+    .topbar { display: none; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-standalone-preset.js"></script>
+  <script>
+    window.onload = function() {
+      // Define your API specification in OpenAPI format
+      const spec = {
+        openapi: "3.0.2",
+        info: {
+          title: "TriviaPay API",
+          version: "1.0.0",
+          description: "Backend API for TriviaPay application"
+        },
+        servers: [
+          {
+            url: "https://trivia-back-end.vercel.app",
+            description: "Production server"
+          },
+          {
+            url: "http://localhost:8000",
+            description: "Local development server"
+          }
+        ],
+        paths: {
+          "/": {
+            get: {
+              summary: "Root endpoint",
+              description: "Returns basic API information to confirm the server is running",
+              responses: {
+                "200": {
+                  description: "Successful response",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: {
+                          status: { type: "string", example: "online" },
+                          message: { type: "string", example: "TriviaPay API is working!" },
+                          path: { type: "string", example: "/" },
+                          python_version: { type: "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "/health": {
+            get: {
+              summary: "Health check endpoint",
+              description: "Returns health status of the API",
+              responses: {
+                "200": {
+                  description: "Successful response",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: {
+                          status: { type: "string", example: "online" },
+                          message: { type: "string" },
+                          path: { type: "string", example: "/health" },
+                          python_version: { type: "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "/api/info": {
+            get: {
+              summary: "API information",
+              description: "Returns detailed information about the API",
+              responses: {
+                "200": {
+                  description: "Successful response",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: {
+                          status: { type: "string", example: "online" },
+                          message: { type: "string" },
+                          path: { type: "string", example: "/api/info" },
+                          python_version: { type: "string" },
+                          endpoints: {
+                            type: "array",
+                            items: {
+                              type: "object",
+                              properties: {
+                                path: { type: "string" },
+                                method: { type: "string" },
+                                description: { type: "string" }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+
+      // Initialize Swagger UI
+      window.ui = SwaggerUIBundle({
+        spec: spec,
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: "StandaloneLayout"
+      });
+    };
+  </script>
+</body>
+</html> 
