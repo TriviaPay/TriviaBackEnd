@@ -1,17 +1,11 @@
 #!/bin/bash
 # Start script for Render deployment
 
-# Set environment variables if needed
+# Set environment variables
 export PYTHONPATH=.
 
-# Default port
-PORT=8000
-
-# Find an available port starting from the default
-while [ $(lsof -i:$PORT -t | wc -l) -gt 0 ]; do
-    echo "Port $PORT is in use, trying next port..."
-    PORT=$((PORT+1))
-done
+# Use PORT environment variable or default to 8000
+PORT="${PORT:-8000}"
 
 echo "Starting app on port $PORT"
 
