@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from db import get_db
 from models import Winner, User, TriviaDrawWinner, DrawConfig
 from routers.dependencies import get_current_user
-from rewards_logic import get_daily_winners, get_weekly_winners, get_all_time_winners
+from rewards_logic import (get_daily_winners, get_weekly_winners, get_all_time_winners,
+                          get_all_day_wise_winners, get_top_recent_winners)
 
 router = APIRouter(prefix="/winners", tags=["Winners"])
 
@@ -90,4 +91,45 @@ async def get_all_time_winner_list(
         - Total amount won all-time
     """
     winners = get_all_time_winners(db, limit=limit)
+    return winners
+
+@router.get("/day-wise-winners", response_model=List[Dict[str, Any]])
+async def get_winners_by_day(
+    days_limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db)
+):
+    """
+    Get winners organized by day, with the most recent days first.
+    
+    Args:
+        days_limit: Maximum number of days to return (default: 30, max: 100)
+        
+    Returns:
+        List of day entries, each containing:
+        - draw_date: The date of the draw
+        - winners: List of winners for that day with their details
+          (username, avatar, frame, badge, amount won)
+    """
+    winners_by_day = get_all_day_wise_winners(db, days_limit=days_limit)
+    return winners_by_day
+
+@router.get("/top-recent", response_model=List[Dict[str, Any]])
+async def get_top_recent_winner_list(
+    limit: int = Query(5, ge=1, le=20),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the top recent winners regardless of which day they won.
+    
+    This endpoint returns the most recent winners based on draw date,
+    limited to the specified number, regardless of which days they won on.
+    
+    Args:
+        limit: Maximum number of winners to return (default: 5, max: 20)
+        
+    Returns:
+        List of winners with details including username, badge, avatar, frame,
+        amount won, position, and the date they won.
+    """
+    winners = get_top_recent_winners(db, limit=limit)
     return winners

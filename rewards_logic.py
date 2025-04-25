@@ -166,12 +166,18 @@ def perform_draw(db: Session, draw_date: date) -> Dict[str, Any]:
 
 def get_user_details(user, db: Session) -> Dict[str, Any]:
     """
-    Get detailed user information including badges, avatar, and frame.
+    Extract user details for display with cosmetic items (badge, avatar, frame).
     """
     # Get badge, avatar, and frame info
     badge_info = db.query(Badge).filter(Badge.id == user.badge_id).first() if user.badge_id else None
-    avatar_info = db.query(Avatar).filter(Avatar.id == user.avatar_id).first() if user.avatar_id else None
-    frame_info = db.query(Frame).filter(Frame.id == user.frame_id).first() if user.frame_id else None
+    
+    # Use selected_avatar_id instead of avatar_id (which doesn't exist in User model)
+    avatar_id = getattr(user, 'selected_avatar_id', None)
+    avatar_info = db.query(Avatar).filter(Avatar.id == avatar_id).first() if avatar_id else None
+    
+    # Use selected_frame_id instead of frame_id
+    frame_id = getattr(user, 'selected_frame_id', None)
+    frame_info = db.query(Frame).filter(Frame.id == frame_id).first() if frame_id else None
     
     return {
         "account_id": user.account_id,
@@ -307,6 +313,83 @@ def get_all_time_winners(db: Session, limit: int = 10) -> List[Dict[str, Any]]:
         result.append({
             **user_details,
             "total_amount_won": total_amount
+        })
+    
+    return result
+
+def get_all_day_wise_winners(db: Session, days_limit: int = 30) -> List[Dict[str, List[Dict[str, Any]]]]:
+    """
+    Get winners organized by day, with the most recent days first.
+    
+    Args:
+        db: Database session
+        days_limit: Maximum number of days to return
+        
+    Returns:
+        List of day entries, each containing:
+        - draw_date: The date of the draw
+        - winners: List of winners for that day with their details
+          (username, avatar, frame, badge, amount won)
+    """
+    # Get the distinct draw dates ordered by most recent first
+    distinct_dates = db.query(TriviaDrawWinner.draw_date)\
+        .distinct()\
+        .order_by(TriviaDrawWinner.draw_date.desc())\
+        .limit(days_limit)\
+        .all()
+    
+    result = []
+    for (draw_date,) in distinct_dates:
+        # Get winners for this specific date
+        day_winners = get_daily_winners(db, draw_date)
+        
+        # Add to result with the date
+        result.append({
+            "draw_date": draw_date.isoformat(),
+            "winners": day_winners
+        })
+    
+    return result
+
+def get_top_recent_winners(db: Session, limit: int = 5) -> List[Dict[str, Any]]:
+    """
+    Get the top recent winners regardless of which day they won.
+    
+    This function returns the most recent winners based on draw date,
+    limited to the specified number, regardless of which days they won on.
+    
+    Args:
+        db: Database session
+        limit: Maximum number of winners to return
+        
+    Returns:
+        List of winners with details including username, badge, avatar, frame,
+        amount won, position, and the date they won.
+    """
+    # Get the most recent winners ordered by draw date (newest first)
+    recent_winners = db.query(TriviaDrawWinner).join(User)\
+        .order_by(TriviaDrawWinner.draw_date.desc(), TriviaDrawWinner.position)\
+        .limit(limit)\
+        .all()
+    
+    result = []
+    for winner in recent_winners:
+        user = winner.user
+        
+        # Get total amount won by this user all-time
+        total_amount = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
+            TriviaDrawWinner.account_id == user.account_id
+        ).scalar() or 0.0
+        
+        # Get user details
+        user_details = get_user_details(user, db)
+        
+        result.append({
+            **user_details,
+            "position": winner.position,
+            "amount_won": winner.prize_amount,
+            "total_amount_won": total_amount,
+            "draw_date": winner.draw_date.isoformat()
         })
     
     return result 
