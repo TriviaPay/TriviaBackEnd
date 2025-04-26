@@ -3,12 +3,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import Dict, Optional
 from pydantic import BaseModel
+from fastapi.security import OAuth2PasswordBearer
 
 from db import get_db
 from models import User, generate_account_id, Avatar, Frame, Badge
 from auth import verify_access_token, get_email_from_userinfo
 import logging
 from datetime import datetime
+from utils import get_letter_profile_pic  # Import the new utility function
+import random
+import string
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -49,28 +53,33 @@ async def receive_auth0_tokens(
     db: Session = Depends(get_db)
 ):
     """
-    Process Auth0 tokens and create/update user in the database
+    Receive and process tokens from Auth0, validating the access token
+    and returning user information.
     """
+    logger = logging.getLogger(__name__)
+    
     try:
-        # Verify token and extract core information
-        token_payload = verify_access_token(tokens.access_token)
+        # Verify token with Auth0
+        claims = verify_access_token(tokens.access_token)
         
-        # Extract essential user details
-        sub = token_payload.get('sub')
-        email = token_payload.get('email')
+        if not claims:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid access token"
+            )
         
-        # Retrieve userinfo if email is missing
-        if not email:
-            userinfo = get_email_from_userinfo(tokens.access_token, return_full_info=True)
-            if not userinfo:
-                raise HTTPException(status_code=400, detail="Could not retrieve user email")
-            email = userinfo.get('email')
+        # Extract user info
+        sub = claims.get('sub')
+        email = claims.get('email')
         
-        # Validate core information
+        # Safety check
         if not sub or not email:
-            raise HTTPException(status_code=400, detail="Invalid user information")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token claims - missing sub or email"
+            )
         
-        # Find existing user by email or sub
+        # Find user in database
         user = db.query(User).filter(
             (User.email == email) | (User.sub == sub)
         ).first()
@@ -88,11 +97,6 @@ async def receive_auth0_tokens(
             'badge_id': None, # No default badge
             'badge_image_url': None # No default badge image
         }
-        
-        # Add profile picture if available
-        userinfo = get_email_from_userinfo(tokens.access_token, return_full_info=True) or {}
-        if userinfo.get('picture'):
-            user_data['profile_pic_url'] = userinfo['picture']
         
         # Generate a default username from email
         base_username = email.split('@')[0]
@@ -112,6 +116,9 @@ async def receive_auth0_tokens(
                         username = f"{base_username}{attempt + 1}"
                     
                     user_data['username'] = username
+                    
+                    # Set profile picture URL based on first letter of username
+                    user_data['profile_pic_url'] = get_letter_profile_pic(username, db)
                     
                     # Create new user
                     user = User(**user_data)
@@ -141,9 +148,13 @@ async def receive_auth0_tokens(
                 # If we've exhausted our attempts
                 raise HTTPException(status_code=500, detail="Could not create user")
         else:
+            # If the username exists but doesn't have a profile picture, set one
+            if not user.profile_pic_url:
+                user.profile_pic_url = get_letter_profile_pic(user.username, db)
+                
             # Update existing user
             for key, value in user_data.items():
-                if value is not None and key not in ['badge_id', 'badge_image_url']:  # Don't overwrite existing badge
+                if value is not None and key not in ['badge_id', 'badge_image_url', 'profile_pic_url']:  # Don't overwrite existing badge and profile pic
                     setattr(user, key, value)
             
             # Store refresh token

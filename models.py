@@ -30,6 +30,7 @@ class User(Base):
     state = Column(String, nullable=True)
     zip = Column(String, nullable=True)
     country = Column(String, nullable=True)
+    gender = Column(String, nullable=True)  # Added gender field
     date_of_birth = Column(Date, nullable=True)
     referral_code = Column(String(5), unique=True, nullable=True)
     referred_by = Column(String(5), nullable=True)
@@ -38,6 +39,7 @@ class User(Base):
 
     subscriber_number = Column(String, nullable=True)
     username = Column(String, nullable=True, unique=True)
+    username_updated = Column(Boolean, default=False)  # Track if username has been updated before
     subscription_flag = Column(Boolean, default=False)
     sign_up_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     refresh_token = Column(String, nullable=True)
@@ -474,3 +476,12 @@ class UserGemPurchase(Base):
     # Relationships
     user = relationship("User", backref="gem_purchases")
     package = relationship("GemPackageConfig", backref="purchases")
+
+# =================================
+#  Letters Table
+# =================================
+class Letter(Base):
+    __tablename__ = "letters"
+    
+    letter = Column(String, primary_key=True)
+    image_url = Column(String, nullable=True)

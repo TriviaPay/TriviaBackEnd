@@ -25,10 +25,10 @@ class WinnerResponse(BaseModel):
     username: str
     amount_won: float
     total_amount_won: float = 0
-    badge_name: str = None
-    badge_image_url: str = None
-    avatar_url: str = None
-    frame_url: str = None
+    
+    badge_image_url: Optional[str] = None
+    avatar_url: Optional[str] = None
+    frame_url: Optional[str] = None
     position: int
 
 class DrawConfigResponse(BaseModel):
@@ -217,10 +217,8 @@ async def get_daily_winners(
             ).scalar() or 0
             
             # Get badge information
-            badge_name = None
             badge_image_url = None
             if user.badge_info:
-                badge_name = user.badge_info.name
                 badge_image_url = user.badge_image_url
             
             # Get avatar URL
@@ -249,7 +247,7 @@ async def get_daily_winners(
                 username=user.username or f"User{user.account_id}",
                 amount_won=winner.prize_amount,
                 total_amount_won=total_won,
-                badge_name=badge_name,
+                
                 badge_image_url=badge_image_url,
                 avatar_url=avatar_url,
                 frame_url=frame_url,
@@ -320,10 +318,8 @@ async def get_weekly_winners(
             ).scalar() or 0
             
             # Get badge information
-            badge_name = None
             badge_image_url = None
             if user.badge_info:
-                badge_name = user.badge_info.name
                 badge_image_url = user.badge_image_url
             
             # Get avatar URL
@@ -352,7 +348,7 @@ async def get_weekly_winners(
                 username=user.username or f"User{user.account_id}",
                 amount_won=weekly_amount,
                 total_amount_won=total_won,
-                badge_name=badge_name,
+                
                 badge_image_url=badge_image_url,
                 avatar_url=avatar_url,
                 frame_url=frame_url,
@@ -406,10 +402,8 @@ async def get_all_time_winners(
                 continue
             
             # Get badge information
-            badge_name = None
             badge_image_url = None
             if user.badge_info:
-                badge_name = user.badge_info.name
                 badge_image_url = user.badge_image_url
             
             # Get avatar URL
@@ -438,7 +432,7 @@ async def get_all_time_winners(
                 username=user.username or f"User{user.account_id}",
                 amount_won=total_amount,
                 total_amount_won=total_amount,  # Same value for all-time
-                badge_name=badge_name,
+                
                 badge_image_url=badge_image_url,
                 avatar_url=avatar_url,
                 frame_url=frame_url,
@@ -555,17 +549,15 @@ async def trigger_draw(
                 winner.wallet_balance = (winner.wallet_balance or 0) + prize_amount
                 winner.last_wallet_update = datetime.utcnow()
                 
-                # Calculate total amount won by user all-time (including this win)
+                # Get total amount won by this user all-time
                 total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
                     TriviaDrawWinner.account_id == winner.account_id
                 ).scalar() or 0
                 total_won += prize_amount
                 
-                # Get badge information
-                badge_name = None
+                # Get image URLs only
                 badge_image_url = None
                 if hasattr(winner, 'badge_info') and winner.badge_info:
-                    badge_name = winner.badge_info.name
                     badge_image_url = winner.badge_image_url
                 
                 # Get avatar URL
@@ -594,7 +586,6 @@ async def trigger_draw(
                     username=winner.username or f"User{winner.account_id}",
                     amount_won=prize_amount,
                     total_amount_won=total_won,
-                    badge_name=badge_name,
                     badge_image_url=badge_image_url,
                     avatar_url=avatar_url,
                     frame_url=frame_url,

@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Body, Path, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime, date
 import random
@@ -10,6 +10,7 @@ from db import get_db
 from models import User, Badge
 from routers.dependencies import get_current_user
 import logging
+from utils import get_letter_profile_pic
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
@@ -55,9 +56,27 @@ async def update_profile(
         # Remember the old username for logging
         old_username = user.username
         
+        # Check if username is changing
+        username_changed = profile.username != old_username
+        
+        # Check if user has already updated their username before
+        if username_changed and user.username_updated:
+            return {
+                "status": "error",
+                "message": "You have already used your free username update. Username cannot be changed again.",
+                "code": "USERNAME_ALREADY_UPDATED"
+            }
+        
         # Update username - ensure it's set even if there was no previous username
         user.username = profile.username
         logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with sub: {user.sub}")
+        
+        # Update profile picture if username changed and mark username as updated
+        if username_changed:
+            user.profile_pic_url = get_letter_profile_pic(profile.username, db)
+            user.username_updated = True
+            logging.info(f"Updated profile picture for user '{user.username}' based on first letter")
+            logging.info(f"Marked username as updated for user '{user.username}'")
         
         # Store date_of_birth as a Date object (not DateTime)
         # No need to combine with time since the model now uses Date type
@@ -140,7 +159,8 @@ async def update_profile(
                     "referral_code": user.referral_code,
                     "is_referred": user.is_referred,
                     "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
-                    "country": user.country
+                    "country": user.country,
+                    "username_updated": user.username_updated
                 }
             }
         except IntegrityError as e:
@@ -311,34 +331,52 @@ async def perform_profile_update(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Perform the actual profile update after validation"""
+    """Process a validated profile update"""
     try:
         # Get the current user from database
         user = db.query(User).filter(User.sub == current_user['sub']).first()
         if not user:
             raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
         
-        # Check username availability unless skip_validations is True
+        # Validation logic if it hasn't been skipped
         if not profile.skip_validations:
+            # Check if username already exists for another user
             existing_user = db.query(User).filter(
                 User.username == profile.username, 
                 User.sub != current_user['sub']
             ).first()
             
             if existing_user:
-                logging.info(f"Username '{profile.username}' is already taken by account_id: {existing_user.account_id}")
+                # Log the info but return a clean, user-friendly error message
                 return {
                     "status": "error",
                     "message": f"The username '{profile.username}' is already taken. Please choose a different username.",
                     "code": "USERNAME_TAKEN"
                 }
         
-        # Remember old username for logging
+        # Remember the old username for logging
         old_username = user.username
+        
+        # Check if username is changing
+        username_changed = profile.username != old_username
+        
+        # Check if user has already updated their username before
+        if username_changed and user.username_updated:
+            return {
+                "status": "error",
+                "message": "You have already used your free username update. Username cannot be changed again.",
+                "code": "USERNAME_ALREADY_UPDATED"
+            }
         
         # Update username
         user.username = profile.username
-        logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with sub: {user.sub}")
+        
+        # Update profile picture if username changed and mark username as updated
+        if username_changed:
+            user.profile_pic_url = get_letter_profile_pic(profile.username, db)
+            user.username_updated = True
+            logging.info(f"Updated profile picture for user '{user.username}' based on first letter")
+            logging.info(f"Marked username as updated for user '{user.username}'")
         
         # Update date_of_birth
         user.date_of_birth = profile.date_of_birth
@@ -426,7 +464,8 @@ async def perform_profile_update(
                     "referral_code": user.referral_code,
                     "is_referred": user.is_referred,
                     "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
-                    "country": user.country
+                    "country": user.country,
+                    "username_updated": user.username_updated
                 }
             }
         except IntegrityError as e:
@@ -589,3 +628,205 @@ async def remove_badge(
             "message": f"Error removing badge: {str(e)}",
             "code": "BADGE_REMOVAL_ERROR"
         } 
+
+@router.get("/gems", status_code=200)
+async def get_user_gems(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get the user's gems count along with their username.
+    
+    Returns:
+        A JSON object containing:
+        - username: The user's username
+        - gems: The number of gems the user has
+        - status: Success indicator
+    """
+    try:
+        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return {
+            "status": "success",
+            "username": user.username,
+            "gems": user.gems
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error retrieving gems: {str(e)}")
+        return {
+            "status": "error",
+            "message": "An error occurred while retrieving gems",
+            "error": str(e)
+        }
+
+class ExtendedProfileUpdate(BaseModel):
+    """
+    Model for updating extended user profile data including name, address, and contact information.
+    The username field is optional since it can only be updated once.
+    """
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    mobile: Optional[str] = None
+    gender: Optional[str] = None
+    street_1: Optional[str] = None
+    street_2: Optional[str] = None
+    suite_or_apt_number: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip: Optional[str] = None
+    country: Optional[str] = None
+
+@router.post("/extended-update", status_code=200)
+async def update_extended_profile(
+    request: Request,
+    profile: ExtendedProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Update extended user profile information including contact details and address.
+    Username can only be updated once - subsequent attempts will be rejected.
+    """
+    try:
+        # Get the current user from database
+        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+        
+        # Handle username update (if provided)
+        if profile.username:
+            # Check if username has already been updated before
+            if user.username_updated:
+                return {
+                    "status": "error",
+                    "message": "You have already used your free username update. Username cannot be changed again.",
+                    "code": "USERNAME_ALREADY_UPDATED"
+                }
+            
+            # Check if the username is actually changing
+            if user.username != profile.username:
+                # Check if username already exists for another user
+                existing_user = db.query(User).filter(
+                    User.username == profile.username, 
+                    User.sub != current_user['sub']
+                ).first()
+                
+                if existing_user:
+                    logging.info(f"Username '{profile.username}' is already taken by account_id: {existing_user.account_id}")
+                    return {
+                        "status": "error",
+                        "message": f"The username '{profile.username}' is already taken. Please choose a different username.",
+                        "code": "USERNAME_TAKEN"
+                    }
+                
+                # Store old username for comparison
+                old_username = user.username
+                
+                # Update username and mark as updated
+                user.username = profile.username
+                user.username_updated = True
+                logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with sub: {user.sub}")
+                
+                # Update profile picture based on the new username's first letter
+                user.profile_pic_url = get_letter_profile_pic(profile.username, db)
+                logging.info(f"Updated profile picture for user '{user.username}' based on first letter")
+        
+        # Update other profile fields if provided
+        if profile.first_name is not None:
+            user.first_name = profile.first_name
+        
+        if profile.last_name is not None:
+            user.last_name = profile.last_name
+        
+        if profile.mobile is not None:
+            user.mobile = profile.mobile
+        
+        if profile.gender is not None:
+            # Add gender field if it doesn't exist
+            if not hasattr(user, 'gender'):
+                connection = db.bind.connect()
+                connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR")
+                connection.close()
+            user.gender = profile.gender
+        
+        # Update address fields if provided
+        if profile.street_1 is not None:
+            user.street_1 = profile.street_1
+        
+        if profile.street_2 is not None:
+            user.street_2 = profile.street_2
+        
+        if profile.suite_or_apt_number is not None:
+            user.suite_or_apt_number = profile.suite_or_apt_number
+        
+        if profile.city is not None:
+            user.city = profile.city
+        
+        if profile.state is not None:
+            user.state = profile.state
+        
+        if profile.zip is not None:
+            user.zip = profile.zip
+        
+        if profile.country is not None:
+            user.country = profile.country
+        
+        try:
+            # Commit changes to database
+            db.commit()
+            logging.info(f"Extended profile successfully updated for user: {user.username}")
+            
+            # Return success response with updated profile details
+            return {
+                "status": "success",
+                "message": "Profile updated successfully",
+                "data": {
+                    "username": user.username,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "mobile": user.mobile,
+                    "gender": getattr(user, "gender", None),
+                    "address": {
+                        "street_1": user.street_1,
+                        "street_2": user.street_2,
+                        "suite_or_apt_number": user.suite_or_apt_number,
+                        "city": user.city,
+                        "state": user.state,
+                        "zip": user.zip,
+                        "country": user.country
+                    },
+                    "username_updated": user.username_updated
+                }
+            }
+        except IntegrityError as e:
+            db.rollback()
+            error_str = str(e).lower()
+            logging.error(f"Database integrity error: {error_str}")
+            
+            # Check if the error is specifically about username uniqueness
+            if "unique" in error_str and "username" in error_str:
+                return {
+                    "status": "error",
+                    "message": f"The username '{profile.username}' is already taken. Please choose a different username.",
+                    "code": "USERNAME_TAKEN"
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": "Database error while updating profile. Please try again.",
+                    "code": "DB_INTEGRITY_ERROR"
+                }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating extended profile: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"An unexpected error occurred: {str(e)}",
+            "code": "UNEXPECTED_ERROR"
+        }
