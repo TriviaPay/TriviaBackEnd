@@ -182,21 +182,9 @@ def get_user_details(user, db: Session) -> Dict[str, Any]:
     return {
         "account_id": user.account_id,
         "username": user.username,
-        "badge": {
-            "id": badge_info.id,
-            "name": badge_info.name,
-            "image_url": badge_info.image_url
-        } if badge_info else None,
-        "avatar": {
-            "id": avatar_info.id,
-            "name": avatar_info.name,
-            "image_url": avatar_info.image_url
-        } if avatar_info else None,
-        "frame": {
-            "id": frame_info.id,
-            "name": frame_info.name,
-            "image_url": frame_info.image_url
-        } if frame_info else None
+        "badge_image_url": badge_info.image_url if badge_info else None,
+        "avatar_image_url": avatar_info.image_url if avatar_info else None,
+        "frame_image_url": frame_info.image_url if frame_info else None
     }
 
 def get_daily_winners(db: Session, specific_date: Optional[date] = None) -> List[Dict[str, Any]]:
