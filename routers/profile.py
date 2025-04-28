@@ -7,7 +7,7 @@ from datetime import datetime, date
 import random
 import string
 from db import get_db
-from models import User, Badge
+from models import User, Badge, CountryCode
 from routers.dependencies import get_current_user
 import logging
 from utils import get_letter_profile_pic
@@ -672,6 +672,7 @@ class ExtendedProfileUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     mobile: Optional[str] = None
+    country_code: Optional[str] = None
     gender: Optional[str] = None
     street_1: Optional[str] = None
     street_2: Optional[str] = None
@@ -745,6 +746,9 @@ async def update_extended_profile(
         
         if profile.mobile is not None:
             user.mobile = profile.mobile
+            
+        if profile.country_code is not None:
+            user.country_code = profile.country_code
         
         if profile.gender is not None:
             # Add gender field if it doesn't exist
@@ -790,6 +794,7 @@ async def update_extended_profile(
                     "first_name": user.first_name,
                     "last_name": user.last_name,
                     "mobile": user.mobile,
+                    "country_code": user.country_code,
                     "gender": getattr(user, "gender", None),
                     "address": {
                         "street_1": user.street_1,
@@ -825,6 +830,99 @@ async def update_extended_profile(
         raise
     except Exception as e:
         logging.error(f"Error updating extended profile: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"An unexpected error occurred: {str(e)}",
+            "code": "UNEXPECTED_ERROR"
+        }
+
+@router.get("/complete", status_code=200)
+async def get_complete_profile(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get the complete profile information for the current user.
+    Returns all available user fields including personal info, contact details, and address.
+    """
+    try:
+        # Get the current user from database
+        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+        
+        # Format the date of birth if it exists
+        dob_formatted = user.date_of_birth.isoformat() if user.date_of_birth else None
+        signup_date_formatted = user.sign_up_date.isoformat() if user.sign_up_date else None
+        
+        # Return all user fields
+        return {
+            "status": "success",
+            "data": {
+                "account_id": user.account_id,
+                "email": user.email,
+                "mobile": user.mobile,
+                "country_code": user.country_code,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "middle_name": user.middle_name,
+                "username": user.username,
+                "gender": getattr(user, "gender", None),
+                "date_of_birth": dob_formatted,
+                "sign_up_date": signup_date_formatted,
+                "address": {
+                    "street_1": user.street_1,
+                    "street_2": user.street_2,
+                    "suite_or_apt_number": user.suite_or_apt_number,
+                    "city": user.city,
+                    "state": user.state,
+                    "zip": user.zip,
+                    "country": user.country
+                },
+                "profile_pic_url": user.profile_pic_url,
+                "username_updated": user.username_updated,
+                "referral_code": user.referral_code,
+                "is_referred": user.is_referred
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching complete profile: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"An unexpected error occurred: {str(e)}",
+            "code": "UNEXPECTED_ERROR"
+        }
+
+@router.get("/country-codes", status_code=200)
+async def get_country_codes(
+    db: Session = Depends(get_db)
+):
+    """
+    Get a list of all country calling codes with their associated flag URLs.
+    This can be used to populate a country code selector in phone number fields.
+    """
+    try:
+        # Get all country codes
+        country_codes = db.query(CountryCode).order_by(CountryCode.country_name).all()
+        
+        # Format the response
+        result = []
+        for code in country_codes:
+            result.append({
+                "code": code.code,
+                "country_name": code.country_name,
+                "flag_url": code.flag_url,
+                "country_iso": code.country_iso
+            })
+        
+        return {
+            "status": "success",
+            "data": result
+        }
+    except Exception as e:
+        logging.error(f"Error fetching country codes: {str(e)}")
         return {
             "status": "error",
             "message": f"An unexpected error occurred: {str(e)}",
