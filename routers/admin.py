@@ -1,15 +1,15 @@
 import os
 from datetime import date, datetime, time
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Body, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Body, status, Path, Query
+from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy.orm import Session
 import pytz
 import logging
 
 from db import get_db
-from models import TriviaDrawConfig, TriviaDrawWinner
-from routers.dependencies import get_admin_user
+from models import TriviaDrawConfig, TriviaDrawWinner, User
+from routers.dependencies import get_admin_user, get_current_user, verify_admin
 from rewards_logic import perform_draw
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -37,6 +37,25 @@ class DrawResponse(BaseModel):
     total_winners: int
     prize_pool: float
     winners: List[Dict[str, Any]]
+
+class UserAdminStatus(BaseModel):
+    account_id: int
+    email: str
+    username: Optional[str] = None
+    is_admin: bool
+    
+    class Config:
+        orm_mode = True
+
+class UpdateAdminStatusRequest(BaseModel):
+    is_admin: bool = Field(..., description="Admin status to set for the user")
+
+class AdminStatusResponse(BaseModel):
+    account_id: int
+    email: str
+    username: Optional[str] = None
+    is_admin: bool
+    message: str
 
 @router.get("/draw-config", response_model=DrawConfigResponse)
 async def get_draw_config(
@@ -206,4 +225,79 @@ async def trigger_draw(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error triggering draw: {str(e)}"
-        ) 
+        )
+
+@router.get("/users", response_model=List[UserAdminStatus])
+async def get_admin_users(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get all users with their admin status (admin-only endpoint)
+    """
+    # Verify admin access
+    verify_admin(current_user, db)
+    
+    # Get all users with their admin status
+    users = db.query(User).all()
+    return users
+
+@router.put("/users/{account_id}", response_model=AdminStatusResponse)
+async def update_user_admin_status(
+    account_id: int = Path(..., description="The account ID of the user to update"),
+    admin_status: UpdateAdminStatusRequest = Body(..., description="Updated admin status"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Update a user's admin status (admin-only endpoint)
+    """
+    # Verify admin access
+    verify_admin(current_user, db)
+    
+    # Find the user
+    user = db.query(User).filter(User.account_id == account_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User with account ID {account_id} not found")
+    
+    # Update admin status
+    user.is_admin = admin_status.is_admin
+    db.commit()
+    db.refresh(user)
+    
+    # Generate appropriate message
+    message = f"User {user.email} is now {'an admin' if user.is_admin else 'not an admin'}"
+    
+    return {
+        "account_id": user.account_id,
+        "email": user.email,
+        "username": user.username,
+        "is_admin": user.is_admin,
+        "message": message
+    }
+
+@router.get("/users/search", response_model=List[UserAdminStatus])
+async def search_users(
+    email: Optional[str] = Query(None, description="Email to search for"),
+    username: Optional[str] = Query(None, description="Username to search for"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Search for users by email or username (admin-only endpoint)
+    """
+    # Verify admin access
+    verify_admin(current_user, db)
+    
+    # Create base query
+    query = db.query(User)
+    
+    # Apply filters if provided
+    if email:
+        query = query.filter(User.email.ilike(f"%{email}%"))
+    if username:
+        query = query.filter(User.username.ilike(f"%{username}%"))
+    
+    # Get results
+    users = query.all()
+    return users 

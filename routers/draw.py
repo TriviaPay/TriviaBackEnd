@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from utils import get_next_draw_time
+from utils.draw_calculations import get_next_draw_time
 from models import User
 from routers.dependencies import get_current_user
 

@@ -36,6 +36,7 @@ class User(Base):
     referred_by = Column(String(5), nullable=True)
     referral_count = Column(Integer, default=0)
     is_referred = Column(Boolean, default=False)
+    is_admin = Column(Boolean, default=False)  # Added is_admin field
 
     subscriber_number = Column(String, nullable=True)
     username = Column(String, nullable=True, unique=True)
@@ -74,6 +75,9 @@ class User(Base):
     payments = relationship("Payment", back_populates="user")
     daily_questions = relationship("DailyQuestion", back_populates="user")
     badge_info = relationship("Badge", back_populates="users")
+    payment_transactions = relationship("PaymentTransaction", back_populates="user")
+    bank_accounts = relationship("UserBankAccount", back_populates="user")
+    subscriptions = relationship("UserSubscription", back_populates="user")
     # You could add a relationship for Comments, Chats, or Withdrawals if needed
     # (depending on whether they link to a user table).
 
@@ -485,3 +489,100 @@ class Letter(Base):
     
     letter = Column(String, primary_key=True)
     image_url = Column(String, nullable=True)
+
+# =================================
+#  Country Codes Table
+# =================================
+class CountryCode(Base):
+    __tablename__ = "country_codes"
+    
+    # Create a composite primary key since some country codes (like +1) are shared by multiple countries
+    code = Column(String, primary_key=True)  # Country calling code (e.g., +1, +44)
+    country_iso = Column(String, primary_key=True)  # ISO code (e.g., US, GB)
+    
+    country_name = Column(String, nullable=False)
+    flag_url = Column(String, nullable=True)  # URL to the country flag image
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+# =================================
+#  Payment Transaction Table
+# =================================
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    payment_intent_id = Column(String, unique=True, nullable=True, index=True)  # Changed to nullable for withdrawals without intent IDs
+    amount = Column(Float, nullable=False)
+    currency = Column(String, nullable=False)
+    status = Column(String, nullable=False)  # 'succeeded', 'failed', 'processing', 'pending', etc.
+    payment_method = Column(String, nullable=True)
+    payment_method_type = Column(String, nullable=True)  # 'card', 'bank_transfer', 'standard', 'instant', etc.
+    last_error = Column(String, nullable=True)
+    payment_metadata = Column(String, nullable=True)  # JSON string of metadata
+    admin_notes = Column(String, nullable=True)  # Notes added by admins during processing
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", back_populates="payment_transactions")
+
+# =================================
+#  UserBankAccount Table
+# =================================
+class UserBankAccount(Base):
+    __tablename__ = "user_bank_accounts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    account_name = Column(String, nullable=False)
+    account_number_last4 = Column(String(4), nullable=False)  # Last 4 digits only for security
+    account_number_encrypted = Column(String, nullable=True)  # Encrypted full account number
+    routing_number_encrypted = Column(String, nullable=True)  # Encrypted routing number
+    bank_name = Column(String, nullable=False)
+    is_default = Column(Boolean, default=False)
+    is_verified = Column(Boolean, default=False)
+    stripe_bank_account_id = Column(String, nullable=True)  # ID from Stripe for bank account
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationship - Changed from backref to back_populates
+    user = relationship("User", back_populates="bank_accounts")
+
+# =================================
+#  SubscriptionPlan Table
+# =================================
+class SubscriptionPlan(Base):
+    __tablename__ = "subscription_plans"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    price_usd = Column(Float, nullable=False)
+    billing_interval = Column(String, nullable=False)  # 'month' or 'year'
+    features = Column(String, nullable=True)  # JSON string of features
+    stripe_price_id = Column(String, nullable=True)  # Stripe price ID
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+# =================================
+#  UserSubscription Table
+# =================================
+class UserSubscription(Base):
+    __tablename__ = "user_subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=False)
+    stripe_subscription_id = Column(String, nullable=True)
+    status = Column(String, nullable=False)  # 'active', 'canceled', 'past_due', etc.
+    current_period_start = Column(DateTime, nullable=True)
+    current_period_end = Column(DateTime, nullable=True)
+    cancel_at_period_end = Column(Boolean, default=False)
+    payment_method_id = Column(String, nullable=True)  # Stripe payment method ID
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", back_populates="subscriptions")
+    plan = relationship("SubscriptionPlan", backref="subscribers")
