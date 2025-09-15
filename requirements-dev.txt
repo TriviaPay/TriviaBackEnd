@@ -1,2 +1,6 @@
--r requirements.txt
-psycopg2-binary==2.9.6 
+pytest==8.3.5
+pytest-asyncio==1.2.0
+black==24.2.0
+flake8==7.0.0
+mypy==1.9.0
+isort==5.13.2 

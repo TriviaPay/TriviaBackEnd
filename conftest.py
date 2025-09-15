@@ -6,7 +6,10 @@ from db import get_db
 import os
 
 # Test database URL
-TEST_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/test_db?sslmode=disable")
+TEST_DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+pg8000://postgres:postgres@localhost:5432/test_db?sslmode=disable"
+)
 
 @pytest.fixture(scope="session")
 def test_engine():
