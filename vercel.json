@@ -3,7 +3,10 @@
   "builds": [
     {
       "src": "main.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": {
+        "skipBuild": true
+      }
     }
   ],
   "routes": [
@@ -14,6 +17,7 @@
   ],
   "env": {
     "PYTHONPATH": ".",
-    "TESTING": "false"
+    "TESTING": "false",
+    "SKIP_TESTS": "true"
   }
 } 
