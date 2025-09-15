@@ -3,6 +3,7 @@
 import os
 import sys
 from dotenv import load_dotenv
+import pytest
 
 # Load environment variables
 load_dotenv()
@@ -10,15 +11,23 @@ load_dotenv()
 # Add the current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from db import engine, SessionLocal
-from models import User, Base
-from sqlalchemy import text
-
 def test_database_schema():
     """Test that the database schema is working correctly"""
+    # Check if DATABASE_URL is available
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        print("⚠️  DATABASE_URL not found, skipping database tests")
+        pytest.skip("DATABASE_URL environment variable not set")
+        return
+    
     print("Testing database schema...")
     
     try:
+        # Import after checking DATABASE_URL to avoid import errors
+        from db import engine, SessionLocal
+        from models import User, Base
+        from sqlalchemy import text
+        
         # Test database connection
         with engine.connect() as connection:
             result = connection.execute(text("SELECT 1"))
