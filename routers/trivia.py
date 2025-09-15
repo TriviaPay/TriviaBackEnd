@@ -8,7 +8,6 @@ import json
 
 from db import get_db
 from models import User, Trivia, DailyQuestion, Entry
-from auth import verify_access_token
 from routers.dependencies import get_current_user
 
 router = APIRouter(prefix="/trivia", tags=["Trivia"])

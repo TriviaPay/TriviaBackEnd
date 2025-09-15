@@ -23,12 +23,10 @@ class PurchaseRequest(BaseModel):
 @router.post("/add-funds")
 async def add_funds_to_wallet(
     stripe_response: StripePaymentResponse,
-    claims: dict = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Add funds to user's wallet after successful Stripe payment"""
-    sub = claims.get("sub")
-    user = db.query(User).filter(User.sub == sub).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -49,12 +47,10 @@ async def add_funds_to_wallet(
 
 @router.get("/balance")
 async def get_wallet_balance(
-    claims: dict = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get user's current wallet balance"""
-    sub = claims.get("sub")
-    user = db.query(User).filter(User.sub == sub).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -67,12 +63,10 @@ async def get_wallet_balance(
 @router.post("/purchase")
 async def make_purchase(
     purchase: PurchaseRequest,
-    claims: dict = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Make a purchase using wallet balance"""
-    sub = claims.get("sub")
-    user = db.query(User).filter(User.sub == sub).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

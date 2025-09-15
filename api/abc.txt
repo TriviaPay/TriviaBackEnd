@@ -1,0 +1,187 @@
+import os
+import json
+from pathlib import Path
+import boto3
+from dotenv import load_dotenv
+from openai import OpenAI
+import nltk
+from nltk.tokenize import sent_tokenize
+import tiktoken
+import fitz  # PyMuPDF
+
+# Download NLTK data if not present
+nltk.download("punkt")
+
+# --- ENVIRONMENT ---
+load_dotenv()
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+KENDRA_INDEX_ID = os.getenv("KENDRA_INDEX_ID")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+PROMPTS_DIR = Path("prompts")
+PDF_DIR = Path("pdfs")
+OUTPUT_DIR = Path("output")
+DEBUG_DIR = Path("debug")
+OUTPUT_DIR.mkdir(exist_ok=True)
+DEBUG_DIR.mkdir(exist_ok=True)
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+encoding = tiktoken.get_encoding("cl100k_base")  # Use GPT-4 tokenizer
+
+# Segment/Query mapping
+segments = [
+    ("EXECUTIVE_SUMMARY.txt", "EXECUTIVE_SUMMARY"),
+    ("KEY_FAILURE_POINTS.txt", "KEY_FAILURE_POINTS"),
+    ("REGULATORY_ACTIONS.txt", "REGULATORY_ACTIONS"),
+    ("MONETARY_PENALTIES.txt", "MONETARY_PENALTIES"),
+    ("MANDATED_ACTION_POINTS.txt", "MANDATED_ACTION_POINTS"),
+    ("STRATEGIC_ACTIONS.txt", "STRATEGIC_ACTIONS"),
+    ("CONSULTING_OPPORTUNITY_LENSE.txt", "CONSULTING_OPPORTUNITY_LENSE"),
+    ("STRATEGIC_RECOMMENDATIONS.txt", "STRATEGIC_RECOMMENDATIONS"),
+]
+segment_queries = {
+    "EXECUTIVE_SUMMARY": "overall summary of enforcement actions",
+    "KEY_FAILURE_POINTS": "key failure points, compliance gaps",
+    "REGULATORY_ACTIONS": "regulatory action, cease and desist, enforcement orders",
+    "MONETARY_PENALTIES": "monetary action, penalty, fines, settlement steps",
+    "MANDATED_ACTION_POINTS": "mandated regulatory action, fixes, corrective steps",
+    "STRATEGIC_ACTIONS": "strategic & industry impact trends",
+    "CONSULTING_OPPORTUNITY_LENSE": "consulting advisory perspective",
+    "STRATEGIC_RECOMMENDATIONS": "recommendations, next steps, best practices"
+}
+
+def load_prompt(filename: str) -> str:
+    with open(PROMPTS_DIR / filename, "r", encoding="utf-8") as f:
+        return f.read()
+
+def extract_pdf_sentence_chunks(pdf_path: Path, max_tokens_per_chunk: int = 1000) -> list:
+    """Hybrid: sentence-aware, token-capped chunking for PDFs."""
+    doc = fitz.open(pdf_path)
+    text = "\n".join(page.get_text() for page in doc)
+    sentences = sent_tokenize(text)
+    chunks = []
+    cur_chunk, cur_tokens = "", 0
+
+    for sent in sentences:
+        sent_tokens = len(encoding.encode(sent))
+        # If adding would exceed cap, commit chunk and start new
+        if cur_tokens + sent_tokens > max_tokens_per_chunk:
+            if cur_chunk.strip():
+                chunks.append(cur_chunk.strip())
+            cur_chunk, cur_tokens = sent, sent_tokens
+        else:
+            cur_chunk += (" " if cur_chunk else "") + sent
+            cur_tokens += sent_tokens
+    if cur_chunk.strip():
+        chunks.append(cur_chunk.strip())
+    return chunks
+
+def query_kendra(query_text: str, violation_id: str) -> list:
+    kendra = boto3.client(
+        "kendra",
+        region_name=AWS_REGION,
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+    )
+    response = kendra.query(
+        IndexId=KENDRA_INDEX_ID,
+        QueryText=query_text,
+        PageSize=10,
+        AttributeFilter={
+            "EqualsTo": {
+                "Key": "Violation_ID",
+                "Value": {"StringValue": violation_id}
+            }
+        }
+    )
+    return [
+        item.get("DocumentExcerpt", {}).get("Text", "")
+        for item in response.get("ResultItems", [])
+        if item.get("DocumentExcerpt", {}).get("Text")
+    ]
+
+def combine_hybrid_chunks(kendra_chunks: list, pdf_chunks: list, max_total_chunks: int = 10) -> list:
+    """
+    Hybrid: Start with unique Kendra hits, then add unique PDF chunks until max chunks reached.
+    No duplicate/similar (substring) context.
+    """
+    used = set()
+    result = []
+    for chunk in kendra_chunks:
+        clean = chunk.strip()
+        if clean and clean not in used:
+            result.append(clean)
+            used.add(clean)
+    for chunk in pdf_chunks:
+        clean = chunk.strip()
+        # Avoid adding if same as any Kendra hit, or is a substring/superstring of one already used
+        if clean and not any(clean in x or x in clean for x in used):
+            result.append(clean)
+            used.add(clean)
+        if len(result) >= max_total_chunks:
+            break
+    return result[:max_total_chunks]
+
+def call_llm(prompt: str, context_chunks: list) -> str:
+    context = "\n\n".join(context_chunks)
+    messages = [
+        {"role": "system", "content": "You are a regulatory analyst expert creating one-pager summaries."},
+        {"role": "user", "content": f"Context:\n{context}\n\nPrompt:\n{prompt}"}
+    ]
+    response = client.chat.completions.create(
+        model="gpt-4-turbo",
+        messages=messages,
+        temperature=0.1,
+        max_tokens=1200
+    )
+    return response.choices[0].message.content.strip()
+
+def generate_one_pager(violation_id: str, pdf_files: list):
+    results = {}
+    debug_info = {}
+
+    # Pre-extract and cache all PDF chunks for this violation_id
+    pdf_chunks_all = []
+    for pdf_name in pdf_files:
+        pdf_path = PDF_DIR / pdf_name
+        if not pdf_path.exists():
+            print(f"[⚠️ WARNING] Missing PDF: {pdf_path}")
+            continue
+        pdf_chunks_all.extend(extract_pdf_sentence_chunks(pdf_path))
+
+    for prompt_file, seg_key in segments:
+        prompt = load_prompt(prompt_file)
+        query_text = segment_queries.get(seg_key, "")
+        kendra_chunks = query_kendra(query_text, violation_id)
+
+        # Hybrid: combine & deduplicate, favoring Kendra
+        context_chunks = combine_hybrid_chunks(kendra_chunks, pdf_chunks_all, max_total_chunks=10)
+        debug_info[seg_key] = context_chunks  # log context for debugging
+
+        if not context_chunks:
+            print(f"[⚠️ WARNING] No context for segment: {seg_key}")
+            results[seg_key] = "[No context found]"
+            continue
+
+        summary = call_llm(prompt, context_chunks)
+        results[seg_key] = summary
+
+    # Write onepager to output
+    onepager_path = OUTPUT_DIR / f"onepager_{violation_id}.json"
+    with open(onepager_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"[✅ SUCCESS] One-pager created: {onepager_path}")
+
+    # Write debug context
+    debug_path = DEBUG_DIR / f"context_{violation_id}.json"
+    with open(debug_path, "w") as f:
+        json.dump(debug_info, f, indent=2)
+    print(f"[🔍 DEBUG] Contexts for each segment written: {debug_path}")
+
+# ---- ENTRY POINT ----
+if __name__ == "__main__":
+    violation_id = "V001"
+    pdf_files = ["00005Banco_Santander.pdf", "00027Robinhood_Markets.pdf"]
+    generate_one_pager(violation_id, pdf_files)
