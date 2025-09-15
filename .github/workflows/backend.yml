@@ -4,9 +4,35 @@ on:
   push:
     branches: [ "main" ]
 
+env:
+  TESTING: "true"
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  DESCOPE_PROJECT_ID: ${{ secrets.DESCOPE_PROJECT_ID }}
+  DESCOPE_MANAGEMENT_KEY: ${{ secrets.DESCOPE_MANAGEMENT_KEY }}
+  STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+  DRAW_TIME_HOUR: "20"
+  DRAW_TIME_MINUTE: "0"
+  DRAW_TIMEZONE: "US/Eastern"
+  DEV_ADMIN_SECRET: ${{ secrets.DEV_ADMIN_SECRET }}
+
 jobs:
-  build-and-deploy:
+  build-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       # 1) Checkout code
       - name: Check out the repository
@@ -24,14 +50,28 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
       
-      # 4) Run tests
+      # 4) Run tests with test database
       - name: Run tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          TESTING: "true"
         run: |
-          pytest --maxfail=1 --disable-warnings -q
-      
-      # 5) Deploy to Vercel (only if tests pass)
+          python -m pytest --maxfail=1 --disable-warnings -v
+
+  deploy:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
       - name: Deploy to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           npm install -g vercel
-          vercel --token=$VERCEL_TOKEN --confirm --prod
+          vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+          vercel build --prod --token=$VERCEL_TOKEN
+          vercel deploy --prod --token=$VERCEL_TOKEN
         
