@@ -11,8 +11,12 @@ from models import User, Badge, CountryCode
 from routers.dependencies import get_current_user
 import logging
 from utils import get_letter_profile_pic
+from descope import DescopeClient
+from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
+
+client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY)
 
 class ProfileUpdate(BaseModel):
     username: str
@@ -29,19 +33,19 @@ async def update_profile(
     request: Request,
     profile: ProfileUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Update user profile with username, DOB, country, and process referral"""
     try:
         # Get the current user from database
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+            raise HTTPException(status_code=404, detail=f"User not found")
         
         # Check if username already exists for another user - moved up for clearer error handling
         existing_user = db.query(User).filter(
             User.username == profile.username, 
-            User.sub != current_user['sub']
+            User.account_id != current_user.account_id
         ).first()
         
         if existing_user:
@@ -69,7 +73,7 @@ async def update_profile(
         
         # Update username - ensure it's set even if there was no previous username
         user.username = profile.username
-        logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with sub: {user.sub}")
+        logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with account_id: {user.account_id}")
         
         # Update profile picture if username changed and mark username as updated
         if username_changed:
@@ -79,9 +83,7 @@ async def update_profile(
             logging.info(f"Marked username as updated for user '{user.username}'")
         
         # Store date_of_birth as a Date object (not DateTime)
-        # No need to combine with time since the model now uses Date type
         user.date_of_birth = profile.date_of_birth
-        logging.info(f"Updating date_of_birth to {profile.date_of_birth} for user with sub: {user.sub}")
         
         # Update country
         user.country = profile.country 
@@ -97,7 +99,7 @@ async def update_profile(
                         "code": "INVALID_REFERRAL_CODE"
                     }
                 
-                if referrer.sub == current_user['sub']:
+                if referrer.account_id == current_user.account_id:
                     return {
                         "status": "error",
                         "message": "You cannot use your own referral code.",
@@ -217,19 +219,19 @@ class ReferralCheck(BaseModel):
 async def check_username_availability(
     username_data: UsernameCheck,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Check if a username is available for use"""
     try:
         # Get the current user
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+            raise HTTPException(status_code=404, detail=f"User not found")
         
         # Check if username exists for another user
         existing_user = db.query(User).filter(
             User.username == username_data.username, 
-            User.sub != current_user['sub']
+            User.account_id != current_user.account_id
         ).first()
         
         if existing_user:
@@ -262,14 +264,14 @@ async def check_username_availability(
 async def validate_referral_code(
     referral_data: ReferralCheck,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Validate if a referral code is valid and can be used"""
     try:
         # Get the current user
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+            raise HTTPException(status_code=404, detail=f"User not found")
         
         # Check if user already has a referral code applied
         if user.is_referred:
@@ -291,7 +293,7 @@ async def validate_referral_code(
                 "valid": False
             }
         
-        if referrer.sub == current_user['sub']:
+        if referrer.account_id == current_user.account_id:
             return {
                 "status": "error",
                 "message": "You cannot use your own referral code.",
@@ -329,21 +331,21 @@ async def perform_profile_update(
     request: Request,
     profile: ProfileFinalUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Process a validated profile update"""
     try:
         # Get the current user from database
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+            raise HTTPException(status_code=404, detail=f"User not found")
         
         # Validation logic if it hasn't been skipped
         if not profile.skip_validations:
             # Check if username already exists for another user
             existing_user = db.query(User).filter(
                 User.username == profile.username, 
-                User.sub != current_user['sub']
+                User.account_id != current_user.account_id
             ).first()
             
             if existing_user:
@@ -380,7 +382,7 @@ async def perform_profile_update(
         
         # Update date_of_birth
         user.date_of_birth = profile.date_of_birth
-        logging.info(f"Updating date_of_birth to {profile.date_of_birth} for user with sub: {user.sub}")
+        logging.info(f"Updating date_of_birth to {profile.date_of_birth} for user with account_id: {user.account_id}")
         
         # Update country
         user.country = profile.country 
@@ -398,7 +400,7 @@ async def perform_profile_update(
                             "code": "INVALID_REFERRAL_CODE"
                         }
                     
-                    if referrer.sub == current_user['sub']:
+                    if referrer.account_id == current_user.account_id:
                         return {
                             "status": "error",
                             "message": "You cannot use your own referral code.",
@@ -503,16 +505,16 @@ class BadgeAssignment(BaseModel):
 @router.get("/badges", response_model=List[dict])
 async def get_user_badges(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get the current badge assigned to the user and all available badges
     """
     try:
         # Get the current user
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+            raise HTTPException(status_code=404, detail=f"User not found")
         
         # Get all badges
         badges = db.query(Badge).order_by(Badge.level).all()
@@ -540,16 +542,16 @@ async def get_user_badges(
 async def assign_badge(
     badge_data: BadgeAssignment,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Assign a badge to the user
     """
     try:
         # Get the current user
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+            raise HTTPException(status_code=404, detail=f"User not found")
         
         # Get the badge
         badge = db.query(Badge).filter(Badge.id == badge_data.badge_id).first()
@@ -589,16 +591,16 @@ async def assign_badge(
 @router.post("/remove-badge", status_code=200)
 async def remove_badge(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Remove the current badge from the user
     """
     try:
         # Get the current user
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+            raise HTTPException(status_code=404, detail=f"User not found")
         
         # Check if user has a badge
         if not user.badge_id:
@@ -632,7 +634,7 @@ async def remove_badge(
 @router.get("/gems", status_code=200)
 async def get_user_gems(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get the user's gems count along with their username.
@@ -644,7 +646,7 @@ async def get_user_gems(
         - status: Success indicator
     """
     try:
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
@@ -687,7 +689,7 @@ async def update_extended_profile(
     request: Request,
     profile: ExtendedProfileUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update extended user profile information including contact details and address.
@@ -695,9 +697,9 @@ async def update_extended_profile(
     """
     try:
         # Get the current user from database
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+            raise HTTPException(status_code=404, detail=f"User not found")
         
         # Handle username update (if provided)
         if profile.username:
@@ -714,7 +716,7 @@ async def update_extended_profile(
                 # Check if username already exists for another user
                 existing_user = db.query(User).filter(
                     User.username == profile.username, 
-                    User.sub != current_user['sub']
+                    User.account_id != current_user.account_id
                 ).first()
                 
                 if existing_user:
@@ -731,7 +733,7 @@ async def update_extended_profile(
                 # Update username and mark as updated
                 user.username = profile.username
                 user.username_updated = True
-                logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with sub: {user.sub}")
+                logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with account_id: {user.account_id}")
                 
                 # Update profile picture based on the new username's first letter
                 user.profile_pic_url = get_letter_profile_pic(profile.username, db)
@@ -839,7 +841,7 @@ async def update_extended_profile(
 @router.get("/complete", status_code=200)
 async def get_complete_profile(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get the complete profile information for the current user.
@@ -847,9 +849,9 @@ async def get_complete_profile(
     """
     try:
         # Get the current user from database
-        user = db.query(User).filter(User.sub == current_user['sub']).first()
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail=f"User not found with sub: {current_user['sub']}")
+            raise HTTPException(status_code=404, detail=f"User not found")
         
         # Format the date of birth if it exists
         dob_formatted = user.date_of_birth.isoformat() if user.date_of_birth else None
@@ -928,3 +930,28 @@ async def get_country_codes(
             "message": f"An unexpected error occurred: {str(e)}",
             "code": "UNEXPECTED_ERROR"
         }
+
+@router.post("/change-username")
+def change_username(new_username: str, user=Depends(get_current_user), db=Depends(get_db)):
+    try:
+        # Only allow if user hasn't changed username before (first change free)
+        if user.username_updated:
+            # Require purchase or return error (preserve existing logic)
+            raise HTTPException(status_code=403, detail="Username change not allowed. Please purchase a username change.")
+        # Update in Descope
+        client.mgmt.user.update(
+            user_id=user.descope_user_id,
+            update_data={
+                "displayName": new_username,
+                "name": new_username
+            }
+        )
+        # Update in local DB
+        user.username = new_username
+        user.display_name = new_username
+        user.username_updated = True
+        db.commit()
+        return {"success": True, "username": new_username}
+    except Exception as e:
+        logging.error(f"/change-username error: {e}")
+        raise HTTPException(status_code=400, detail="Something went wrong")

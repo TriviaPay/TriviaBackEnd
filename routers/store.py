@@ -23,12 +23,11 @@ class PurchaseRequest(BaseModel):
     """Model for purchase requests"""
     payment_type: str = Field(
         ...,
-        description="Type of payment to use for the purchase",
-        example="gems"
+        description="Type of payment to use for the purchase"
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "payment_type": "gems"
             }
@@ -45,17 +44,15 @@ class UseBoostRequest(BaseModel):
     """Model for using a gameplay boost"""
     boost_type: str = Field(
         ...,
-        description="Type of boost to use",
-        example="hint"
+        description="Type of boost to use"
     )
     question_number: Optional[int] = Field(
         None,
-        description="Question number to use the boost on",
-        example=1
+        description="Question number to use the boost on"
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "boost_type": "hint",
                 "question_number": 1
@@ -66,12 +63,11 @@ class BuyGemsRequest(BaseModel):
     """Model for buying gems with wallet balance"""
     package_id: int = Field(
         ...,
-        description="ID of the gem package to purchase",
-        example=1
+        description="ID of the gem package to purchase"
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "package_id": 1
             }
@@ -81,27 +77,23 @@ class GemPackageRequest(BaseModel):
     """Model for creating/updating a gem package"""
     price_usd: float = Field(
         ...,
-        description="Price in USD",
-        example=0.99
+        description="Price in USD"
     )
     gems_amount: int = Field(
         ...,
-        description="Number of gems in the package",
-        example=150
+        description="Number of gems in the package"
     )
     is_one_time: bool = Field(
         False,
-        description="Whether this is a one-time offer",
-        example=False
+        description="Whether this is a one-time offer"
     )
     description: Optional[str] = Field(
         None,
-        description="Description of the package",
-        example="Best value!"
+        description="Description of the package"
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "price_usd": 0.99,
                 "gems_amount": 150,
@@ -114,22 +106,19 @@ class BoostConfigRequest(BaseModel):
     """Model for setting boost configuration"""
     boost_type: str = Field(
         ...,
-        description="Type of boost",
-        example="fifty_fifty"
+        description="Type of boost"
     )
     gems_cost: int = Field(
         ...,
-        description="Cost in gems",
-        example=50
+        description="Cost in gems"
     )
     description: Optional[str] = Field(
         None,
-        description="Description of the boost",
-        example="Remove two wrong answers"
+        description="Description of the boost"
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "boost_type": "fifty_fifty",
                 "gems_cost": 50,
@@ -647,6 +636,6 @@ async def delete_boost_config(
     return {"message": f"Boost configuration for {boost_type} deleted successfully"}
 
 @router.get("/items")
-async def get_store_items():
+async def get_store_items(claims: dict = Depends(get_current_user)):
     """Get all available store items"""
     return store_config 

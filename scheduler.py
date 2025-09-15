@@ -1,6 +1,6 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pytz
 from db import SessionLocal
 import logging
@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 import json
 
 from db import get_db
-from rewards_logic import perform_draw, get_draw_time
+from rewards_logic import perform_draw, get_draw_time, reset_monthly_subscriptions
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +48,15 @@ def schedule_draws():
         replace_existing=True,
         misfire_grace_time=3600  # Allow the job to run up to 1 hour late
     )
+    
+    # Schedule monthly subscription reset job (11:59 PM EST on last day of each month)
+    scheduler.add_job(
+        run_monthly_subscription_reset,
+        CronTrigger(day="last", hour=23, minute=59, timezone=timezone),
+        id="monthly_subscription_reset",
+        replace_existing=True,
+        misfire_grace_time=3600  # Allow the job to run up to 1 hour late
+    )
 
 async def run_daily_draw():
     """
@@ -69,6 +78,26 @@ async def run_daily_draw():
         
     except Exception as e:
         logger.error(f"Error running daily draw: {str(e)}")
+    finally:
+        db.close()
+
+async def run_monthly_subscription_reset():
+    """
+    Reset subscription flags for all users at 12:01 AM EST on the last day of each month.
+    This is called automatically by the scheduler.
+    """
+    logger.info("Running monthly subscription reset...")
+    
+    # Create a database session
+    db = next(get_db())
+    try:
+        # Reset subscription flags
+        reset_monthly_subscriptions(db)
+        
+        logger.info("Monthly subscription reset completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error running monthly subscription reset: {str(e)}")
     finally:
         db.close()
 
@@ -142,6 +171,20 @@ def start_scheduler():
         logger.info("Scheduler started")
     else:
         logger.info("Scheduler already running")
+
+def reschedule_draw_time():
+    """
+    Reschedule the daily draw with updated time settings.
+    This should be called when draw time configuration changes.
+    """
+    global scheduler
+    
+    if scheduler is not None:
+        logger.info("Rescheduling daily draw with updated time settings...")
+        schedule_draws()  # This will replace the existing job
+        logger.info("Daily draw rescheduled successfully")
+    else:
+        logger.warning("Scheduler not initialized, cannot reschedule draw")
 
 def stop_scheduler():
     """

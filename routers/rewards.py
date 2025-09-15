@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 from db import get_db
-from models import User, TriviaDrawWinner, TriviaDrawConfig, DailyQuestion, Trivia, Badge, Avatar, Frame, Entry
+from models import User, TriviaDrawWinner, TriviaDrawConfig, UserQuestionAnswer, CompanyRevenue, DailyQuestion, Trivia, Badge, Avatar, Frame, Entry
 from routers.dependencies import get_current_user, get_admin_user
 from sqlalchemy.sql import extract
 import os
@@ -49,135 +49,34 @@ class DrawConfigUpdateRequest(BaseModel):
     draw_time_minute: Optional[int] = Field(None, ge=0, le=59, description="Minute for daily draw (0-59)")
     draw_timezone: Optional[str] = Field(None, description="Timezone for daily draw (e.g., 'US/Eastern')")
 
+# Import unified functions from rewards_logic
+from rewards_logic import (
+    calculate_winner_count, 
+    calculate_prize_distribution, 
+    calculate_prize_pool,
+    get_eligible_participants,
+    reset_daily_eligibility_flags,
+    reset_monthly_subscriptions,
+    update_user_eligibility
+)
+
 # ======== Helper Functions ========
 
-def calculate_winner_count(participant_count: int) -> int:
-    """Calculate the number of winners based on participant count."""
-    if participant_count <= 0:
-        return 0
-    elif participant_count < 50:
-        return 1
-    elif participant_count < 100:
-        return 3
-    elif participant_count < 200:
-        return 5
-    elif participant_count < 300:
-        return 7
-    elif participant_count < 400:
-        return 11
-    elif participant_count < 500:
-        return 13
-    elif participant_count < 600:
-        return 17
-    elif participant_count < 700:
-        return 19
-    elif participant_count < 800:
-        return 23
-    elif participant_count < 900:
-        return 29
-    elif participant_count < 1000:
-        return 31
-    elif participant_count < 1100:
-        return 37
-    elif participant_count < 1200:
-        return 41
-    elif participant_count < 1300:
-        return 43
-    elif participant_count < 2000:
-        return 47
-    else:
-        return 53  # Cap at 53 winners
+# All helper functions are now imported from rewards_logic.py for consistency
 
-def calculate_prize_distribution(total_prize: float, winner_count: int) -> List[float]:
-    """Calculate prize distribution using harmonic sum."""
-    if winner_count <= 0 or total_prize <= 0:
+def get_eligible_users_wrapper(db: Session, draw_date: date) -> List[User]:
+    """
+    Wrapper function that converts the unified get_eligible_participants 
+    to return User objects for compatibility with admin endpoints.
+    """
+    participants = get_eligible_participants(db, draw_date)
+    
+    if not participants:
         return []
     
-    # Calculate harmonic sum (1/1 + 1/2 + 1/3 + ... + 1/n)
-    harmonic_sum = sum(1/i for i in range(1, winner_count + 1))
-    
-    # Calculate individual prizes
-    prizes = [(1/(i+1))/harmonic_sum * total_prize for i in range(winner_count)]
-    
-    # Round to 2 decimal places
-    return [round(prize, 2) for prize in prizes]
-
-def calculate_prize_pool(db: Session, draw_date: date) -> float:
-    """Calculate the prize pool for a specific date."""
-    # Count subscribers
-    subscriber_count = db.query(func.count(User.account_id)).filter(
-        User.subscription_flag == True
-    ).scalar() or 0
-    
-    # Calculate total monthly prize pool
-    monthly_prize_pool = subscriber_count * 3.526
-    
-    # Get days in current month
-    days_in_month = calendar.monthrange(draw_date.year, draw_date.month)[1]
-    
-    # Calculate daily prize pool
-    daily_prize_pool = monthly_prize_pool / days_in_month
-    
-    return round(daily_prize_pool, 2)
-
-def get_eligible_users(db: Session, draw_date: date) -> List[User]:
-    """Get list of eligible users for the draw."""
-    # Log the requested draw date for debugging
-    logging.info(f"Getting eligible users for draw date: {draw_date}")
-    
-    # Get all users for testing
-    all_users = db.query(User).all()
-    logging.info(f"Total users found: {len(all_users)}")
-    
-    # Get subscribed users
-    subscribed_users = db.query(User).filter(User.subscription_flag == True).all()
-    logging.info(f"Users with subscription: {len(subscribed_users)}")
-    
-    eligible_user_ids = []
-    
-    # METHOD 1: Check which users answered correctly in the DailyQuestion table
-    for user in all_users:  # Test with all users first
-        # Log which user we're checking
-        logging.info(f"Checking eligibility for user {user.account_id} ({user.username or 'unknown'})")
-        
-        # Get the start and end of the draw date for comparison
-        start_date = datetime.combine(draw_date, datetime.min.time())
-        end_date = datetime.combine(draw_date, datetime.max.time())
-        
-        # Get daily questions for this user that were answered correctly on the draw date
-        correct_answers = db.query(DailyQuestion).filter(
-            DailyQuestion.account_id == user.account_id,
-            DailyQuestion.date.between(start_date, end_date),
-            DailyQuestion.is_used == True,
-            DailyQuestion.is_correct == True
-        ).count()
-        
-        logging.info(f"Method 1: User {user.account_id} has {correct_answers} correct answers in DailyQuestion on {draw_date}")
-        
-        # METHOD 2: Check the Entry table as an alternative
-        entry = db.query(Entry).filter(
-            Entry.account_id == user.account_id,
-            Entry.date == draw_date,
-            Entry.correct_answers > 0
-        ).first()
-        
-        entry_correct = entry is not None and entry.correct_answers > 0
-        logging.info(f"Method 2: User {user.account_id} has Entry with correct_answers > 0: {entry_correct}")
-        
-        # User is eligible if either method shows they answered correctly
-        if correct_answers > 0 or entry_correct:
-            eligible_user_ids.append(user.account_id)
-            logging.info(f"User {user.account_id} is eligible for the draw")
-    
-    # Return list of eligible users
-    eligible_users = db.query(User).filter(User.account_id.in_(eligible_user_ids)).all()
-    logging.info(f"Found {len(eligible_users)} eligible users for the draw")
-    
-    # FOR TESTING: If no eligible users found, just return a few random users
-    if not eligible_users and all_users:
-        test_users = all_users[:min(3, len(all_users))]
-        logging.warning(f"No eligible users found. Returning {len(test_users)} test users for debugging.")
-        return test_users
+    # Extract account IDs and query User objects
+    account_ids = [p["account_id"] for p in participants]
+    eligible_users = db.query(User).filter(User.account_id.in_(account_ids)).all()
     
     return eligible_users
 
@@ -483,8 +382,8 @@ async def trigger_draw(
                 detail=f"A draw has already been performed for {target_date}"
             )
         
-        # Get eligible users
-        eligible_users = get_eligible_users(db, target_date)
+        # Get eligible users using unified logic
+        eligible_users = get_eligible_users_wrapper(db, target_date)
         participant_count = len(eligible_users)
         
         logging.info(f"Found {participant_count} eligible participants for the draw")
@@ -498,108 +397,39 @@ async def trigger_draw(
                 prize_pool=0
             )
         
-        # Get draw configuration
-        config = db.query(TriviaDrawConfig).first()
-        logging.info(f"Using draw config: is_custom={config.is_custom if config else False}, custom_winner_count={config.custom_winner_count if config else None}")
-    
-        # Determine number of winners
-        if config and config.is_custom and config.custom_winner_count is not None:
-            winner_count = min(config.custom_winner_count, participant_count)
-            logging.info(f"Using custom winner count: {winner_count}")
-        else:
-            winner_count = calculate_winner_count(participant_count)
-            logging.info(f"Using calculated winner count: {winner_count}")
+        # Use the unified perform_draw logic from rewards_logic
+        from rewards_logic import perform_draw
         
-        # Calculate prize pool
-        prize_pool = calculate_prize_pool(db, target_date)
-        logging.info(f"Prize pool for draw: ${prize_pool}")
+        result = perform_draw(db, target_date)
         
-        # Calculate prize distribution
-        prizes = calculate_prize_distribution(prize_pool, winner_count)
-        logging.info(f"Prize distribution: {prizes}")
-        
-        # Select winners randomly
-        if participant_count <= winner_count:
-            # If there are fewer participants than winners, everyone wins
-            winners = eligible_users
-            logging.info("All participants selected as winners (fewer participants than winner slots)")
-        else:
-            # Otherwise, randomly select winners
-            winners = random.sample(eligible_users, winner_count)
-            logging.info(f"Randomly selected {winner_count} winners from {participant_count} participants")
-        
-        # Save winners to database
-        winner_responses = []
-        
-        for i, winner in enumerate(winners):
-            if i < len(prizes):
-                prize_amount = prizes[i]
-                logging.info(f"Processing winner {i+1}: User {winner.account_id} ({winner.username}), prize: ${prize_amount}")
-                
-                # Save to database
-                draw_winner = TriviaDrawWinner(
-                    account_id=winner.account_id,
-                    prize_amount=prize_amount,
-                    position=i+1,
-                    draw_date=target_date
+        if result["status"] != "success":
+            if result["status"] == "no_participants":
+                return DrawResponse(
+                    total_participants=0,
+                    total_winners=0,
+                    winners=[],
+                    prize_pool=0
                 )
-                db.add(draw_winner)
-                
-                # Update user's wallet balance
-                winner.wallet_balance = (winner.wallet_balance or 0) + prize_amount
-                winner.last_wallet_update = datetime.utcnow()
-                
-                # Get total amount won by this user all-time
-                total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-                    TriviaDrawWinner.account_id == winner.account_id
-                ).scalar() or 0
-                total_won += prize_amount
-                
-                # Get image URLs only
-                badge_image_url = None
-                if hasattr(winner, 'badge_info') and winner.badge_info:
-                    badge_image_url = winner.badge_image_url
-                
-                # Get avatar URL
-                avatar_url = None
-                if hasattr(winner, 'selected_avatar_id') and winner.selected_avatar_id:
-                    avatar_query = text("""
-                        SELECT image_url FROM avatars 
-                        WHERE id = :avatar_id
-                    """)
-                    avatar_result = db.execute(avatar_query, {"avatar_id": winner.selected_avatar_id}).first()
-                    if avatar_result:
-                        avatar_url = avatar_result[0]
-                
-                # Get frame URL
-                frame_url = None
-                if hasattr(winner, 'selected_frame_id') and winner.selected_frame_id:
-                    frame_query = text("""
-                        SELECT image_url FROM frames 
-                        WHERE id = :frame_id
-                    """)
-                    frame_result = db.execute(frame_query, {"frame_id": winner.selected_frame_id}).first()
-                    if frame_result:
-                        frame_url = frame_result[0]
-                
-                winner_responses.append(WinnerResponse(
-                    username=winner.username or f"User{winner.account_id}",
-                    amount_won=prize_amount,
-                    total_amount_won=total_won,
-                    badge_image_url=badge_image_url,
-                    avatar_url=avatar_url,
-                    frame_url=frame_url,
-                    position=i+1
-                ))
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=result.get("message", f"Draw failed with status: {result['status']}")
+                )
         
-        db.commit()
-        logging.info(f"Draw completed successfully with {len(winner_responses)} winners")
+        # Convert result to response format
+        winner_responses = []
+        for winner_data in result["winners"]:
+            winner_responses.append(WinnerResponse(
+                username=winner_data["username"] or "Unknown",
+                amount_won=winner_data["prize_amount"],
+                position=winner_data["position"]
+            ))
         
         return DrawResponse(
-            total_participants=participant_count,
-            total_winners=len(winner_responses),
+            total_participants=result["total_participants"],
+            total_winners=result["total_winners"],
             winners=winner_responses,
-            prize_pool=prize_pool
+            prize_pool=result["prize_pool"]
         )
         
     except HTTPException:

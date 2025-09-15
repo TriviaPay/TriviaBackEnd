@@ -1,21 +1,26 @@
 from datetime import datetime, timedelta
 import pytz
+import os
 
 def get_next_draw_time():
     """
-    Calculates the next draw time: the last day of the current month at 8 PM EST.
+    Calculates the next draw time based on the current time.
+    Returns the next occurrence of the daily draw time (default 8 PM EST).
     """
-    # Get current time in EST
-    est = pytz.timezone("US/Eastern")
-    now = datetime.now(est)
-
-    # Calculate the first day of the next month
-    first_of_next_month = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
-
-    # Calculate the last day of the current month
-    last_day_of_this_month = first_of_next_month - timedelta(days=1)
-
-    # Set draw time to 8 PM EST on the last day of the current month
-    draw_time = last_day_of_this_month.replace(hour=20, minute=0, second=0, microsecond=0)
-
+    # Get draw time settings from environment
+    draw_hour = int(os.environ.get("DRAW_TIME_HOUR", "20"))  # Default 8 PM
+    draw_minute = int(os.environ.get("DRAW_TIME_MINUTE", "0"))  # Default 0 minutes
+    timezone_str = os.environ.get("DRAW_TIMEZONE", "US/Eastern")  # Default EST
+    
+    # Get current time in configured timezone
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    
+    # Create today's draw time
+    draw_time = now.replace(hour=draw_hour, minute=draw_minute, second=0, microsecond=0)
+    
+    # If we've passed today's draw time, move to tomorrow
+    if now >= draw_time:
+        draw_time = draw_time + timedelta(days=1)
+    
     return draw_time 

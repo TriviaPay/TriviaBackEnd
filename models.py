@@ -1,10 +1,17 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date
+    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from db import Base
 from datetime import datetime, date
 import random
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+def generate_account_id():
+    """Generate a 10-digit random unique number."""
+    return int("".join(str(random.randint(0, 9)) for _ in range(10)))
 
 # =================================
 #  Users Table
@@ -12,8 +19,11 @@ import random
 class User(Base):
     __tablename__ = "users"
 
-    account_id = Column(BigInteger, primary_key=True, index=True)
+    account_id = Column(BigInteger, primary_key=True, unique=True, index=True, nullable=False, default=generate_account_id)
+    descope_user_id = Column(String, unique=True, index=True, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, unique=True, index=True, nullable=False)
+    display_name = Column(String, nullable=True)
     mobile = Column(String, nullable=True)
     country_code = Column(String, nullable=True)
     first_name = Column(String, nullable=True)
@@ -39,18 +49,18 @@ class User(Base):
     is_admin = Column(Boolean, default=False)  # Added is_admin field
 
     subscriber_number = Column(String, nullable=True)
-    username = Column(String, nullable=True, unique=True)
     username_updated = Column(Boolean, default=False)  # Track if username has been updated before
     subscription_flag = Column(Boolean, default=False)
     sign_up_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    refresh_token = Column(String, nullable=True)
-    sub = Column(String, nullable=True, unique=True)  # Auth0 sub claim
     
     # Added fields for trivia game
     gems = Column(Integer, default=0)  # Track user's gems
     streaks = Column(Integer, default=0)  # Track user's streaks
     lifeline_changes_remaining = Column(Integer, default=3)  # Track remaining question changes
     last_streak_date = Column(DateTime, nullable=True)  # To track daily streaks
+    
+    # Daily draw eligibility tracking
+    daily_eligibility_flag = Column(Boolean, default=False)  # True if user answered all 3 questions correctly today
 
     # Badge fields
     badge_id = Column(String, ForeignKey("badges.id"), nullable=True)  # Reference to badge ID
@@ -60,6 +70,9 @@ class User(Base):
     wallet_balance = Column(Float, default=0.0)  # User's wallet balance
     total_spent = Column(Float, default=0.0)  # Total amount spent in the app
     last_wallet_update = Column(DateTime, nullable=True)  # Last time wallet was updated
+
+    # Stripe integration fields
+    stripe_customer_id = Column(String, nullable=True, index=True)  # Stripe customer ID for payment methods
 
     # Store purchased items
     owned_cosmetics = Column(String, nullable=True)  # JSON string of owned cosmetic items
@@ -80,10 +93,6 @@ class User(Base):
     subscriptions = relationship("UserSubscription", back_populates="user")
     # You could add a relationship for Comments, Chats, or Withdrawals if needed
     # (depending on whether they link to a user table).
-
-def generate_account_id():
-    """Generate a 10-digit random unique number."""
-    return int("".join(str(random.randint(0, 9)) for _ in range(10)))
 
 # =================================
 #  Entries Table
@@ -586,3 +595,33 @@ class UserSubscription(Base):
     # Relationships
     user = relationship("User", back_populates="subscriptions")
     plan = relationship("SubscriptionPlan", backref="subscribers")
+
+# =================================
+#  User Question Answers Table
+# =================================
+class UserQuestionAnswer(Base):
+    __tablename__ = "user_question_answers"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    question_number = Column(Integer, nullable=False)
+    selected_answer = Column(String, nullable=False)
+    is_correct = Column(Boolean, nullable=False)
+    answered_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    date = Column(Date, nullable=False)  # Date when the question was answered
+    
+    # Relationships
+    user = relationship("User", backref="question_answers")
+
+# =================================
+#  Company Revenue Table (Monthly)
+# =================================
+class CompanyRevenue(Base):
+    __tablename__ = "company_revenue"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    month_start_date = Column(Date, nullable=False, unique=True)  # First day of the month
+    revenue_amount = Column(Float, nullable=False)
+    subscriber_count = Column(Integer, nullable=False)  # Number of subscribers that month
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
