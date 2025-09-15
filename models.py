@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint
+    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint, Text
 )
 from sqlalchemy.orm import relationship
 from db import Base
@@ -75,8 +75,8 @@ class User(Base):
     stripe_customer_id = Column(String, nullable=True, index=True)  # Stripe customer ID for payment methods
 
     # Store purchased items
-    owned_cosmetics = Column(String, nullable=True)  # JSON string of owned cosmetic items
-    owned_boosts = Column(String, nullable=True)  # JSON string of owned boost items
+    owned_cosmetics = Column(Text, nullable=True)  # JSON string of owned cosmetic items
+    owned_boosts = Column(Text, nullable=True)  # JSON string of owned boost items
     
     # Cosmetic selections
     selected_avatar_id = Column(String, nullable=True)  # Currently selected avatar ID
@@ -497,7 +497,7 @@ class Letter(Base):
     __tablename__ = "letters"
     
     letter = Column(String, primary_key=True)
-    image_url = Column(String, nullable=True)
+    image_url = Column(String, nullable=False)
 
 # =================================
 #  Country Codes Table
