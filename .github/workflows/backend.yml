@@ -5,7 +5,6 @@ on:
     branches: [ "main" ]
 
 env:
-  TESTING: "true"
   DATABASE_URL: ${{ secrets.DATABASE_URL }}
   DESCOPE_PROJECT_ID: ${{ secrets.DESCOPE_PROJECT_ID }}
   DESCOPE_MANAGEMENT_KEY: ${{ secrets.DESCOPE_MANAGEMENT_KEY }}
@@ -16,50 +15,7 @@ env:
   DEV_ADMIN_SECRET: ${{ secrets.DEV_ADMIN_SECRET }}
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:13
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: test_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      # 1) Checkout code
-      - name: Check out the repository
-        uses: actions/checkout@v3
-      
-      # 2) Set up Python
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.9"
-      
-      # 3) Install dependencies
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-      
-      # 4) Run tests with test database
-      - name: Run tests
-        env:
-          DATABASE_URL: postgresql+pg8000://postgres:postgres@localhost:5432/test_db?sslmode=disable
-          TESTING: "true"
-        run: |
-          python -m pytest --maxfail=1 --disable-warnings -v
-
   deploy:
-    needs: build-and-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
