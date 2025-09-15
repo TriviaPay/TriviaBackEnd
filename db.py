@@ -1,11 +1,11 @@
 import os
 import re
-from sqlalchemy import create_engine, exc
+import ssl
+from sqlalchemy import create_engine, MetaData
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
 from contextlib import contextmanager
-import logging
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -13,69 +13,93 @@ load_dotenv()
 # Database connection string
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Check if we're in a testing environment
+TESTING = os.getenv("TESTING", "false").lower() == "true"
+
 if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set")
+    if TESTING:
+        # In testing environment, use SQLite in-memory database as fallback
+        DATABASE_URL = "sqlite:///:memory:"
+        print("⚠️  Using in-memory SQLite database for testing")
+    else:
+        raise ValueError("DATABASE_URL environment variable is not set")
 
-# If using Heroku/Vercel, convert the postgres:// URL to postgresql://
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Only apply PostgreSQL-specific modifications if we're actually using PostgreSQL
+if DATABASE_URL and not DATABASE_URL.startswith("sqlite"):
+    # If using Heroku/Vercel, convert the postgres:// URL to postgresql://
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Modify URL to use pg8000 instead of psycopg2
-if "postgresql" in DATABASE_URL and "driver=" not in DATABASE_URL:
-    # Extract all parts of the connection URL
-    pattern = r'postgresql://([^:]+):([^@]+)@([^:/]+):?(\d*)/?([^?]*)'
-    match = re.match(pattern, DATABASE_URL)
-    
-    if match:
-        username, password, host, port, dbname = match.groups()
-        if not port:
-            port = "5432"  # Default PostgreSQL port
+    # Modify URL to use pg8000 instead of psycopg2
+    if "postgresql" in DATABASE_URL and "driver=" not in DATABASE_URL:
+        # Extract all parts of the connection URL
+        pattern = r'postgresql://([^:]+):([^@]+)@([^:/]+):?(\d*)/?([^?]*)'
+        match = re.match(pattern, DATABASE_URL)
         
-        # Construct a new URL with the pg8000 driver
-        # For pg8000 1.30.1, using connect_args instead of URL parameters
-        DATABASE_URL = f"postgresql+pg8000://{username}:{password}@{host}:{port}/{dbname}"
-        logging.info(f"Using pg8000 driver with URL: {DATABASE_URL.replace(password, '****')}")
+        if match:
+            username, password, host, port, dbname = match.groups()
+            
+            # Default port if not specified
+            if not port:
+                port = "5432"
+                
+            # Reconstruct URL with pg8000 driver (without URL-level SSL params)
+            DATABASE_URL = f"postgresql+pg8000://{username}:{password}@{host}:{port}/{dbname}"
 
-# Create SQLAlchemy engine with connection pooling
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
-    pool_recycle=1800,  # Recycle connections after 30 minutes
-    pool_pre_ping=True,  # Enable connection health checks
-    # For pg8000 1.30.1, use the correct connect_args format
-    connect_args={
-        "ssl_context": True  # This is the correct parameter for pg8000 1.30.1
-    }
-)
+# Create engine with appropriate settings
+if DATABASE_URL.startswith("sqlite"):
+    # SQLite settings for testing
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        connect_args={"check_same_thread": False}
+    )
+else:
+    # PostgreSQL settings with SSL support for pg8000
+    # Create SSL context for NeonDB
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+    
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+        echo=False,
+        pool_recycle=300,
+        connect_args={
+            "ssl_context": ssl_context  # Use ssl_context for pg8000
+        }
+    )
 
-# Create session maker for database interactions
+# Create SessionLocal class
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Base class for ORM models
+# Create Base class
 Base = declarative_base()
 
 def get_db():
+    """Dependency to get database session"""
     db = SessionLocal()
     try:
         yield db
-    except exc.SQLAlchemyError as e:
-        db.rollback()
-        raise exc.SQLAlchemyError(f"Database error: {str(e)}")
     finally:
         db.close()
 
-
-def verify_db_connection():
-    """
-    Verify database connection is working.
-    Returns True if connection is successful, False otherwise.
-    """
+@contextmanager
+def get_db_context():
+    """Context manager for database sessions"""
+    db = SessionLocal()
     try:
-        with engine.connect() as connection:
-            connection.execute("SELECT 1")
-        return True
-    except Exception as e:
-        logging.error(f"Database connection error: {str(e)}")
-        return False
+        yield db
+    finally:
+        db.close()
+
+def create_tables():
+    """Create all tables"""
+    Base.metadata.create_all(bind=engine)
+
+def drop_tables():
+    """Drop all tables"""
+    Base.metadata.drop_all(bind=engine)
