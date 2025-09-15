@@ -1,21 +1,19 @@
 fastapi==0.109.2
-uvicorn==0.25.0
+uvicorn==0.27.1
 sqlalchemy==2.0.27
-python-jose[cryptography]==3.3.0
-cryptography==41.0.7
-pydantic==2.6.4
-python-multipart==0.0.7
-passlib==1.7.4
-python-dotenv==1.0.0
 alembic==1.13.1
-requests==2.31.0
-# Use pg8000 instead of psycopg2 - pure Python PostgreSQL driver
-pg8000==1.30.5
-pytz==2023.3.post1
-apscheduler==3.10.4
-# Additional dependencies you might need
-email-validator==2.1.0.post1
+python-dotenv==1.0.1
+passlib==1.7.4
 bcrypt==4.1.2
-stripe==12.0.1
-descope
-pytest
+python-jose==3.3.0
+python-multipart==0.0.9
+descope==1.6.0
+stripe==8.4.0
+pg8000==1.30.5  # Pure Python PostgreSQL driver
+apscheduler==3.10.4
+pytz==2024.1
+tzlocal==5.2
+pydantic==2.6.1
+pydantic-settings==2.1.0
+pytest==8.3.5
+pytest-asyncio==1.2.0
