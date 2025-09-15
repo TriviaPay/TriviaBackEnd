@@ -6,6 +6,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
 from dotenv import load_dotenv
+import urllib.parse
 
 # Load environment variables
 load_dotenv()
@@ -30,6 +31,13 @@ if DATABASE_URL and not DATABASE_URL.startswith("sqlite"):
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+    # Parse the URL to extract any query parameters
+    parsed = urllib.parse.urlparse(DATABASE_URL)
+    query_params = urllib.parse.parse_qs(parsed.query)
+    
+    # Get SSL mode from URL or default based on environment
+    ssl_mode = query_params.get('sslmode', [None])[0]
+    
     # Modify URL to use pg8000 instead of psycopg2
     if "postgresql" in DATABASE_URL and "driver=" not in DATABASE_URL:
         # Extract all parts of the connection URL
@@ -56,10 +64,18 @@ if DATABASE_URL.startswith("sqlite"):
     )
 else:
     # PostgreSQL settings with SSL support for pg8000
-    # Create SSL context for NeonDB
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
+    connect_args = {}
+    
+    # Handle SSL configuration based on environment and URL parameters
+    if ssl_mode == 'disable' or TESTING:
+        # No SSL for testing or when explicitly disabled
+        pass
+    elif ssl_mode == 'require' or not ssl_mode:
+        # Use SSL for production (default) or when explicitly required
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        connect_args["ssl_context"] = ssl_context
     
     engine = create_engine(
         DATABASE_URL,
@@ -68,9 +84,7 @@ else:
         pool_pre_ping=True,
         echo=False,
         pool_recycle=300,
-        connect_args={
-            "ssl_context": ssl_context  # Use ssl_context for pg8000
-        }
+        connect_args=connect_args
     )
 
 # Create SessionLocal class
