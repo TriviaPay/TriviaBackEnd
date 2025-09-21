@@ -114,6 +114,8 @@ app.include_router(rewards.router)   # Rewards system
 app.include_router(winners.router)   # Winner views
 app.include_router(admin.router)     # Admin controls
 app.include_router(stripe.router)    # Stripe-related endpoints
+app.include_router(updates.router)   # Live updates
+app.include_router(entries.router)   # Entries management
 
 @app.on_event("startup")
 async def startup_event():
