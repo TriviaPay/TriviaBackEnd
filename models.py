@@ -205,6 +205,8 @@ class LiveUpdate(Base):
     id = Column(Integer, primary_key=True, index=True)
     video_url = Column(String, nullable=False)
     description = Column(String, nullable=True)
+    share_text = Column(String, nullable=True)  # Text for sharing
+    app_link = Column(String, nullable=True)    # App link for sharing
     created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 

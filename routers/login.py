@@ -413,10 +413,16 @@ async def dev_verify_otp(
         elif hasattr(response, 'sessionJwt'):
             session_jwt = response.sessionJwt
         elif isinstance(response, dict):
-            session_jwt = (response.get("sessionJwt") or 
-                          response.get("session_jwt") or 
-                          response.get("jwt") or
-                          response.get("token"))
+            # Check for nested sessionToken structure first
+            if "sessionToken" in response and isinstance(response["sessionToken"], dict):
+                session_jwt = response["sessionToken"].get("jwt")
+            
+            # Fallback to direct keys
+            if not session_jwt:
+                session_jwt = (response.get("sessionJwt") or 
+                              response.get("session_jwt") or 
+                              response.get("jwt") or
+                              response.get("token"))
         elif hasattr(response, '__dict__'):
             # If it's an object, try to access its attributes
             resp_dict = response.__dict__
@@ -430,7 +436,7 @@ async def dev_verify_otp(
             resp_str = str(response)
             if len(resp_str) > 50 and resp_str.startswith('eyJ'):  # JWT tokens start with eyJ
                 session_jwt = resp_str
-            
+        
         if not session_jwt:
             raise HTTPException(status_code=502, detail=f"No session JWT found in response. Response type: {type(response)}, Response: {response}")
             
