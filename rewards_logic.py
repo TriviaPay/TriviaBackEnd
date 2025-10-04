@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, and_, or_
 import pytz
 
-from models import User, TriviaDrawWinner, TriviaDrawConfig, UserQuestionAnswer, CompanyRevenue, Entry, Badge, Avatar, Frame
+from models import User, TriviaQuestionsWinners, TriviaDrawConfig, TriviaQuestionsAnswers, CompanyRevenue, TriviaQuestionsEntries, Badge, Avatar, Frame
 from db import get_db
 
 # Configure logging
@@ -200,8 +200,8 @@ def perform_draw(db: Session, draw_date: date) -> Dict[str, Any]:
     logger.info(f"Performing draw for date: {draw_date}")
     
     # Check if a draw has already been performed for this date
-    existing_draw = db.query(TriviaDrawWinner).filter(
-        TriviaDrawWinner.draw_date == draw_date
+    existing_draw = db.query(TriviaQuestionsWinners).filter(
+        TriviaQuestionsWinners.draw_date == draw_date
     ).first()
     
     if existing_draw:
@@ -262,7 +262,7 @@ def perform_draw(db: Session, draw_date: date) -> Dict[str, Any]:
         position = i + 1
         prize_amount = prizes[i] if i < len(prizes) else 0
         
-        winner_record = TriviaDrawWinner(
+        winner_record = TriviaQuestionsWinners(
             account_id=winner["account_id"],
             prize_amount=prize_amount,
             position=position,
@@ -322,28 +322,28 @@ def get_daily_winners(db: Session, specific_date: Optional[date] = None) -> List
         List of winners with details including username, badge, frame, avatar, 
         amount won that day, and total amount won all-time.
     """
-    query = db.query(TriviaDrawWinner).join(User)
+    query = db.query(TriviaQuestionsWinners).join(User)
     
     if specific_date:
         # Filter by specific date
-        query = query.filter(TriviaDrawWinner.draw_date == specific_date)
+        query = query.filter(TriviaQuestionsWinners.draw_date == specific_date)
     else:
         # Get most recent draw date
-        most_recent_date = db.query(func.max(TriviaDrawWinner.draw_date)).scalar()
+        most_recent_date = db.query(func.max(TriviaQuestionsWinners.draw_date)).scalar()
         if not most_recent_date:
             return []
-        query = query.filter(TriviaDrawWinner.draw_date == most_recent_date)
+        query = query.filter(TriviaQuestionsWinners.draw_date == most_recent_date)
     
     # Order by position
-    winners = query.order_by(TriviaDrawWinner.position).all()
+    winners = query.order_by(TriviaQuestionsWinners.position).all()
     
     result = []
     for winner in winners:
         user = winner.user
         
         # Get total amount won by this user all-time
-        total_amount = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-            TriviaDrawWinner.account_id == user.account_id
+        total_amount = db.query(func.sum(TriviaQuestionsWinners.prize_amount)).filter(
+            TriviaQuestionsWinners.account_id == user.account_id
         ).scalar() or 0.0
         
         # Get user details
@@ -391,10 +391,10 @@ def update_user_eligibility(db: Session, user_account_id: int, draw_date: date) 
     and update their daily_eligibility_flag accordingly.
     """
     # Count correct answers for the user on the given date
-    correct_answers = db.query(UserQuestionAnswer).filter(
-        UserQuestionAnswer.account_id == user_account_id,
-        UserQuestionAnswer.date == draw_date,
-        UserQuestionAnswer.is_correct == True
+    correct_answers = db.query(TriviaQuestionsAnswers).filter(
+        TriviaQuestionsAnswers.account_id == user_account_id,
+        TriviaQuestionsAnswers.date == draw_date,
+        TriviaQuestionsAnswers.is_correct == True
     ).count()
     
     # Update eligibility flag if user answered 1 question correctly
@@ -422,18 +422,18 @@ def get_weekly_winners(db: Session) -> List[Dict[str, Any]]:
     # Get all winners from the past week
     winners_past_week = db.query(
         User,
-        func.sum(TriviaDrawWinner.prize_amount).label("weekly_amount")
+        func.sum(TriviaQuestionsWinners.prize_amount).label("weekly_amount")
     ).join(
-        TriviaDrawWinner, User.account_id == TriviaDrawWinner.account_id
+        TriviaQuestionsWinners, User.account_id == TriviaQuestionsWinners.account_id
     ).filter(
-        TriviaDrawWinner.draw_date.between(start_date, end_date)
+        TriviaQuestionsWinners.draw_date.between(start_date, end_date)
     ).group_by(User.account_id).order_by(desc("weekly_amount")).limit(10).all()
     
     result = []
     for user, weekly_amount in winners_past_week:
         # Get total amount won by this user all-time
-        total_amount = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-            TriviaDrawWinner.account_id == user.account_id
+        total_amount = db.query(func.sum(TriviaQuestionsWinners.prize_amount)).filter(
+            TriviaQuestionsWinners.account_id == user.account_id
         ).scalar() or 0.0
         
         # Get user details
@@ -462,9 +462,9 @@ def get_all_time_winners(db: Session, limit: int = 10) -> List[Dict[str, Any]]:
     # Get all-time winners
     all_time_winners = db.query(
         User,
-        func.sum(TriviaDrawWinner.prize_amount).label("total_amount")
+        func.sum(TriviaQuestionsWinners.prize_amount).label("total_amount")
     ).join(
-        TriviaDrawWinner, User.account_id == TriviaDrawWinner.account_id
+        TriviaQuestionsWinners, User.account_id == TriviaQuestionsWinners.account_id
     ).group_by(User.account_id).order_by(desc("total_amount")).limit(limit).all()
     
     result = []
@@ -494,9 +494,9 @@ def get_all_day_wise_winners(db: Session, days_limit: int = 30) -> List[Dict[str
           (username, avatar, frame, badge, amount won)
     """
     # Get the distinct draw dates ordered by most recent first
-    distinct_dates = db.query(TriviaDrawWinner.draw_date)\
+    distinct_dates = db.query(TriviaQuestionsWinners.draw_date)\
         .distinct()\
-        .order_by(TriviaDrawWinner.draw_date.desc())\
+        .order_by(TriviaQuestionsWinners.draw_date.desc())\
         .limit(days_limit)\
         .all()
     
@@ -529,8 +529,8 @@ def get_top_recent_winners(db: Session, limit: int = 5) -> List[Dict[str, Any]]:
         amount won, position, and the date they won.
     """
     # Get the most recent winners ordered by draw date (newest first)
-    recent_winners = db.query(TriviaDrawWinner).join(User)\
-        .order_by(TriviaDrawWinner.draw_date.desc(), TriviaDrawWinner.position)\
+    recent_winners = db.query(TriviaQuestionsWinners).join(User)\
+        .order_by(TriviaQuestionsWinners.draw_date.desc(), TriviaQuestionsWinners.position)\
         .limit(limit)\
         .all()
     
@@ -539,8 +539,8 @@ def get_top_recent_winners(db: Session, limit: int = 5) -> List[Dict[str, Any]]:
         user = winner.user
         
         # Get total amount won by this user all-time
-        total_amount = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-            TriviaDrawWinner.account_id == user.account_id
+        total_amount = db.query(func.sum(TriviaQuestionsWinners.prize_amount)).filter(
+            TriviaQuestionsWinners.account_id == user.account_id
         ).scalar() or 0.0
         
         # Get user details

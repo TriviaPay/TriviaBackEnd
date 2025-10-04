@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 from db import get_db
-from models import User, TriviaDrawWinner, TriviaDrawConfig, UserQuestionAnswer, CompanyRevenue, DailyQuestion, Trivia, Badge, Avatar, Frame, Entry
+from models import User, TriviaQuestionsWinners, TriviaDrawConfig, TriviaQuestionsAnswers, CompanyRevenue, TriviaQuestionsDaily, Trivia, Badge, Avatar, Frame, TriviaQuestionsEntries
 from routers.dependencies import get_current_user, get_admin_user
 from sqlalchemy.sql import extract
 import os
@@ -101,18 +101,18 @@ async def get_daily_winners(
             target_date = (datetime.now(est) - timedelta(days=1)).date()
 
         # Get winners for the specified date
-        winners = db.query(TriviaDrawWinner, User).join(
-            User, TriviaDrawWinner.account_id == User.account_id
+        winners = db.query(TriviaQuestionsWinners, User).join(
+            User, TriviaQuestionsWinners.account_id == User.account_id
         ).filter(
-            TriviaDrawWinner.draw_date == target_date
-        ).order_by(TriviaDrawWinner.position).all()
+            TriviaQuestionsWinners.draw_date == target_date
+        ).order_by(TriviaQuestionsWinners.position).all()
 
         result = []
         
         for winner, user in winners:
             # Calculate total amount won by user all-time
-            total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-                TriviaDrawWinner.account_id == user.account_id
+            total_won = db.query(func.sum(TriviaQuestionsWinners.prize_amount)).filter(
+                TriviaQuestionsWinners.account_id == user.account_id
             ).scalar() or 0
             
             # Get badge information
@@ -212,8 +212,8 @@ async def get_weekly_winners(
                 continue
             
             # Calculate total amount won by user all-time
-            total_won = db.query(func.sum(TriviaDrawWinner.prize_amount)).filter(
-                TriviaDrawWinner.account_id == user.account_id
+            total_won = db.query(func.sum(TriviaQuestionsWinners.prize_amount)).filter(
+                TriviaQuestionsWinners.account_id == user.account_id
             ).scalar() or 0
             
             # Get badge information
@@ -371,8 +371,8 @@ async def trigger_draw(
         logging.info(f"Triggering draw for date: {target_date}")
         
         # Check if a draw has already been performed for this date
-        existing_draw = db.query(TriviaDrawWinner).filter(
-            TriviaDrawWinner.draw_date == target_date
+        existing_draw = db.query(TriviaQuestionsWinners).filter(
+            TriviaQuestionsWinners.draw_date == target_date
         ).first()
         
         if existing_draw:

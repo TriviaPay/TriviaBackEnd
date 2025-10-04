@@ -109,7 +109,6 @@ async def update_profile(
                 # Update referrer's count and mark current user as referred
                 referrer.referral_count += 1
                 user.referred_by = profile.referral_code
-                user.is_referred = True
                 logging.info(f"Successfully applied referral code: {profile.referral_code} from user {referrer.username}")
             except IntegrityError:
                 db.rollback()
@@ -159,7 +158,7 @@ async def update_profile(
                 "data": {
                     "username": user.username,
                     "referral_code": user.referral_code,
-                    "is_referred": user.is_referred,
+                    "is_referred": bool(user.referred_by),
                     "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
                     "country": user.country,
                     "username_updated": user.username_updated
@@ -274,7 +273,7 @@ async def validate_referral_code(
             raise HTTPException(status_code=404, detail=f"User not found")
         
         # Check if user already has a referral code applied
-        if user.is_referred:
+        if user.referred_by:
             return {
                 "status": "error",
                 "message": "You have already used a referral code.",
@@ -414,7 +413,6 @@ async def perform_profile_update(
                     # Update referrer's count and mark current user as referred
                     referrer.referral_count += 1
                     user.referred_by = profile.referral_code
-                    user.is_referred = True
                     logging.info(f"Successfully applied referral code: {profile.referral_code} from user {referrer.username}")
             except IntegrityError:
                 db.rollback()
@@ -464,7 +462,7 @@ async def perform_profile_update(
                 "data": {
                     "username": user.username,
                     "referral_code": user.referral_code,
-                    "is_referred": user.is_referred,
+                    "is_referred": bool(user.referred_by),
                     "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
                     "country": user.country,
                     "username_updated": user.username_updated
@@ -884,7 +882,7 @@ async def get_complete_profile(
                 "profile_pic_url": user.profile_pic_url,
                 "username_updated": user.username_updated,
                 "referral_code": user.referral_code,
-                "is_referred": user.is_referred
+                "is_referred": bool(user.referred_by)
             }
         }
     except HTTPException:
@@ -948,7 +946,6 @@ def change_username(new_username: str, user=Depends(get_current_user), db=Depend
         )
         # Update in local DB
         user.username = new_username
-        user.display_name = new_username
         user.username_updated = True
         db.commit()
         return {"success": True, "username": new_username}

@@ -9,7 +9,7 @@ from pathlib import Path as FilePath
 from sqlalchemy.sql import func
 
 from db import get_db
-from models import User, Trivia, DailyQuestion, GemPackageConfig, BoostConfig, UserGemPurchase
+from models import User, Trivia, TriviaQuestionsDaily, GemPackageConfig, BoostConfig, UserGemPurchase
 from routers.dependencies import get_current_user, get_admin_user
 
 router = APIRouter(prefix="/store", tags=["Store"])
@@ -221,11 +221,10 @@ def validate_and_process_cosmetic_purchase(
 async def purchase_cosmetic(
     item_id: str = Path(..., description="ID of the cosmetic item to purchase", example="avatar_pack"),
     purchase: PurchaseRequest = Body(..., description="Purchase details"),
-    claims: dict = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Purchase a cosmetic item"""
-    user = db.query(User).filter(User.sub == claims.get("sub")).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -239,12 +238,10 @@ async def purchase_cosmetic(
 @router.post("/gameplay-boosts", response_model=Dict[str, Any])
 async def use_gameplay_boost(
     request: UseBoostRequest = Body(..., description="Boost usage details"),
-    claims: dict = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Purchase and use a gameplay boost immediately using gems"""
-    sub = claims.get("sub")
-    user = db.query(User).filter(User.sub == sub).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -300,10 +297,10 @@ async def use_gameplay_boost(
 
     # Get daily question allocation
     today = datetime.utcnow().date()
-    daily_question = db.query(DailyQuestion).filter(
-        DailyQuestion.account_id == user.account_id,
-        DailyQuestion.question_number == request.question_number,
-        func.date(DailyQuestion.date) == today
+    daily_question = db.query(TriviaQuestionsDaily).filter(
+        TriviaQuestionsDaily.account_id == user.account_id,
+        TriviaQuestionsDaily.question_number == request.question_number,
+        func.date(TriviaQuestionsDaily.date) == today
     ).first()
 
     if not daily_question:
@@ -431,12 +428,10 @@ async def use_gameplay_boost(
 @router.post("/buy-gems", response_model=PurchaseResponse)
 async def buy_gems_with_wallet(
     request: BuyGemsRequest = Body(..., description="Gem purchase details"),
-    claims: dict = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Buy gems using wallet balance"""
-    sub = claims.get("sub")
-    user = db.query(User).filter(User.sub == sub).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -491,7 +486,7 @@ async def buy_gems_with_wallet(
 
 @router.get("/gem-packages", response_model=List[GemPackageResponse])
 async def get_gem_packages(
-    claims: dict = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get all available gem packages"""
@@ -500,7 +495,7 @@ async def get_gem_packages(
 
 @router.get("/boost-configs", response_model=List[BoostConfigResponse])
 async def get_boost_configs(
-    claims: dict = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get all boost configurations"""
@@ -636,6 +631,6 @@ async def delete_boost_config(
     return {"message": f"Boost configuration for {boost_type} deleted successfully"}
 
 @router.get("/items")
-async def get_store_items(claims: dict = Depends(get_current_user)):
+async def get_store_items(user: User = Depends(get_current_user)):
     """Get all available store items"""
     return store_config 

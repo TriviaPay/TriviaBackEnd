@@ -7,7 +7,7 @@ import logging
 import requests
 import os
 from sqlalchemy import func
-from models import DailyQuestion, Trivia
+from models import TriviaQuestionsDaily, Trivia
 from sqlalchemy.orm import Session
 import json
 
@@ -114,8 +114,8 @@ async def reset_daily_questions():
             today = datetime.utcnow().date()
             
             # Get all daily questions from today
-            today_questions = db.query(DailyQuestion).filter(
-                func.date(DailyQuestion.date) == today
+            today_questions = db.query(TriviaQuestionsDaily).filter(
+                func.date(TriviaQuestionsDaily.date) == today
             ).all()
             
             # Count total, used, and unused questions

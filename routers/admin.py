@@ -8,7 +8,7 @@ import pytz
 import logging
 
 from db import get_db
-from models import TriviaDrawConfig, TriviaDrawWinner, User
+from models import TriviaQuestionsWinners, User
 from routers.dependencies import get_admin_user, get_current_user, verify_admin
 from rewards_logic import perform_draw
 
@@ -190,8 +190,8 @@ async def trigger_draw(
             draw_date = date.today()
             
         # Check if a draw has already been performed for this date
-        existing_draw = db.query(TriviaDrawWinner).filter(
-            TriviaDrawWinner.draw_date == draw_date
+        existing_draw = db.query(TriviaQuestionsWinners).filter(
+            TriviaQuestionsWinners.draw_date == draw_date
         ).first()
         
         if existing_draw:

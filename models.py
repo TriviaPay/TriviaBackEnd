@@ -23,7 +23,6 @@ class User(Base):
     descope_user_id = Column(String, unique=True, index=True, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
     username = Column(String, unique=True, index=True, nullable=False)
-    display_name = Column(String, nullable=True)
     mobile = Column(String, nullable=True)
     country_code = Column(String, nullable=True)
     first_name = Column(String, nullable=True)
@@ -45,7 +44,6 @@ class User(Base):
     referral_code = Column(String(5), unique=True, nullable=True)
     referred_by = Column(String(5), nullable=True)
     referral_count = Column(Integer, default=0)
-    is_referred = Column(Boolean, default=False)
     is_admin = Column(Boolean, default=False)  # Added is_admin field
 
     subscriber_number = Column(String, nullable=True)
@@ -84,9 +82,9 @@ class User(Base):
 
     # Relationships
     winners = relationship("Winner", back_populates="user")
-    entries = relationship("Entry", back_populates="user")
+    entries = relationship("TriviaQuestionsEntries", back_populates="user")
     payments = relationship("Payment", back_populates="user")
-    daily_questions = relationship("DailyQuestion", back_populates="user")
+    daily_questions = relationship("TriviaQuestionsDaily", back_populates="user")
     badge_info = relationship("Badge", back_populates="users")
     payment_transactions = relationship("PaymentTransaction", back_populates="user")
     bank_accounts = relationship("UserBankAccount", back_populates="user")
@@ -97,8 +95,8 @@ class User(Base):
 # =================================
 #  Entries Table
 # =================================
-class Entry(Base):
-    __tablename__ = "entries"
+class TriviaQuestionsEntries(Base):
+    __tablename__ = "trivia_questions_entries"
 
     account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
     number_of_entries = Column(Integer, nullable=False)
@@ -300,9 +298,9 @@ class Withdrawal(Base):
 # =================================
 #  Daily Questions Table
 # =================================
-class DailyQuestion(Base):
+class TriviaQuestionsDaily(Base):
     """Track which questions are allocated to users each day"""
-    __tablename__ = "daily_questions"
+    __tablename__ = "trivia_questions_daily"
 
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
@@ -310,13 +308,21 @@ class DailyQuestion(Base):
     date = Column(DateTime, default=datetime.utcnow, nullable=False)
     is_common = Column(Boolean, default=False)  # True for first question
     question_order = Column(Integer, nullable=False)  # 1-4 for ordering
-    is_used = Column(Boolean, default=False)  # Track if question was attempted
+    
+    # Question allocation tracking (prevents reallocation to other users)
+    is_used = Column(Boolean, default=False)  # True if question allocated to any user today
     was_changed = Column(Boolean, default=False)  # Track if question was changed via lifeline
     
-    # New fields to track answers and correctness
-    answer = Column(String, nullable=True)  # User's answer
-    is_correct = Column(Boolean, nullable=True)  # Whether the answer was correct
-    answered_at = Column(DateTime, nullable=True)  # When the answer was submitted
+    # User attempt tracking (specific to this user)
+    user_attempted = Column(Boolean, default=False)  # True if this user attempted this question
+    user_answer = Column(String, nullable=True)  # User's answer
+    user_is_correct = Column(Boolean, nullable=True)  # Whether the user's answer was correct
+    user_answered_at = Column(DateTime, nullable=True)  # When the user answered
+    
+    # Legacy fields (deprecated, use user_* fields instead)
+    answer = Column(String, nullable=True)  # DEPRECATED: Use user_answer
+    is_correct = Column(Boolean, nullable=True)  # DEPRECATED: Use user_is_correct
+    answered_at = Column(DateTime, nullable=True)  # DEPRECATED: Use user_answered_at
     
     # Relationships
     user = relationship("User", back_populates="daily_questions")
@@ -423,8 +429,8 @@ class TriviaDrawConfig(Base):
 # =================================
 #  Trivia Draw Winners Table
 # =================================
-class TriviaDrawWinner(Base):
-    __tablename__ = "trivia_draw_winners"
+class TriviaQuestionsWinners(Base):
+    __tablename__ = "trivia_questions_winners"
     
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
@@ -601,8 +607,8 @@ class UserSubscription(Base):
 # =================================
 #  User Question Answers Table
 # =================================
-class UserQuestionAnswer(Base):
-    __tablename__ = "user_question_answers"
+class TriviaQuestionsAnswers(Base):
+    __tablename__ = "trivia_questions_answers"
     
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)

@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from db import get_db
-from models import Winner, User, TriviaDrawWinner, DrawConfig
+from models import User, TriviaQuestionsWinners, DrawConfig
 from routers.dependencies import get_current_user
 from rewards_logic import (get_daily_winners, get_weekly_winners, get_all_time_winners,
                           get_all_day_wise_winners, get_top_recent_winners)

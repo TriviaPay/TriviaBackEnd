@@ -333,7 +333,7 @@ async def refresh_new_session(request: Request, db: Session = Depends(get_db)):
                 "user_info": {
                     "userId": user.descope_user_id,
                     "email": user.email,
-                    "name": user.display_name or user.username
+                    "name": user.username
                 },
                 "message": "New session created successfully"
             }
