@@ -5,16 +5,17 @@ set -e
 
 echo "Setting up Python environment..."
 
-# Use Python 3.9 explicitly
+# Use the Python version specified in environment or default to python3
+PYTHON_CMD=${PYTHON_VERSION:-python3}
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Upgrade pip and install wheel first
-python3.9 -m pip install --upgrade pip
-python3.9 -m pip install wheel setuptools
+$PYTHON_CMD -m pip install --upgrade pip
+$PYTHON_CMD -m pip install wheel setuptools
 
 # Install dependencies while ignoring the Vercel package
 grep -v "vercel" requirements.txt > temp_requirements.txt
-python3.9 -m pip install -r temp_requirements.txt
+$PYTHON_CMD -m pip install -r temp_requirements.txt
 
 echo "Python environment setup complete!"
 echo "Build script finished successfully!" 
