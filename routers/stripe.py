@@ -155,7 +155,7 @@ async def get_publishable_key():
 @router.get("/payment-methods")
 async def get_payment_methods(
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Get User's Payment Methods
@@ -182,7 +182,6 @@ async def get_payment_methods(
     """
     try:
         # Get user from the database
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -251,7 +250,7 @@ async def get_payment_methods(
 @router.post("/create-customer")
 async def create_stripe_customer(
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Create Stripe Customer
@@ -273,7 +272,6 @@ async def create_stripe_customer(
     """
     try:
         # Get user from the database
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -291,7 +289,7 @@ async def create_stripe_customer(
         # Create a new Stripe customer
         customer = stripe.Customer.create(
             email=user.email,
-            name=f"{user.first_name or ''} {user.last_name or ''}".strip() or user.display_name or user.username,
+            name=f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username,
             metadata={
                 "user_id": str(user.account_id),
                 "sub": sub,
@@ -324,7 +322,7 @@ async def add_funds_to_wallet(
     amount: int = Body(..., description="Amount in cents to add to wallet (e.g., 1000 for $10.00)"),
     currency: str = Body("usd", description="Three-letter currency code (e.g., 'usd', 'eur')"),
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Add Funds to User Wallet
@@ -350,7 +348,6 @@ async def add_funds_to_wallet(
     """
     try:
         # Get user from the database
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -414,7 +411,7 @@ async def create_payment_intent(
     customer_reference: Optional[str] = Body(None, description="Customer-provided reference or note"),
     additional_metadata: Optional[Dict[str, str]] = Body({}, description="Any additional metadata to attach to the payment intent"),
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Create Generic Payment Intent
@@ -443,7 +440,6 @@ async def create_payment_intent(
     """
     try:
         # Get user ID from token
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -937,7 +933,7 @@ async def stripe_webhook(
 @router.get("/wallet-balance")
 async def get_wallet_balance(
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Get User's Wallet Balance
@@ -965,7 +961,6 @@ async def get_wallet_balance(
     """
     try:
         # Get user from token
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1009,7 +1004,7 @@ async def withdraw_from_wallet(
     bank_account_id: Optional[int] = Body(None, description="ID of the saved bank account to use for withdrawal"),
     payout_details: Optional[Dict[str, Any]] = Body(None, description="Details needed for the payout if not using a saved bank account"),
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Withdraw Funds from Wallet
@@ -1043,7 +1038,6 @@ async def withdraw_from_wallet(
     """
     try:
         # Get user from the database
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1225,7 +1219,7 @@ async def withdraw_from_wallet(
 @router.get("/withdrawal-history")
 async def get_withdrawal_history(
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     limit: int = 10,
     offset: int = 0
 ):
@@ -1257,7 +1251,6 @@ async def get_withdrawal_history(
     """
     try:
         # Get user from token
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1310,7 +1303,7 @@ async def process_withdrawal(
     status: str = Body(..., description="New status for the withdrawal ('completed' or 'failed')"),
     notes: str = Body(None, description="Admin notes about the withdrawal process or reason for failure"),
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Process Withdrawal Request (Admin Only)
@@ -1349,7 +1342,6 @@ async def process_withdrawal(
     """
     try:
         # Check if user is admin
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1475,7 +1467,7 @@ async def process_withdrawal(
 async def add_bank_account(
     bank_account: BankAccountRequest,
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Add Bank Account
@@ -1509,7 +1501,6 @@ async def add_bank_account(
     """
     try:
         # Get user from token
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1573,7 +1564,7 @@ async def add_bank_account(
 @router.get("/bank-accounts", response_model=List[BankAccountResponse])
 async def list_bank_accounts(
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## List User's Bank Accounts
@@ -1599,7 +1590,6 @@ async def list_bank_accounts(
     """
     try:
         # Get user from token
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1621,7 +1611,7 @@ async def list_bank_accounts(
 async def delete_bank_account(
     account_id: int,
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Delete Bank Account
@@ -1645,7 +1635,6 @@ async def delete_bank_account(
     """
     try:
         # Get user from token
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1701,7 +1690,7 @@ class SubscriptionResponse(BaseModel):
 @router.get("/subscriptions/plans", response_model=List[dict])
 async def list_subscription_plans(
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## List Available Subscription Plans
@@ -1728,7 +1717,6 @@ async def list_subscription_plans(
     """
     try:
         # Get user from token to ensure authentication
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1760,7 +1748,7 @@ async def list_subscription_plans(
 async def create_subscription(
     subscription: SubscriptionRequest,
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Create Subscription
@@ -1788,7 +1776,6 @@ async def create_subscription(
     """
     try:
         # Get user from token
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1876,7 +1863,7 @@ async def create_subscription(
 @router.get("/subscriptions", response_model=List[SubscriptionResponse])
 async def list_subscriptions(
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## List User's Subscriptions
@@ -1903,7 +1890,6 @@ async def list_subscriptions(
     """
     try:
         # Get user from token
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -1945,7 +1931,7 @@ async def list_subscriptions(
 async def cancel_subscription(
     subscription_id: int,
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Cancel Subscription
@@ -1969,7 +1955,6 @@ async def cancel_subscription(
     """
     try:
         # Get user from token
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
@@ -2014,7 +1999,7 @@ async def admin_get_withdrawals(
     limit: int = Query(20, description="Maximum number of records to return"),
     offset: int = Query(0, description="Number of records to skip"),
     db: Session = Depends(get_db),
-    claims: dict = Depends(get_current_user)
+    user: User = Depends(get_current_user)
 ):
     """
     ## Get All Withdrawal Transactions (Admin Only)
@@ -2047,7 +2032,6 @@ async def admin_get_withdrawals(
     """
     try:
         # Check if user is admin
-        sub = claims.get("sub")
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         

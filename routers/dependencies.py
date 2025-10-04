@@ -31,8 +31,8 @@ def get_current_user(request: Request, db=Depends(get_db)):
         if existing_user:
             # Update existing user with Descope user ID
             existing_user.descope_user_id = user_info['userId']
-            if not existing_user.display_name:
-                existing_user.display_name = user_info.get('displayName') or user_info.get('name') or email
+            if not existing_user.username:
+                existing_user.username = user_info.get('name') or user_info.get('displayName') or email
             db.commit()
             db.refresh(existing_user)
             user = existing_user
@@ -42,7 +42,6 @@ def get_current_user(request: Request, db=Depends(get_db)):
                 descope_user_id=user_info['userId'],
                 email=email,
                 username=user_info.get('name') or user_info.get('displayName') or email,
-                display_name=user_info.get('displayName') or user_info.get('name') or email,
             )
             db.add(user)
             db.commit()

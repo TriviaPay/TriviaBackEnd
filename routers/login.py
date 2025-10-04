@@ -181,7 +181,6 @@ async def bind_password(
         if existing_user:
             # Update existing user
             existing_user.username = data.username
-            existing_user.display_name = data.username
             existing_user.country = data.country
             existing_user.date_of_birth = data.date_of_birth
             existing_user.descope_user_id = user_id
