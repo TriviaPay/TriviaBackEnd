@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start script for Render deployment
+# Start script for deployment
 
 # Set environment variables
 export PYTHONPATH=.

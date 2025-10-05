@@ -8,7 +8,7 @@ import pytz
 import logging
 
 from db import get_db
-from models import TriviaQuestionsWinners, User
+from models import TriviaQuestionsWinners, User, TriviaDrawConfig
 from routers.dependencies import get_admin_user, get_current_user, verify_admin
 from rewards_logic import perform_draw
 

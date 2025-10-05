@@ -187,7 +187,7 @@ async def get_weekly_winners(
                 dw.account_id, 
                 SUM(dw.prize_amount) as weekly_amount,
                 MIN(dw.position) as best_position
-            FROM trivia_draw_winners dw
+            FROM winners_draw_results dw
             WHERE dw.draw_date BETWEEN :start_date AND :end_date
             GROUP BY dw.account_id
             ORDER BY weekly_amount DESC
@@ -280,7 +280,7 @@ async def get_all_time_winners(
                 dw.account_id, 
                 SUM(dw.prize_amount) as total_amount,
                 MIN(dw.position) as best_position
-            FROM trivia_draw_winners dw
+            FROM winners_draw_results dw
             GROUP BY dw.account_id
             ORDER BY total_amount DESC
             LIMIT 50

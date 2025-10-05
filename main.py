@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, winners, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe
+from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -111,7 +111,6 @@ app.include_router(profile.router)   # User profile management
 app.include_router(cosmetics.router) # Avatars and Frames management
 app.include_router(badges.router)    # Badges management
 app.include_router(rewards.router)   # Rewards system
-app.include_router(winners.router)   # Winner views
 app.include_router(admin.router)     # Admin controls
 app.include_router(stripe.router)    # Stripe-related endpoints
 app.include_router(updates.router)   # Live updates
