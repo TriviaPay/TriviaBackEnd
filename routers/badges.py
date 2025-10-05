@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc
 import uuid
-import os
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
@@ -16,45 +15,29 @@ router = APIRouter(prefix="/badges", tags=["Badges"])
 
 # ======== Helper Functions ========
 
-def is_admin(current_user: dict, db: Session) -> bool:
+def is_admin(user: User) -> bool:
     """
-    Check if the current user is an admin based on their email matching ADMIN_EMAIL in env
+    Check if the current user is an admin based on database is_admin field
     
     Args:
-        current_user (dict): The current user's JWT claims
-        db (Session): Database session
+        user (User): The current user object
         
     Returns:
         bool: Whether the user is an admin
     """
-    # Get admin email from environment or use default
-    admin_email = os.getenv("ADMIN_EMAIL", "triviapay3@gmail.com")
+    return bool(user.is_admin)
     
-    # Admin check is based on email
-    email = current_user.get('email')
-    if email and email.lower() == admin_email.lower():
-        return True
-        
-    # Check in database
-    if email:
-        user = db.query(User).filter(User.email == email).first()
-        if user and user.email.lower() == admin_email.lower():
-            return True
-            
-    return False
-    
-def verify_admin(current_user: dict, db: Session) -> None:
+def verify_admin(user: User) -> None:
     """
     Verify the user is an admin or raise an HTTP exception
     
     Args:
-        current_user (dict): The current user's JWT claims
-        db (Session): Database session
+        user (User): The current user object
         
     Raises:
         HTTPException: If the user is not an admin
     """
-    if not is_admin(current_user, db):
+    if not is_admin(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required for this endpoint"
@@ -90,7 +73,7 @@ class BadgeResponse(BadgeBase):
 @router.get("/", response_model=List[BadgeResponse])
 async def get_all_badges(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 100
 ):
@@ -104,7 +87,7 @@ async def get_all_badges(
 async def get_badge(
     badge_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get a specific badge by ID
@@ -120,13 +103,13 @@ async def get_badge(
 async def create_badge(
     badge: BadgeCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to create a new badge
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Use provided ID or generate a new one
     badge_id = badge.id if badge.id else str(uuid.uuid4())
@@ -161,13 +144,13 @@ async def update_badge(
     badge_id: str = Path(..., description="The ID of the badge to update"),
     badge_update: BadgeUpdate = Body(..., description="Updated badge data"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to update an existing badge
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Find the badge
     badge = db.query(Badge).filter(Badge.id == badge_id).first()
@@ -195,13 +178,13 @@ async def update_badge(
 @router.get("/admin/assignments", response_model=Dict[str, Any])
 async def get_badge_assignments(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to get badge assignment statistics
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Get counts of users per badge
     result = {}
