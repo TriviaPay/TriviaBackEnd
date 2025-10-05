@@ -4,7 +4,7 @@ Backend API for the TriviaPay application.
 
 ## Deployment
 
-This application is deployed on [Render](https://render.com) using the configuration in `render.yaml`.
+This application is deployed on [Vercel](https://vercel.com) using the configuration in `vercel.json`.
 
 ## Local Development
 
@@ -26,7 +26,7 @@ The application uses environment variables for configuration, which can be set i
 
 ## Automatic Deployment
 
-The application is automatically deployed to Render when changes are pushed to the main branch using GitHub Actions.
+The application is automatically deployed to Vercel when changes are pushed to the main branch using GitHub Actions.
 
 ## Authentication (Descope)
 

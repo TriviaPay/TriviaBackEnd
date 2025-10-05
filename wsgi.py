@@ -1,4 +1,4 @@
-"""WSGI entrypoint for deployment on Render and other platforms."""
+"""WSGI entrypoint for deployment on various platforms."""
 import os
 import sys
 import uvicorn

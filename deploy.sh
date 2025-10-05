@@ -21,5 +21,4 @@ echo "⬆️ Pushing to origin main..."
 git push origin main
 
 echo "✅ Deployment process complete!"
-echo "🔄 The GitHub Action workflow will automatically trigger the Render deployment."
-echo "Note: The app is now started using wsgi.py, which explicitly binds to 0.0.0.0 for Render compatibility." 
+echo "🔄 The GitHub Action workflow will automatically trigger the Vercel deployment." 
