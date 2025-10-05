@@ -81,7 +81,6 @@ class User(Base):
     selected_frame_id = Column(String, nullable=True)  # Currently selected frame ID
 
     # Relationships
-    winners = relationship("Winner", back_populates="user")
     entries = relationship("TriviaQuestionsEntries", back_populates="user")
     payments = relationship("Payment", back_populates="user")
     daily_questions = relationship("TriviaQuestionsDaily", back_populates="user")
@@ -107,31 +106,6 @@ class TriviaQuestionsEntries(Base):
 
     # Relationship
     user = relationship("User", back_populates="entries")
-
-
-# =================================
-#  Winners Table
-# =================================
-class Winner(Base):
-    __tablename__ = "winners"
-
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
-    amount_won = Column(Float, nullable=False)
-    win_date = Column(DateTime, nullable=False)
-
-    first_prize = Column(Float, nullable=True)
-    second_prize = Column(Float, nullable=True)
-    third_prize = Column(Float, nullable=True)
-    fourth_prize = Column(Float, nullable=True)
-    fifth_prize = Column(Float, nullable=True)
-    sixth_prize = Column(Float, nullable=True)
-    seventh_prize = Column(Float, nullable=True)
-    eighth_prize = Column(Float, nullable=True)
-    ninth_prize = Column(Float, nullable=True)
-    tenth_prize = Column(Float, nullable=True)
-
-    # Relationship
-    user = relationship("User", back_populates="winners")
 
 
 # =================================
@@ -417,7 +391,7 @@ class Badge(Base):
 #  Trivia Draw Configuration
 # =================================
 class TriviaDrawConfig(Base):
-    __tablename__ = "trivia_draw_config"
+    __tablename__ = "winners_draw_config"
     
     id = Column(Integer, primary_key=True, index=True)
     is_custom = Column(Boolean, default=False)  # Whether using custom winner count
@@ -430,7 +404,7 @@ class TriviaDrawConfig(Base):
 #  Trivia Draw Winners Table
 # =================================
 class TriviaQuestionsWinners(Base):
-    __tablename__ = "trivia_questions_winners"
+    __tablename__ = "winners_draw_results"
     
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
@@ -445,14 +419,6 @@ class TriviaQuestionsWinners(Base):
 # =================================
 #  Draw Configuration Table
 # =================================
-class DrawConfig(Base):
-    __tablename__ = "draw_config"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    is_custom = Column(Boolean, default=False)  # Whether using custom winner count
-    custom_winner_count = Column(Integer, nullable=True)  # Custom number of winners
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 # =================================
 #  Gem Package Configuration
