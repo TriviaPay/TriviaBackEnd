@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe
+from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import os
 import logging
 import sys
-from scheduler import start_scheduler
+# Conditional scheduler for local development
 
 
 # Load environment variables
@@ -115,11 +115,20 @@ app.include_router(admin.router)     # Admin controls
 app.include_router(stripe.router)    # Stripe-related endpoints
 app.include_router(updates.router)   # Live updates
 app.include_router(entries.router)   # Entries management
+app.include_router(internal.router)  # Internal endpoints for external cron
 
 @app.on_event("startup")
 async def startup_event():
-    """Start the scheduler when the application starts."""
-    start_scheduler()
+    """Start the scheduler when the application starts (local dev only)"""
+    logger.info("TriviaPay API started successfully")
+    
+    # Only start scheduler in local development
+    if os.getenv("ENVIRONMENT", "development") == "development":
+        from updated_scheduler import start_scheduler
+        start_scheduler()
+        logger.info("Local scheduler started")
+    else:
+        logger.info("Production mode - using external cron for scheduling")
 
 @app.get("/")
 async def read_root():
