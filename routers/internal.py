@@ -5,6 +5,7 @@ import os
 from db import get_db
 from rewards_logic import perform_draw, reset_monthly_subscriptions
 import logging
+from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
 
 router = APIRouter(prefix="/internal", tags=["Internal"])
 
@@ -20,13 +21,22 @@ async def internal_daily_draw(
     try:
         # Run daily draw for yesterday
         yesterday = date.today() - timedelta(days=1)
+        
+        # Get detailed metrics before performing draw
+        logging.info("📊 Collecting detailed draw metrics...")
+        metrics = get_detailed_draw_metrics(db, yesterday)
+        
+        # Perform the draw
         result = perform_draw(db, yesterday)
         
         logging.info(f"Daily draw completed via external cron: {result}")
         return {
             "status": "success",
-            "result": result,
-            "triggered_by": "external_cron"
+            "triggered_by": "external_cron",
+            "draw_date": yesterday.isoformat(),
+            "detailed_metrics": metrics,
+            "draw_result": result,
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         logging.error(f"Error in daily draw: {str(e)}")
@@ -42,6 +52,10 @@ async def internal_question_reset(
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
+        # Get detailed metrics before reset
+        logging.info("📊 Collecting detailed reset metrics...")
+        metrics = get_detailed_reset_metrics(db)
+        
         # Import here to avoid circular imports
         from cleanup_unused_questions import cleanup_unused_questions
         from rewards_logic import reset_daily_eligibility_flags
@@ -56,7 +70,9 @@ async def internal_question_reset(
         return {
             "status": "success",
             "message": "Questions reset and eligibility flags cleared",
-            "triggered_by": "external_cron"
+            "triggered_by": "external_cron",
+            "detailed_metrics": metrics,
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         logging.error(f"Error in question reset: {str(e)}")
@@ -72,6 +88,10 @@ async def internal_monthly_reset(
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
+        # Get detailed metrics before reset
+        logging.info("📊 Collecting detailed monthly reset metrics...")
+        metrics = get_detailed_monthly_reset_metrics(db)
+        
         # Reset monthly subscriptions
         reset_monthly_subscriptions(db)
         
@@ -79,7 +99,9 @@ async def internal_monthly_reset(
         return {
             "status": "success",
             "message": "All subscription flags reset",
-            "triggered_by": "external_cron"
+            "triggered_by": "external_cron",
+            "detailed_metrics": metrics,
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         logging.error(f"Error in monthly reset: {str(e)}")
