@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal
+from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal, live_chat
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -116,6 +116,7 @@ app.include_router(stripe.router)    # Stripe-related endpoints
 app.include_router(updates.router)   # Live updates
 app.include_router(entries.router)   # Entries management
 app.include_router(internal.router)  # Internal endpoints for external cron
+app.include_router(live_chat.router) # Live chat endpoints
 
 @app.on_event("startup")
 async def startup_event():
