@@ -88,6 +88,7 @@ class User(Base):
     payment_transactions = relationship("PaymentTransaction", back_populates="user")
     bank_accounts = relationship("UserBankAccount", back_populates="user")
     subscriptions = relationship("UserSubscription", back_populates="user")
+    live_chat_messages = relationship("LiveChatMessage", back_populates="user")
     # You could add a relationship for Comments, Chats, or Withdrawals if needed
     # (depending on whether they link to a user table).
 
@@ -599,3 +600,73 @@ class CompanyRevenue(Base):
     subscriber_count = Column(Integer, nullable=False)  # Number of subscribers that month
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+# =================================
+#  Live Chat Session Table
+# =================================
+class LiveChatSession(Base):
+    __tablename__ = "live_chat_sessions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    session_name = Column(String, nullable=False)  # e.g., "Today's Winners Chat"
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    is_active = Column(Boolean, default=True)
+    viewer_count = Column(Integer, default=0)
+    total_likes = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships - using back_populates to match existing pattern
+    messages = relationship("LiveChatMessage", back_populates="session")
+
+# =================================
+#  Live Chat Messages Table
+# =================================
+class LiveChatMessage(Base):
+    __tablename__ = "live_chat_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("live_chat_sessions.id"), nullable=False)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    message = Column(String, nullable=False)
+    message_type = Column(String, default="text")  # "text", "system", "announcement"
+    likes = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships - using back_populates to match existing pattern
+    session = relationship("LiveChatSession", back_populates="messages")
+    user = relationship("User", back_populates="live_chat_messages")
+
+# =================================
+#  Live Chat Likes Table
+# =================================
+class LiveChatLike(Base):
+    __tablename__ = "live_chat_likes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("live_chat_sessions.id"), nullable=False)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    message_id = Column(Integer, ForeignKey("live_chat_messages.id"), nullable=True)  # Null for session likes
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships - using backref to match existing pattern
+    session = relationship("LiveChatSession", backref="session_likes")
+    user = relationship("User", backref="live_chat_likes")
+    message = relationship("LiveChatMessage", backref="message_likes")
+
+# =================================
+#  Live Chat Viewers Table
+# =================================
+class LiveChatViewer(Base):
+    __tablename__ = "live_chat_viewers"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("live_chat_sessions.id"), nullable=False)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    joined_at = Column(DateTime, default=datetime.utcnow)
+    last_seen = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+    
+    # Relationships - using backref to match existing pattern
+    session = relationship("LiveChatSession", backref="session_viewers")
+    user = relationship("User", backref="live_chat_viewers")
