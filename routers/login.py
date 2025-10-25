@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from db import get_db
 from models import User, Avatar, Frame, Badge
 from descope.descope_client import DescopeClient
-from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, STORE_PASSWORD_IN_DESCOPE, STORE_PASSWORD_IN_NEONDB
+from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, STORE_PASSWORD_IN_DESCOPE, STORE_PASSWORD_IN_NEONDB
 from auth import validate_descope_jwt
 import logging
 from datetime import datetime, timedelta, date as DateType
@@ -16,7 +16,7 @@ import os
 
 router = APIRouter()
 # Use management key for admin operations
-mgmt_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY)
+mgmt_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -441,7 +441,7 @@ async def dev_send_otp(
         if not project_id:
             raise HTTPException(status_code=500, detail="Descope project ID not configured")
             
-        client = DescopeClient(project_id=project_id)
+        client = DescopeClient(project_id=project_id, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
         
         # Try sign-up-or-in (works for both new and existing users)
         response = client.otp.sign_up_or_in(DeliveryMethod.EMAIL, email)
@@ -483,7 +483,7 @@ async def dev_verify_otp(
         if not project_id:
             raise HTTPException(status_code=500, detail="Descope project ID not configured")
             
-        client = DescopeClient(project_id=project_id)
+        client = DescopeClient(project_id=project_id, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
         
         # Verify the OTP code using the correct Python SDK pattern
         response = client.otp.verify_code(DeliveryMethod.EMAIL, email, code)

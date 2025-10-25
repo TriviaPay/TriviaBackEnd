@@ -8,6 +8,7 @@ import os
 
 # Initialize Descope client with configurable leeway for time sync issues
 client = DescopeClient(project_id=DESCOPE_PROJECT_ID, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
+logging.info(f"Descope client initialized with JWT leeway: {DESCOPE_JWT_LEEWAY}s")
 
 def decode_jwt_payload(token: str) -> dict:
     """Decode JWT payload without verification for debugging purposes."""
@@ -81,7 +82,7 @@ def validate_descope_jwt(token: str) -> dict:
         # If we still don't have email, try to get user details from Descope management API
         if not email and user_info['userId'] and DESCOPE_MANAGEMENT_KEY:
             try:
-                mgmt_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY)
+                mgmt_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
                 # Use the correct method name - it should be 'load' not 'get_by_user_id'
                 user_details = mgmt_client.mgmt.user.load(user_info['userId'])
                 if user_details and isinstance(user_details, dict):
@@ -123,6 +124,7 @@ def validate_descope_jwt(token: str) -> dict:
         
         # Retry with higher leeway if configured
         try:
+            logging.info(f"Retrying JWT validation with fallback leeway: {DESCOPE_JWT_LEEWAY_FALLBACK}s")
             high_leeway_client = DescopeClient(
                 project_id=DESCOPE_PROJECT_ID,
                 jwt_validation_leeway=DESCOPE_JWT_LEEWAY_FALLBACK
