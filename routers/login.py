@@ -217,11 +217,14 @@ async def bind_password(
                 # Set password in Descope if enabled
                 if STORE_PASSWORD_IN_DESCOPE:
                     try:
-                        mgmt_client.mgmt.user.set_password(user_id, data.password)
-                        logging.info(f"Password set in Descope for user: {user_id}")
+                        mgmt_client.mgmt.user.set_password(data.email, data.password)
+                        logging.info(f"Password set in Descope for user: {data.email}")
                     except Exception as e:
-                        logging.warning(f"Failed to set password in Descope: {e}")
-                        # Continue without failing the entire operation
+                        logging.error(f"Failed to set password in Descope: {e}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to set password in authentication system: {str(e)}"
+                        )
                 
                 logging.info(f"Successfully updated user in Descope: {user_id}")
                 
@@ -246,11 +249,14 @@ async def bind_password(
                 # Set password for new user if enabled
                 if STORE_PASSWORD_IN_DESCOPE:
                     try:
-                        mgmt_client.mgmt.user.set_password(user_id, data.password)
-                        logging.info(f"Password set in Descope for new user: {user_id}")
+                        mgmt_client.mgmt.user.set_password(data.email, data.password)
+                        logging.info(f"Password set in Descope for new user: {data.email}")
                     except Exception as e:
-                        logging.warning(f"Failed to set password in Descope for new user: {e}")
-                        # Continue without failing the entire operation
+                        logging.error(f"Failed to set password in Descope for new user: {e}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to set password in authentication system: {str(e)}"
+                        )
                 
                 logging.info(f"Successfully created user in Descope: {user_id}")
                 
