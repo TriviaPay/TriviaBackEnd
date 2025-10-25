@@ -159,6 +159,7 @@ class Trivia(Base):
     option_d = Column(String, nullable=False)
     correct_answer = Column(String, nullable=False)
     fill_in_answer = Column(String, nullable=True)
+    hint = Column(String, nullable=True)
     explanation = Column(String, nullable=True)
     category = Column(String, nullable=False)
     country = Column(String, nullable=True)
@@ -571,22 +572,6 @@ class UserSubscription(Base):
     user = relationship("User", back_populates="subscriptions")
     plan = relationship("SubscriptionPlan", backref="subscribers")
 
-# =================================
-#  User Question Answers Table
-# =================================
-class TriviaQuestionsAnswers(Base):
-    __tablename__ = "trivia_questions_answers"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    question_number = Column(Integer, nullable=False)
-    selected_answer = Column(String, nullable=False)
-    is_correct = Column(Boolean, nullable=False)
-    answered_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    date = Column(Date, nullable=False)  # Date when the question was answered
-    
-    # Relationships
-    user = relationship("User", backref="question_answers")
 
 # =================================
 #  Company Revenue Table (Monthly)

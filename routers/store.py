@@ -44,19 +44,32 @@ class UseBoostRequest(BaseModel):
     """Model for using a gameplay boost"""
     boost_type: str = Field(
         ...,
-        description="Type of boost to use"
+        description="Type of boost to use. Options: fifty_fifty, hint, change_question, auto_submit, extra_chance, streak_saver"
     )
     question_number: Optional[int] = Field(
         None,
-        description="Question number to use the boost on"
+        description="Question number to use the boost on (required for all boosts except streak_saver)"
     )
 
     class Config:
         json_schema_extra = {
-            "example": {
-                "boost_type": "hint",
-                "question_number": 1
-            }
+            "examples": [
+                {
+                    "boost_type": "hint",
+                    "question_number": 1
+                },
+                {
+                    "boost_type": "fifty_fifty", 
+                    "question_number": 1
+                },
+                {
+                    "boost_type": "auto_submit",
+                    "question_number": 1
+                },
+                {
+                    "boost_type": "streak_saver"
+                }
+            ]
         }
 
 class BuyGemsRequest(BaseModel):
@@ -241,7 +254,28 @@ async def use_gameplay_boost(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Purchase and use a gameplay boost immediately using gems"""
+    """
+    Purchase and use a gameplay boost immediately using gems.
+    
+    Available boost types:
+    - **fifty_fifty** (50 gems): Remove two incorrect answer options
+    - **hint** (30 gems): Get a hint for the current question
+    - **change_question** (10 gems): Change to a different question (max 3 per day)
+    - **auto_submit** (300 gems): Automatically submit the correct answer
+    - **extra_chance** (150 gems): Reset a question for a fresh attempt after wrong answer
+    - **streak_saver** (100 gems): Save your daily streak if you missed a day
+    
+    **Requirements:**
+    - User must have sufficient gems
+    - For question-based boosts: question_number must be provided
+    - For change_question: User can only change 3 questions per day
+    - For extra_chance: Question must have been attempted first
+    
+    **Response includes:**
+    - Boost-specific data (hint, new question, etc.)
+    - Remaining gems after purchase
+    - Success confirmation
+    """
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -306,7 +340,7 @@ async def use_gameplay_boost(
     if not daily_question:
         raise HTTPException(status_code=400, detail="Question not allocated for today")
 
-    if daily_question.is_used and request.boost_type not in ["extra_chance"]:
+    if daily_question.user_attempted and request.boost_type not in ["extra_chance"]:
         raise HTTPException(status_code=400, detail="Question already attempted")
 
     # Process boost
@@ -371,11 +405,14 @@ async def use_gameplay_boost(
         }
     
     elif request.boost_type == "extra_chance":
-        if not daily_question.is_used:
+        if not daily_question.user_attempted:
             raise HTTPException(status_code=400, detail="Question hasn't been attempted yet")
         
         # Reset the question state completely
-        daily_question.is_used = False
+        daily_question.user_attempted = False
+        daily_question.user_answer = None
+        daily_question.user_is_correct = None
+        daily_question.user_answered_at = None
         daily_question.was_changed = False  # Reset any previous changes
         
         response = {
@@ -396,11 +433,14 @@ async def use_gameplay_boost(
         }
     
     elif request.boost_type == "auto_submit":
-        if daily_question.is_used:
+        if daily_question.user_attempted:
             raise HTTPException(status_code=400, detail="Question already attempted")
         
         # Mark question as used and record correct answer
-        daily_question.is_used = True
+        daily_question.user_attempted = True
+        daily_question.user_answer = question.correct_answer
+        daily_question.user_is_correct = True
+        daily_question.user_answered_at = datetime.utcnow()
         
         # Return the correct answer and mark it as auto-submitted
         response = {
@@ -409,13 +449,6 @@ async def use_gameplay_boost(
             "auto_submit": True,
             "is_correct": True  # Auto-submit always counts as correct
         }
-
-        # Update user's progress (similar to submit-answer endpoint)
-        # Note: We're marking it as correct since they paid for auto-submit
-        daily_question.is_used = True
-        daily_question.answer = question.correct_answer
-        daily_question.is_correct = True
-        daily_question.answered_at = datetime.utcnow()
 
     # Commit the transaction after boost is used
     db.commit()

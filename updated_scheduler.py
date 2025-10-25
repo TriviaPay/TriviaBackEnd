@@ -7,7 +7,7 @@ from sqlalchemy import func, and_, or_
 from db import SessionLocal
 from rewards_logic import perform_draw, reset_daily_eligibility_flags
 from cleanup_unused_questions import cleanup_unused_questions
-from models import User, TriviaQuestionsDaily, TriviaQuestionsAnswers, TriviaQuestionsWinners, UserSubscription
+from models import User, TriviaQuestionsDaily, TriviaQuestionsWinners, UserSubscription
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

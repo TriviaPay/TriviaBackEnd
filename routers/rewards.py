@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 from db import get_db
-from models import User, TriviaQuestionsWinners, TriviaDrawConfig, TriviaQuestionsAnswers, CompanyRevenue, TriviaQuestionsDaily, Trivia, Badge, Avatar, Frame, TriviaQuestionsEntries
+from models import User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsDaily, Trivia, Badge, Avatar, Frame, TriviaQuestionsEntries
 from routers.dependencies import get_current_user, get_admin_user
 from sqlalchemy.sql import extract
 import os
