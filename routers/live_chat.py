@@ -101,23 +101,57 @@ def is_chat_window_active() -> bool:
         logger.error(f"Error checking chat window: {e}")
         return False
 
+# Session cache to prevent multiple session creation
+_active_session_cache = None
+_cache_timestamp = None
+_cache_timeout = timedelta(minutes=1)
+
 def get_or_create_active_session(db: Session) -> LiveChatSession:
-    """Get or create the active chat session"""
-    # Check if there's an active session
-    active_session = db.query(LiveChatSession).filter(
-        LiveChatSession.is_active == True,
-        LiveChatSession.start_time <= datetime.utcnow(),
-        LiveChatSession.end_time >= datetime.utcnow()
-    ).first()
+    """Get or create the active chat session for the current draw window"""
+    global _active_session_cache, _cache_timestamp
     
-    if active_session:
-        return active_session
+    # Use cached session if it's less than 1 minute old and still valid
+    if (_active_session_cache and _cache_timestamp and 
+        datetime.utcnow() - _cache_timestamp < _cache_timeout):
+        # Verify cached session is still within its time window
+        now = datetime.utcnow()
+        if (_active_session_cache.start_time <= now <= _active_session_cache.end_time and
+            _active_session_cache.is_active):
+            return _active_session_cache
     
-    # Create new session
+    # Get next draw time to determine the session window
     next_draw_time = get_next_draw_time()
     chat_start = next_draw_time - timedelta(hours=LIVE_CHAT_PRE_DRAW_HOURS)
     chat_end = next_draw_time + timedelta(hours=LIVE_CHAT_POST_DRAW_HOURS)
     
+    # Check if there's an active session for this draw window
+    active_session = db.query(LiveChatSession).filter(
+        LiveChatSession.is_active == True,
+        LiveChatSession.start_time == chat_start,
+        LiveChatSession.end_time == chat_end
+    ).first()
+    
+    if active_session:
+        # Update cache
+        _active_session_cache = active_session
+        _cache_timestamp = datetime.utcnow()
+        logger.info(f"Using existing chat session: {active_session.id}")
+        return active_session
+    
+    # Deactivate any old sessions that might still be marked as active
+    old_sessions = db.query(LiveChatSession).filter(
+        LiveChatSession.is_active == True,
+        LiveChatSession.end_time < datetime.utcnow()
+    ).all()
+    
+    for old_session in old_sessions:
+        old_session.is_active = False
+    
+    if old_sessions:
+        db.commit()
+        logger.info(f"Deactivated {len(old_sessions)} old sessions")
+    
+    # Create new session for this draw window
     new_session = LiveChatSession(
         session_name=f"Draw Chat - {next_draw_time.strftime('%B %d, %Y')}",
         start_time=chat_start,
@@ -129,8 +163,68 @@ def get_or_create_active_session(db: Session) -> LiveChatSession:
     db.commit()
     db.refresh(new_session)
     
-    logger.info(f"Created new chat session: {new_session.id}")
+    # Update cache
+    _active_session_cache = new_session
+    _cache_timestamp = datetime.utcnow()
+    
+    logger.info(f"Created new chat session: {new_session.id} for draw at {next_draw_time}")
     return new_session
+
+def invalidate_session_cache():
+    """Invalidate the session cache"""
+    global _active_session_cache, _cache_timestamp
+    _active_session_cache = None
+    _cache_timestamp = None
+    logger.debug("Session cache invalidated")
+
+def get_current_active_session(db: Session) -> LiveChatSession:
+    """Get the currently active session (for reading messages, etc.)"""
+    global _active_session_cache, _cache_timestamp
+    
+    # First check cache
+    if (_active_session_cache and _cache_timestamp and 
+        datetime.utcnow() - _cache_timestamp < _cache_timeout):
+        now = datetime.utcnow()
+        if (_active_session_cache.start_time <= now <= _active_session_cache.end_time and
+            _active_session_cache.is_active):
+            return _active_session_cache
+    
+    # Find currently active session (within current time window)
+    now = datetime.utcnow()
+    active_session = db.query(LiveChatSession).filter(
+        LiveChatSession.is_active == True,
+        LiveChatSession.start_time <= now,
+        LiveChatSession.end_time >= now
+    ).first()
+    
+    if active_session:
+        # Update cache
+        _active_session_cache = active_session
+        _cache_timestamp = datetime.utcnow()
+        logger.info(f"Found current active session: {active_session.id}")
+        return active_session
+    
+    # If no current session found, create one for the current draw window
+    logger.warning("No current active session found, creating new one")
+    return get_or_create_active_session(db)
+
+async def broadcast_viewer_count_update(db: Session, session_id: int):
+    """Broadcast viewer count update to all connected users"""
+    active_viewers = db.query(LiveChatViewer).filter(
+        LiveChatViewer.session_id == session_id,
+        LiveChatViewer.is_active == True,
+        LiveChatViewer.last_seen >= datetime.utcnow() - timedelta(minutes=5)
+    ).count()
+    
+    await manager.broadcast_to_session(
+        json.dumps({
+            "type": "viewer_count_update",
+            "viewer_count": active_viewers
+        }),
+        session_id
+    )
+    
+    return active_viewers
 
 @router.get("/status")
 async def get_chat_status(
@@ -146,6 +240,29 @@ async def get_chat_status(
     
     if is_active:
         session = get_or_create_active_session(db)
+        
+        # Add/update current user as a viewer
+        existing_viewer = db.query(LiveChatViewer).filter(
+            LiveChatViewer.session_id == session.id,
+            LiveChatViewer.user_id == current_user.account_id
+        ).first()
+        
+        if existing_viewer:
+            # Update last seen time
+            existing_viewer.last_seen = datetime.utcnow()
+            existing_viewer.is_active = True
+        else:
+            # Create new viewer entry
+            new_viewer = LiveChatViewer(
+                session_id=session.id,
+                user_id=current_user.account_id,
+                joined_at=datetime.utcnow(),
+                last_seen=datetime.utcnow(),
+                is_active=True
+            )
+            db.add(new_viewer)
+        
+        db.commit()
         
         # Update viewer count
         active_viewers = db.query(LiveChatViewer).filter(
@@ -180,7 +297,7 @@ async def get_chat_messages(
     if not LIVE_CHAT_ENABLED or not is_chat_window_active():
         raise HTTPException(status_code=403, detail="Chat is not active")
     
-    session = get_or_create_active_session(db)
+    session = get_current_active_session(db)
     
     messages = db.query(LiveChatMessage).filter(
         LiveChatMessage.session_id == session.id
@@ -213,7 +330,7 @@ async def like_session(
     if not LIVE_CHAT_ENABLED or not is_chat_window_active():
         raise HTTPException(status_code=403, detail="Chat is not active")
     
-    session = get_or_create_active_session(db)
+    session = get_current_active_session(db)
     
     # Check if user already liked
     existing_like = db.query(LiveChatLike).filter(
@@ -240,6 +357,15 @@ async def like_session(
     await manager.broadcast_to_session(
         json.dumps({
             "type": "session_like_update",
+            "total_likes": session.total_likes
+        }),
+        session.id
+    )
+    
+    # Broadcast like count update
+    await manager.broadcast_to_session(
+        json.dumps({
+            "type": "like_count_update",
             "total_likes": session.total_likes
         }),
         session.id
@@ -302,7 +428,30 @@ async def get_viewer_count(
     if not LIVE_CHAT_ENABLED or not is_chat_window_active():
         raise HTTPException(status_code=403, detail="Chat is not active")
     
-    session = get_or_create_active_session(db)
+    session = get_current_active_session(db)
+    
+    # Add/update current user as a viewer
+    existing_viewer = db.query(LiveChatViewer).filter(
+        LiveChatViewer.session_id == session.id,
+        LiveChatViewer.user_id == current_user.account_id
+    ).first()
+    
+    if existing_viewer:
+        # Update last seen time
+        existing_viewer.last_seen = datetime.utcnow()
+        existing_viewer.is_active = True
+    else:
+        # Create new viewer entry
+        new_viewer = LiveChatViewer(
+            session_id=session.id,
+            user_id=current_user.account_id,
+            joined_at=datetime.utcnow(),
+            last_seen=datetime.utcnow(),
+            is_active=True
+        )
+        db.add(new_viewer)
+    
+    db.commit()
     
     # Count active viewers (seen in last 5 minutes)
     active_viewers = db.query(LiveChatViewer).filter(
@@ -330,7 +479,7 @@ async def get_like_count(
     if not LIVE_CHAT_ENABLED or not is_chat_window_active():
         raise HTTPException(status_code=403, detail="Chat is not active")
     
-    session = get_or_create_active_session(db)
+    session = get_current_active_session(db)
     
     return {
         "total_likes": session.total_likes,
@@ -347,7 +496,30 @@ async def get_chat_stats(
     if not LIVE_CHAT_ENABLED or not is_chat_window_active():
         raise HTTPException(status_code=403, detail="Chat is not active")
     
-    session = get_or_create_active_session(db)
+    session = get_current_active_session(db)
+    
+    # Add/update current user as a viewer
+    existing_viewer = db.query(LiveChatViewer).filter(
+        LiveChatViewer.session_id == session.id,
+        LiveChatViewer.user_id == current_user.account_id
+    ).first()
+    
+    if existing_viewer:
+        # Update last seen time
+        existing_viewer.last_seen = datetime.utcnow()
+        existing_viewer.is_active = True
+    else:
+        # Create new viewer entry
+        new_viewer = LiveChatViewer(
+            session_id=session.id,
+            user_id=current_user.account_id,
+            joined_at=datetime.utcnow(),
+            last_seen=datetime.utcnow(),
+            is_active=True
+        )
+        db.add(new_viewer)
+    
+    db.commit()
     
     # Count active viewers
     active_viewers = db.query(LiveChatViewer).filter(
@@ -396,7 +568,7 @@ async def send_message_rest(
     if not message or not message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
-    session = get_or_create_active_session(db)
+    session = get_current_active_session(db)
     
     # Rate limiting
     recent_messages = db.query(LiveChatMessage).filter(
@@ -511,9 +683,12 @@ async def websocket_endpoint(
                 user_id=user_id,
                 is_active=True
             )
-            db.add(viewer)
-        
-        db.commit()
+        db.add(viewer)
+    
+    db.commit()
+    
+    # Broadcast updated viewer count
+    await broadcast_viewer_count_update(db, session_id)
     
     try:
         while True:
@@ -575,7 +750,15 @@ async def websocket_endpoint(
                 )
             
             elif message_data.get("type") == "ping":
-                # Handle ping for connection keep-alive
+                # Update viewer last_seen timestamp
+                viewer = db.query(LiveChatViewer).filter(
+                    LiveChatViewer.session_id == session_id,
+                    LiveChatViewer.user_id == user_id
+                ).first()
+                if viewer:
+                    viewer.last_seen = datetime.utcnow()
+                    db.commit()
+                
                 await manager.send_personal_message(
                     json.dumps({"type": "pong"}),
                     websocket
@@ -594,3 +777,6 @@ async def websocket_endpoint(
                 viewer.is_active = False
                 viewer.last_seen = datetime.utcnow()
                 db.commit()
+                
+                # Broadcast updated viewer count
+                await broadcast_viewer_count_update(db, session_id)
