@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from db import get_db
 from models import User, Avatar, Frame, Badge
 from descope.descope_client import DescopeClient
-from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY
+from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, STORE_PASSWORD_IN_DESCOPE, STORE_PASSWORD_IN_NEONDB
 from auth import validate_descope_jwt
 import logging
 from datetime import datetime, timedelta, date as DateType
@@ -102,6 +102,25 @@ async def username_available(username: str, request: Request, db: Session = Depe
         logging.error(f"Error checking username availability: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@router.get("/email-available")
+async def email_available(email: str, request: Request, db: Session = Depends(get_db)):
+    """Return { available: true|false } indicating if an email is free."""
+    try:
+        # Rate limit per IP+email
+        ip = request.client.host if request.client else "unknown"
+        rl_key = f"ea:{ip}:{email.lower()}"
+        if not check_rate_limit(rl_key):
+            raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
+        
+        # Check if email exists in the database
+        exists = db.query(User).filter(User.email == email.lower()).first()
+        return {"available": exists is None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error checking email availability: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @router.post("/bind-password")
 async def bind_password(
@@ -171,11 +190,78 @@ async def bind_password(
             else:
                 logging.info(f"Using provided email {data.email} instead of placeholder session email {session_email}")
         
-        # Skip Descope management API operations for now
-        # The user has a valid session but doesn't exist in Descope's user management system yet
-        # This is expected behavior when using OTP authentication
-        logging.info(f"Skipping Descope management operations - user has session but not in management system")
+        # Descope user management operations
+        # Try to create or update user in Descope management system
+        try:
+            # First, try to load existing user from Descope
+            try:
+                user_details = mgmt_client.mgmt.user.load(user_id)
+                logging.info(f"User exists in Descope, updating details: {user_id}")
+                
+                # User exists - update their details
+                update_data = {
+                    "email": data.email,
+                    "displayName": data.username,
+                    "name": data.username,
+                    "customAttributes": {
+                        "country": data.country,
+                        "date_of_birth": str(data.date_of_birth)
+                    }
+                }
+                
+                mgmt_client.mgmt.user.update(
+                    user_id=user_id,
+                    update_data=update_data
+                )
+                
+                # Set password in Descope if enabled
+                if STORE_PASSWORD_IN_DESCOPE:
+                    try:
+                        mgmt_client.mgmt.user.set_password(user_id, data.password)
+                        logging.info(f"Password set in Descope for user: {user_id}")
+                    except Exception as e:
+                        logging.warning(f"Failed to set password in Descope: {e}")
+                        # Continue without failing the entire operation
+                
+                logging.info(f"Successfully updated user in Descope: {user_id}")
+                
+            except Exception as load_error:
+                # User doesn't exist in Descope - create them
+                logging.info(f"User not found in Descope, creating new user: {user_id}")
+                
+                create_data = {
+                    "loginId": data.email,
+                    "email": data.email,
+                    "displayName": data.username,
+                    "name": data.username,
+                    "customAttributes": {
+                        "country": data.country,
+                        "date_of_birth": str(data.date_of_birth)
+                    }
+                }
+                
+                # Create user in Descope
+                mgmt_client.mgmt.user.create(**create_data)
+                
+                # Set password for new user if enabled
+                if STORE_PASSWORD_IN_DESCOPE:
+                    try:
+                        mgmt_client.mgmt.user.set_password(user_id, data.password)
+                        logging.info(f"Password set in Descope for new user: {user_id}")
+                    except Exception as e:
+                        logging.warning(f"Failed to set password in Descope for new user: {e}")
+                        # Continue without failing the entire operation
+                
+                logging.info(f"Successfully created user in Descope: {user_id}")
+                
+        except Exception as descope_error:
+            logging.error(f"Descope management operation failed: {descope_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail="Failed to sync user with authentication system. Please try again."
+            )
 
+        # Only proceed to NeonDB operations if Descope succeeds
         # Check if user already exists in local database
         existing_user = db.query(User).filter(User.email == data.email).first()
         if existing_user:
@@ -184,8 +270,9 @@ async def bind_password(
             existing_user.country = data.country
             existing_user.date_of_birth = data.date_of_birth
             existing_user.descope_user_id = user_id
-            # Hash and store password
-            existing_user.password = pwd_context.hash(data.password)
+            # Hash and store password in NeonDB if enabled
+            if STORE_PASSWORD_IN_NEONDB:
+                existing_user.password = pwd_context.hash(data.password)
             db.commit()
             logging.info(f"Updated existing user: {data.email}")
         else:
@@ -220,8 +307,8 @@ async def bind_password(
                 sign_up_date=datetime.utcnow(),
                 wallet_balance=0.0,
                 total_spent=0.0,
-                # Hash and store password
-                password=pwd_context.hash(data.password),
+                # Hash and store password in NeonDB if enabled
+                password=pwd_context.hash(data.password) if STORE_PASSWORD_IN_NEONDB else None,
             )
             db.add(new_user)
             db.commit()

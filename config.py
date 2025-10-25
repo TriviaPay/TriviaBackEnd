@@ -29,6 +29,10 @@ DESCOPE_MANAGEMENT_KEY = os.getenv("DESCOPE_MANAGEMENT_KEY", "")
 DESCOPE_JWT_LEEWAY = int(os.getenv("DESCOPE_JWT_LEEWAY", "3600"))  # default 1 hour for local dev time sync issues
 DESCOPE_JWT_LEEWAY_FALLBACK = int(os.getenv("DESCOPE_JWT_LEEWAY_FALLBACK", "7200"))
 
+# Password storage configuration
+STORE_PASSWORD_IN_DESCOPE = os.getenv("STORE_PASSWORD_IN_DESCOPE", "true").lower() == "true"
+STORE_PASSWORD_IN_NEONDB = os.getenv("STORE_PASSWORD_IN_NEONDB", "true").lower() == "true"
+
 # Live Chat settings
 LIVE_CHAT_ENABLED = os.getenv("LIVE_CHAT_ENABLED", "true").lower() == "true"
 LIVE_CHAT_PRE_DRAW_HOURS = int(os.getenv("LIVE_CHAT_PRE_DRAW_HOURS", "1"))  # Hours before draw
