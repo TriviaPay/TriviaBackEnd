@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, and_, or_
 import pytz
 
-from models import User, TriviaQuestionsWinners, TriviaDrawConfig, TriviaQuestionsAnswers, CompanyRevenue, TriviaQuestionsEntries, Badge, Avatar, Frame
+from models import User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsEntries, Badge, Avatar, Frame
 from db import get_db
 
 # Configure logging
@@ -345,11 +345,11 @@ def update_user_eligibility(db: Session, user_account_id: int, draw_date: date) 
     Check if a user has answered 1 question correctly for the given date
     and update their daily_eligibility_flag accordingly.
     """
-    # Count correct answers for the user on the given date
-    correct_answers = db.query(TriviaQuestionsAnswers).filter(
-        TriviaQuestionsAnswers.account_id == user_account_id,
-        TriviaQuestionsAnswers.date == draw_date,
-        TriviaQuestionsAnswers.is_correct == True
+    # Count correct answers for the user on the given date using TriviaQuestionsDaily
+    correct_answers = db.query(TriviaQuestionsDaily).filter(
+        TriviaQuestionsDaily.account_id == user_account_id,
+        func.date(TriviaQuestionsDaily.date) == draw_date,
+        TriviaQuestionsDaily.user_is_correct == True
     ).count()
     
     # Update eligibility flag if user answered 1 question correctly

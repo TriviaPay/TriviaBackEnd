@@ -9,6 +9,7 @@ import json
 from db import get_db
 from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries
 from routers.dependencies import get_current_user
+from pathlib import Path as FilePath
 
 router = APIRouter(prefix="/trivia", tags=["Trivia"])
 
@@ -140,6 +141,25 @@ async def get_current_question(
     # Get today's questions
     today = datetime.utcnow().date()
     
+    # Ensure entries record exists for today (populate when user accesses trivia)
+    entry = db.query(TriviaQuestionsEntries).filter(
+        TriviaQuestionsEntries.account_id == user.account_id,
+        TriviaQuestionsEntries.date == today
+    ).first()
+    
+    if not entry:
+        # Create a new entry when user first accesses trivia for the day
+        entry = TriviaQuestionsEntries(
+            account_id=user.account_id,
+            number_of_entries=0,
+            ques_attempted=0,
+            correct_answers=0,
+            wrong_answers=0,
+            date=today
+        )
+        db.add(entry)
+        db.commit()
+    
     # First, check if the user has already answered a question correctly today
     daily_questions = db.query(TriviaQuestionsDaily).filter(
         TriviaQuestionsDaily.account_id == user.account_id,
@@ -168,13 +188,15 @@ async def get_current_question(
             "category": q.category,
             "difficulty": q.difficulty_level,
             "picture_url": q.picture_url,
+            "hint": q.hint,
+            "correct_answer": q.correct_answer,
+            "total_gems": user.gems,
             "order": correct_question.question_order,
             "is_common": correct_question.is_common,
             "is_used": correct_question.is_used,
             "total_questions": len(daily_questions),
             "questions_answered": sum(1 for dq in daily_questions if dq.is_used),
             "is_correct": correct_question.is_correct,
-            "correct_answer": q.correct_answer,
             "user_answer": correct_question.answer,
             "explanation": q.explanation,
             "answered_at": correct_question.answered_at,
@@ -304,6 +326,9 @@ async def get_current_question(
         "category": q.category,
         "difficulty": q.difficulty_level,
         "picture_url": q.picture_url,
+        "hint": q.hint,
+        "correct_answer": q.correct_answer,
+        "total_gems": user.gems,
         "order": current_question.question_order,
         "is_common": current_question.is_common,
         "is_used": current_question.is_used,
@@ -581,5 +606,58 @@ async def reset_questions(
     return {
         "message": f"Successfully reset {updated_count} questions to unused status",
         "updated_count": updated_count
+    }
+
+# Load store configuration for boost costs
+STORE_CONFIG_PATH = FilePath("config/store_items.json")
+with open(STORE_CONFIG_PATH) as f:
+    store_config = json.load(f)
+
+@router.get("/boost-availability")
+async def get_boost_availability(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the number of each boost the user can afford with their current gems.
+    Shows how many of each boost type can be purchased.
+    """
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get boost costs from config
+    gameplay_boosts = store_config.get("gameplay_boosts", {})
+    
+    # Calculate how many of each boost user can afford
+    available_boosts = {}
+    for boost_type, boost_info in gameplay_boosts.items():
+        if 'gems' in boost_info:
+            cost = boost_info['gems']
+            if cost > 0:
+                available_count = user.gems // cost
+                available_boosts[boost_type] = available_count
+            else:
+                available_boosts[boost_type] = 0
+        else:
+            available_boosts[boost_type] = 0
+    
+    # Get remaining question changes for today
+    today = datetime.utcnow().date()
+    daily_questions = db.query(TriviaQuestionsDaily).filter(
+        TriviaQuestionsDaily.account_id == user.account_id,
+        func.date(TriviaQuestionsDaily.date) == today
+    ).all()
+    
+    # Count how many questions have been changed today
+    changes_used_today = sum(1 for dq in daily_questions if dq.was_changed)
+    question_changes_remaining = max(0, 3 - changes_used_today)
+    
+    return {
+        "available_boosts": available_boosts,
+        "question_changes_remaining": question_changes_remaining,
+        "total_gems": user.gems,
+        "boost_costs": {boost_type: boost_info.get('gems', 0) 
+                       for boost_type, boost_info in gameplay_boosts.items() 
+                       if 'gems' in boost_info}
     }
 
