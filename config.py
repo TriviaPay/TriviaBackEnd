@@ -26,8 +26,12 @@ APP_VERSION = "1.0.0"
 # Descope settings
 DESCOPE_PROJECT_ID = os.getenv("DESCOPE_PROJECT_ID", "")
 DESCOPE_MANAGEMENT_KEY = os.getenv("DESCOPE_MANAGEMENT_KEY", "")
-DESCOPE_JWT_LEEWAY = int(os.getenv("DESCOPE_JWT_LEEWAY", "3600"))  # default 1 hour for local dev time sync issues
-DESCOPE_JWT_LEEWAY_FALLBACK = int(os.getenv("DESCOPE_JWT_LEEWAY_FALLBACK", "7200"))
+DESCOPE_JWT_LEEWAY = int(os.getenv("DESCOPE_JWT_LEEWAY", "60"))  # default 60 seconds for JWT clock-skew tolerance
+DESCOPE_JWT_LEEWAY_FALLBACK = int(os.getenv("DESCOPE_JWT_LEEWAY_FALLBACK", "120"))  # fallback 120 seconds for severe clock-skew
+
+# Log JWT leeway configuration on startup
+import logging
+logging.info(f"Descope JWT leeway configured: primary={DESCOPE_JWT_LEEWAY}s, fallback={DESCOPE_JWT_LEEWAY_FALLBACK}s")
 
 # Password storage configuration
 STORE_PASSWORD_IN_DESCOPE = os.getenv("STORE_PASSWORD_IN_DESCOPE", "true").lower() == "true"

@@ -12,11 +12,11 @@ from routers.dependencies import get_current_user
 import logging
 from utils import get_letter_profile_pic
 from descope import DescopeClient
-from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY
+from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
-client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY)
+client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
 
 class ProfileUpdate(BaseModel):
     username: str

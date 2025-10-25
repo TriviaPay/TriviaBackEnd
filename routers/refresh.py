@@ -12,12 +12,12 @@ from db import get_db
 from models import User
 from routers.dependencies import get_current_user
 from descope.descope_client import DescopeClient
-from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY
+from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, DESCOPE_JWT_LEEWAY_FALLBACK
 
 router = APIRouter(prefix="/auth", tags=["Refresh"])
 
 # Create Descope client with management key for session operations
-descope_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY)
+descope_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
 
 # The refresh endpoint is disabled after migration to Descope.
 # Descope does not use refresh tokens in the same way as Auth0.
@@ -231,7 +231,7 @@ async def refresh_session(request: Request, db: Session = Depends(get_db)):
                     high_leeway_client = DescopeClient(
                         project_id=DESCOPE_PROJECT_ID, 
                         management_key=DESCOPE_MANAGEMENT_KEY,
-                        jwt_validation_leeway=600
+                        jwt_validation_leeway=DESCOPE_JWT_LEEWAY_FALLBACK
                     )
                     session = high_leeway_client.validate_session(token)
                     user_info = session.get('user', {})
