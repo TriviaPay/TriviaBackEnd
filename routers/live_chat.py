@@ -70,7 +70,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 def is_chat_window_active() -> bool:
-    """Check if we're within the chat window (1hr before/after draw)"""
+    """Check if we're within the chat window (before/after draw)"""
     if not LIVE_CHAT_ENABLED:
         return False
         
@@ -78,12 +78,25 @@ def is_chat_window_active() -> bool:
         next_draw_time = get_next_draw_time()
         now = datetime.now(pytz.timezone(os.getenv("DRAW_TIMEZONE", "US/Eastern")))
         
-        # Calculate chat window
-        chat_start = next_draw_time - timedelta(hours=LIVE_CHAT_PRE_DRAW_HOURS)
-        chat_end = next_draw_time + timedelta(hours=LIVE_CHAT_POST_DRAW_HOURS)
+        # Calculate next draw's chat window
+        next_chat_start = next_draw_time - timedelta(hours=LIVE_CHAT_PRE_DRAW_HOURS)
+        next_chat_end = next_draw_time + timedelta(hours=LIVE_CHAT_POST_DRAW_HOURS)
         
-        logger.debug(f"Chat window: {chat_start} to {chat_end}, current time: {now}")
-        return chat_start <= now <= chat_end
+        # Calculate previous draw's chat window
+        prev_draw_time = next_draw_time - timedelta(days=1)
+        prev_chat_start = prev_draw_time - timedelta(hours=LIVE_CHAT_PRE_DRAW_HOURS)
+        prev_chat_end = prev_draw_time + timedelta(hours=LIVE_CHAT_POST_DRAW_HOURS)
+        
+        # Check if we're in either chat window
+        in_next_window = next_chat_start <= now <= next_chat_end
+        in_prev_window = prev_chat_start <= now <= prev_chat_end
+        
+        logger.debug(f"Next chat window: {next_chat_start} to {next_chat_end}")
+        logger.debug(f"Prev chat window: {prev_chat_start} to {prev_chat_end}")
+        logger.debug(f"Current time: {now}")
+        logger.debug(f"In next window: {in_next_window}, In prev window: {in_prev_window}")
+        
+        return in_next_window or in_prev_window
     except Exception as e:
         logger.error(f"Error checking chat window: {e}")
         return False
