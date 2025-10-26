@@ -183,8 +183,9 @@ async def refresh_session(request: Request, db: Session = Depends(get_db)):
             # Use Descope's session refresh API
             # First, validate the current session to get user info
             session = descope_client.validate_session(token)
-            user_info = session.get('user', {})
-            user_id = user_info.get('userId')
+            
+            # Extract user ID directly from session (not nested under 'user')
+            user_id = session.get('userId') or session.get('sub')
             
             if not user_id:
                 raise HTTPException(status_code=400, detail="Invalid session: no user ID found")
@@ -197,6 +198,16 @@ async def refresh_session(request: Request, db: Session = Depends(get_db)):
             # For now, we'll validate the session and return the same token
             # In a production environment, you might want to implement a more sophisticated
             # session extension mechanism
+            
+            # Extract user info from session for database operations
+            user_info = {
+                'userId': user_id,
+                'sub': session.get('sub'),
+                'loginIds': session.get('loginIds', []),
+                'email': session.get('loginIds', [None])[0] if session.get('loginIds') else None,
+                'name': session.get('name'),
+                'displayName': session.get('displayName')
+            }
             
             # Check if user exists in our database
             user = db.query(User).filter(User.descope_user_id == user_id).first()
@@ -234,7 +245,17 @@ async def refresh_session(request: Request, db: Session = Depends(get_db)):
                         jwt_validation_leeway=DESCOPE_JWT_LEEWAY_FALLBACK
                     )
                     session = high_leeway_client.validate_session(token)
-                    user_info = session.get('user', {})
+                    
+                    # Extract user info directly from session
+                    user_id = session.get('userId') or session.get('sub')
+                    user_info = {
+                        'userId': user_id,
+                        'sub': session.get('sub'),
+                        'loginIds': session.get('loginIds', []),
+                        'email': session.get('loginIds', [None])[0] if session.get('loginIds') else None,
+                        'name': session.get('name'),
+                        'displayName': session.get('displayName')
+                    }
                     
                     return {
                         "access_token": token,
