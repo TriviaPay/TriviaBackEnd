@@ -15,37 +15,32 @@ logger = logging.getLogger(__name__)
 def get_current_user(request: Request, db=Depends(get_db)):
     """
     Extracts and validates Descope JWT from Authorization header. Returns user info dict.
+    Users must be created through the /bind-password endpoint, not automatically here.
     """
     auth_header = request.headers.get('authorization') or request.headers.get('Authorization')
     if not auth_header or not auth_header.lower().startswith('bearer '):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token missing.")
     token = auth_header.split(' ', 1)[1].strip()
     user_info = validate_descope_jwt(token)
-    # Optionally, sync user info to DB here if needed
-    # Find or create user in DB
+    
+    # Find user in DB by Descope user ID
     user = db.query(User).filter(User.descope_user_id == user_info['userId']).first()
     if not user:
-        # Check if user exists by email first
+        # Check if user exists by email (for users created before Descope integration)
         email = user_info['loginIds'][0]
         existing_user = db.query(User).filter(User.email == email).first()
         if existing_user:
-            # Update existing user with Descope user ID
+            # Update existing user with Descope user ID but don't change username
             existing_user.descope_user_id = user_info['userId']
-            if not existing_user.username:
-                existing_user.username = user_info.get('name') or user_info.get('displayName') or email
             db.commit()
             db.refresh(existing_user)
             user = existing_user
         else:
-            # Create new user if none exists
-            user = User(
-                descope_user_id=user_info['userId'],
-                email=email,
-                username=user_info.get('name') or user_info.get('displayName') or email,
+            # User doesn't exist - they need to complete profile binding
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, 
+                detail="User profile not found. Please complete profile setup first."
             )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
     return user
 
 def validate_jwt_dependency(request: Request):
