@@ -233,7 +233,7 @@ async def bind_password(
                 logging.info(f"User not found in Descope, creating new user: {user_id}")
                 
                 create_data = {
-                    "loginId": data.email,
+                    "login_id": data.email,
                     "email": data.email,
                     "displayName": data.username,
                     "name": data.username,
