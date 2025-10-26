@@ -235,9 +235,9 @@ async def bind_password(
                 create_data = {
                     "login_id": data.email,
                     "email": data.email,
-                    "displayName": data.username,
+                    "display_name": data.username,
                     "name": data.username,
-                    "customAttributes": {
+                    "custom_attributes": {
                         "country": data.country,
                         "date_of_birth": str(data.date_of_birth)
                     }
