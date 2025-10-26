@@ -228,35 +228,44 @@ async def bind_password(
                 logging.info(f"Successfully updated user in Descope: {user_id}")
                 
             except Exception as load_error:
-                # User doesn't exist in Descope - create them
-                logging.info(f"User not found in Descope, creating new user: {user_id}")
-                
-                create_data = {
-                    "login_id": data.email,
-                    "email": data.email,
-                    "display_name": data.username,
-                    "custom_attributes": {
-                        "country": data.country,
-                        "date_of_birth": str(data.date_of_birth)
+                # Check if it's a 404 (user not found) or other error
+                if "not found" in str(load_error).lower() or "404" in str(load_error):
+                    # User doesn't exist in Descope - create them
+                    logging.info(f"User not found in Descope, creating new user: {user_id}")
+                    
+                    create_data = {
+                        "login_id": data.email,
+                        "email": data.email,
+                        "display_name": data.username,
+                        "custom_attributes": {
+                            "country": data.country,
+                            "date_of_birth": str(data.date_of_birth)
+                        }
                     }
-                }
-                
-                # Create user in Descope
-                mgmt_client.mgmt.user.create(**create_data)
-                
-                # Set password for new user if enabled
-                if STORE_PASSWORD_IN_DESCOPE:
-                    try:
-                        mgmt_client.mgmt.user.set_password(data.email, data.password)
-                        logging.info(f"Password set in Descope for new user: {data.email}")
-                    except Exception as e:
-                        logging.error(f"Failed to set password in Descope for new user: {e}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"Failed to set password in authentication system: {str(e)}"
-                        )
-                
-                logging.info(f"Successfully created user in Descope: {user_id}")
+                    
+                    # Create user in Descope
+                    mgmt_client.mgmt.user.create(**create_data)
+                    
+                    # Set password for new user if enabled
+                    if STORE_PASSWORD_IN_DESCOPE:
+                        try:
+                            mgmt_client.mgmt.user.set_password(data.email, data.password)
+                            logging.info(f"Password set in Descope for new user: {data.email}")
+                        except Exception as e:
+                            logging.error(f"Failed to set password in Descope for new user: {e}")
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"Failed to set password in authentication system: {str(e)}"
+                            )
+                    
+                    logging.info(f"Successfully created user in Descope: {user_id}")
+                else:
+                    # Re-raise other errors (like parameter issues)
+                    logging.error(f"Descope user operation failed: {load_error}")
+                    raise HTTPException(
+                        status_code=500, 
+                        detail="Failed to sync user with authentication system. Please try again."
+                    )
                 
         except Exception as descope_error:
             logging.error(f"Descope management operation failed: {descope_error}")
@@ -296,7 +305,6 @@ async def bind_password(
                 descope_user_id=user_id,
                 email=data.email,
                 username=data.username,
-                display_name=data.username,
                 country=data.country,
                 date_of_birth=data.date_of_birth,
                 notification_on=True,
