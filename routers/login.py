@@ -201,9 +201,8 @@ async def bind_password(
                 # User exists - update their details
                 update_data = {
                     "email": data.email,
-                    "displayName": data.username,
-                    "name": data.username,
-                    "customAttributes": {
+                    "display_name": data.username,
+                    "custom_attributes": {
                         "country": data.country,
                         "date_of_birth": str(data.date_of_birth)
                     }
@@ -236,7 +235,6 @@ async def bind_password(
                     "login_id": data.email,
                     "email": data.email,
                     "display_name": data.username,
-                    "name": data.username,
                     "custom_attributes": {
                         "country": data.country,
                         "date_of_birth": str(data.date_of_birth)
