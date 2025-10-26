@@ -69,6 +69,19 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+def get_display_username(user: User) -> str:
+    """
+    Get display username with fallback logic.
+    Priority: username -> email prefix -> User{account_id}
+    """
+    if user.username and user.username.strip():
+        return user.username
+    
+    if user.email:
+        return user.email.split('@')[0]
+    
+    return f"User{user.account_id}"
+
 def is_chat_window_active() -> bool:
     """Check if we're within the chat window (before/after draw)"""
     if not LIVE_CHAT_ENABLED:
@@ -308,7 +321,7 @@ async def get_chat_messages(
             {
                 "id": msg.id,
                 "user_id": msg.user_id,
-                "username": msg.user.username,
+                "username": get_display_username(msg.user),
                 "profile_pic": msg.user.profile_pic_url,
                 "message": msg.message,
                 "message_type": msg.message_type,
@@ -597,7 +610,7 @@ async def send_message_rest(
         "message": {
             "id": new_message.id,
             "user_id": current_user.account_id,
-            "username": current_user.username,
+            "username": get_display_username(current_user),
             "profile_pic": current_user.profile_pic_url,
             "message": message.strip(),
             "message_type": "text",
@@ -733,7 +746,7 @@ async def websocket_endpoint(
                     "message": {
                         "id": new_message.id,
                         "user_id": user_id,
-                        "username": user.username,
+                        "username": get_display_username(user),
                         "profile_pic": user.profile_pic_url,
                         "message": message_text,
                         "message_type": "text",
