@@ -209,8 +209,8 @@ async def bind_password(
                 }
                 
                 mgmt_client.mgmt.user.update(
-                    user_id=user_id,
-                    update_data=update_data
+                    login_id=data.email,
+                    **update_data
                 )
                 
                 # Set password in Descope if enabled
