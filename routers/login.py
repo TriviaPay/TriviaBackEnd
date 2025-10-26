@@ -312,7 +312,6 @@ async def bind_password(
                 streaks=0,
                 lifeline_changes_remaining=3,
                 referral_count=0,
-                is_referred=False,
                 is_admin=False,
                 username_updated=False,
                 subscription_flag=False,
