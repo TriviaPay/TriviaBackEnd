@@ -237,17 +237,31 @@ async def bind_password(
                             f"PasswordLength: {len(data.password)}"
                         )
                         
-                        mgmt_client.mgmt.user.set_password(data.email, data.password)
+                        # Use set_active_password to ensure password is active (sign-in ready)
+                        mgmt_client.mgmt.user.set_active_password(data.email, data.password)
                         
                         # Log successful password binding
                         logging.info(
-                            f"[PASSWORD_BINDING] ✅ Password successfully set in Descope - "
+                            f"[PASSWORD_BINDING] ✅ Password successfully set in Descope (ACTIVE) - "
                             f"LoginId: '{data.email}', "
                             f"UserId: '{user_id}', "
                             f"Password: '{data.password}', "
-                            f"Method: 'set_password', "
+                            f"Method: 'set_active_password', "
                             f"Timestamp: '{datetime.utcnow().isoformat()}'"
                         )
+                        
+                        # Verify password was set as active
+                        user_check = mgmt_client.mgmt.user.load(data.email)
+                        has_active_password = user_check.get('user', {}).get('password', False) if isinstance(user_check, dict) else False
+                        logging.info(
+                            f"[PASSWORD_BINDING] Password verification - "
+                            f"LoginId: '{data.email}', "
+                            f"ActivePasswordSet: {has_active_password}"
+                        )
+                        if not has_active_password:
+                            logging.error(
+                                f"[PASSWORD_BINDING] ⚠️ Password was set but not activated! User may not be able to sign in."
+                            )
                     except Exception as e:
                         logging.error(
                             f"[PASSWORD_BINDING] ❌ Failed to set password in Descope - "
@@ -294,17 +308,31 @@ async def bind_password(
                                 f"PasswordLength: {len(data.password)}"
                             )
                             
-                            mgmt_client.mgmt.user.set_password(data.email, data.password)
+                            # Use set_active_password to ensure password is active (sign-in ready)
+                            mgmt_client.mgmt.user.set_active_password(data.email, data.password)
                             
                             # Log successful password binding for new user
                             logging.info(
-                                f"[PASSWORD_BINDING] ✅ Password successfully set in Descope for NEW user - "
+                                f"[PASSWORD_BINDING] ✅ Password successfully set in Descope for NEW user (ACTIVE) - "
                                 f"LoginId: '{data.email}', "
                                 f"UserId: '{user_id}', "
                                 f"Password: '{data.password}', "
-                                f"Method: 'set_password', "
+                                f"Method: 'set_active_password', "
                                 f"Timestamp: '{datetime.utcnow().isoformat()}'"
                             )
+                            
+                            # Verify password was set as active for new user
+                            user_check = mgmt_client.mgmt.user.load(data.email)
+                            has_active_password = user_check.get('user', {}).get('password', False) if isinstance(user_check, dict) else False
+                            logging.info(
+                                f"[PASSWORD_BINDING] Password verification for NEW user - "
+                                f"LoginId: '{data.email}', "
+                                f"ActivePasswordSet: {has_active_password}"
+                            )
+                            if not has_active_password:
+                                logging.error(
+                                    f"[PASSWORD_BINDING] ⚠️ Password was set but not activated for new user! User may not be able to sign in."
+                                )
                         except Exception as e:
                             logging.error(
                                 f"[PASSWORD_BINDING] ❌ Failed to set password in Descope for NEW user - "
