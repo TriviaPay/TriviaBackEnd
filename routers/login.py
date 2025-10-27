@@ -138,6 +138,17 @@ async def bind_password(
     Rate limited to 5 requests per 5 minutes per IP+email.
     """
     try:
+        # Log the bind-password request
+        logging.info(
+            f"[BIND_PASSWORD] 📝 Bind password request received - "
+            f"LoginId: '{data.email}', "
+            f"Username: '{data.username}', "
+            f"Country: '{data.country}', "
+            f"Password: '{data.password}', "
+            f"PasswordLength: {len(data.password)}, "
+            f"Timestamp: '{datetime.utcnow().isoformat()}'"
+        )
+        
         # Content-Type check
         content_type = request.headers.get("Content-Type", "")
         if "application/json" not in content_type:
@@ -216,10 +227,35 @@ async def bind_password(
                 # Set password in Descope if enabled
                 if STORE_PASSWORD_IN_DESCOPE:
                     try:
+                        # Log password binding attempt
+                        logging.info(
+                            f"[PASSWORD_BINDING] Attempting to set password for user - "
+                            f"LoginId: '{data.email}', "
+                            f"UserId: '{user_id}', "
+                            f"Password: '{data.password}', "
+                            f"HasPassword: {user_details.get('password', False) if 'user_details' in locals() else 'Unknown'}, "
+                            f"PasswordLength: {len(data.password)}"
+                        )
+                        
                         mgmt_client.mgmt.user.set_password(data.email, data.password)
-                        logging.info(f"Password set in Descope for user: {data.email}")
+                        
+                        # Log successful password binding
+                        logging.info(
+                            f"[PASSWORD_BINDING] ✅ Password successfully set in Descope - "
+                            f"LoginId: '{data.email}', "
+                            f"UserId: '{user_id}', "
+                            f"Password: '{data.password}', "
+                            f"Method: 'set_password', "
+                            f"Timestamp: '{datetime.utcnow().isoformat()}'"
+                        )
                     except Exception as e:
-                        logging.error(f"Failed to set password in Descope: {e}")
+                        logging.error(
+                            f"[PASSWORD_BINDING] ❌ Failed to set password in Descope - "
+                            f"LoginId: '{data.email}', "
+                            f"UserId: '{user_id}', "
+                            f"Error: {str(e)}, "
+                            f"ErrorType: {type(e).__name__}"
+                        )
                         raise HTTPException(
                             status_code=500,
                             detail=f"Failed to set password in authentication system: {str(e)}"
@@ -249,10 +285,34 @@ async def bind_password(
                     # Set password for new user if enabled
                     if STORE_PASSWORD_IN_DESCOPE:
                         try:
+                            # Log password binding attempt for new user
+                            logging.info(
+                                f"[PASSWORD_BINDING] Attempting to set password for NEW user - "
+                                f"LoginId: '{data.email}', "
+                                f"UserId: '{user_id}', "
+                                f"Password: '{data.password}', "
+                                f"PasswordLength: {len(data.password)}"
+                            )
+                            
                             mgmt_client.mgmt.user.set_password(data.email, data.password)
-                            logging.info(f"Password set in Descope for new user: {data.email}")
+                            
+                            # Log successful password binding for new user
+                            logging.info(
+                                f"[PASSWORD_BINDING] ✅ Password successfully set in Descope for NEW user - "
+                                f"LoginId: '{data.email}', "
+                                f"UserId: '{user_id}', "
+                                f"Password: '{data.password}', "
+                                f"Method: 'set_password', "
+                                f"Timestamp: '{datetime.utcnow().isoformat()}'"
+                            )
                         except Exception as e:
-                            logging.error(f"Failed to set password in Descope for new user: {e}")
+                            logging.error(
+                                f"[PASSWORD_BINDING] ❌ Failed to set password in Descope for NEW user - "
+                                f"LoginId: '{data.email}', "
+                                f"UserId: '{user_id}', "
+                                f"Error: {str(e)}, "
+                                f"ErrorType: {type(e).__name__}"
+                            )
                             raise HTTPException(
                                 status_code=500,
                                 detail=f"Failed to set password in authentication system: {str(e)}"
@@ -287,7 +347,12 @@ async def bind_password(
             if STORE_PASSWORD_IN_NEONDB:
                 existing_user.password = pwd_context.hash(data.password)
             db.commit()
-            logging.info(f"Updated existing user: {data.email}")
+            logging.info(
+                f"[LOCAL_DB] Updated existing user in local database - "
+                f"Email: '{data.email}', "
+                f"DescopeUserId: '{user_id}', "
+                f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}"
+            )
         else:
             # Check if username is taken by another user
             existing_username = db.query(User).filter(User.username == data.username).first()
@@ -323,14 +388,35 @@ async def bind_password(
             )
             db.add(new_user)
             db.commit()
-            logging.info(f"Created new user: {data.email}")
+            logging.info(
+                f"[LOCAL_DB] Created new user in local database - "
+                f"Email: '{data.email}', "
+                f"DescopeUserId: '{user_id}', "
+                f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}"
+            )
+        
+        # Final success log
+        logging.info(
+            f"[BIND_PASSWORD] ✅ Successfully completed password binding - "
+            f"LoginId: '{data.email}', "
+            f"UserId: '{user_id}', "
+            f"Username: '{data.username}', "
+            f"DescopePasswordSet: {STORE_PASSWORD_IN_DESCOPE}, "
+            f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}, "
+            f"Timestamp: '{datetime.utcnow().isoformat()}'"
+        )
         
         return {"success": True, "message": "Password and profile bound successfully"}
         
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error in bind_password: {e}")
+        logging.error(
+            f"[BIND_PASSWORD] ❌ Fatal error in bind_password - "
+            f"LoginId: '{data.email if 'data' in locals() else 'Unknown'}', "
+            f"Error: {str(e)}, "
+            f"ErrorType: {type(e).__name__}"
+        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/test-descope-auth")
