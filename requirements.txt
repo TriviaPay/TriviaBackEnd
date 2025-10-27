@@ -7,7 +7,7 @@ passlib[bcrypt]==1.7.4
 bcrypt==3.2.2
 python-jose==3.3.0
 python-multipart==0.0.9
-descope==1.6.0
+descope>=1.7.0
 stripe==8.4.0
 pg8000==1.30.5  # Pure Python PostgreSQL driver
 apscheduler==3.10.4
