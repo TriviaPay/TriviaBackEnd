@@ -64,14 +64,16 @@ async def get_user_badges(
         logging.error(f"Error getting user badges: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving badges: {str(e)}")
 
-@router.post("/assign-badge", status_code=200)
-async def assign_badge(
+@router.post("/update-badge", status_code=200)
+async def update_badge(
     badge_data: BadgeAssignment,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Assign a badge to the user
+    Assign or update the badge for the user.
+    Each user can have only one badge at a time.
+    Badges can only be assigned/updated, not removed.
     """
     try:
         # Get the current user
@@ -88,16 +90,30 @@ async def assign_badge(
                 "code": "BADGE_NOT_FOUND"
             }
         
-        # Update the user's badge
+        # Check if user already has this badge
+        if user.badge_id == badge.id:
+            return {
+                "status": "success",
+                "message": f"Badge '{badge.name}' is already assigned to you",
+                "data": {
+                    "badge_id": badge.id,
+                    "badge_name": badge.name,
+                    "badge_image_url": badge.image_url
+                }
+            }
+        
+        # Update the user's badge (assign new badge or update to different badge)
+        old_badge_id = user.badge_id
         user.badge_id = badge.id
         user.badge_image_url = badge.image_url
         
         # Commit changes
         db.commit()
         
+        action = "updated" if old_badge_id else "assigned"
         return {
             "status": "success",
-            "message": f"Badge '{badge.name}' successfully assigned",
+            "message": f"Badge '{badge.name}' successfully {action}",
             "data": {
                 "badge_id": badge.id,
                 "badge_name": badge.name,
@@ -107,54 +123,11 @@ async def assign_badge(
     
     except Exception as e:
         db.rollback()
-        logging.error(f"Error assigning badge: {str(e)}")
+        logging.error(f"Error updating badge: {str(e)}")
         return {
             "status": "error",
-            "message": f"Error assigning badge: {str(e)}",
-            "code": "BADGE_ASSIGNMENT_ERROR"
-        }
-
-@router.post("/remove-badge", status_code=200)
-async def remove_badge(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Remove the current badge from the user
-    """
-    try:
-        # Get the current user
-        user = db.query(User).filter(User.account_id == current_user.account_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail=f"User not found")
-        
-        # Check if user has a badge
-        if not user.badge_id:
-            return {
-                "status": "error",
-                "message": "User does not have a badge assigned",
-                "code": "NO_BADGE_ASSIGNED"
-            }
-        
-        # Remove the badge
-        user.badge_id = None
-        user.badge_image_url = None
-        
-        # Commit changes
-        db.commit()
-        
-        return {
-            "status": "success",
-            "message": "Badge successfully removed"
-        }
-    
-    except Exception as e:
-        db.rollback()
-        logging.error(f"Error removing badge: {str(e)}")
-        return {
-            "status": "error",
-            "message": f"Error removing badge: {str(e)}",
-            "code": "BADGE_REMOVAL_ERROR"
+            "message": f"Error updating badge: {str(e)}",
+            "code": "BADGE_UPDATE_ERROR"
         } 
 
 @router.get("/gems", status_code=200)

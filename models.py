@@ -1,6 +1,7 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint, Text
+    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint, Text, Enum as SQLEnum
 )
+from enum import Enum as PyEnum
 from sqlalchemy.orm import relationship
 from db import Base
 from datetime import datetime, date
@@ -82,7 +83,6 @@ class User(Base):
     # Relationships
     entries = relationship("TriviaQuestionsEntries", back_populates="user")
     payments = relationship("Payment", back_populates="user")
-    daily_questions = relationship("TriviaQuestionsDaily", back_populates="user")
     badge_info = relationship("Badge", back_populates="users")
     payment_transactions = relationship("PaymentTransaction", back_populates="user")
     bank_accounts = relationship("UserBankAccount", back_populates="user")
@@ -98,7 +98,6 @@ class TriviaQuestionsEntries(Base):
     __tablename__ = "trivia_questions_entries"
 
     account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
-    number_of_entries = Column(Integer, nullable=False)
     ques_attempted = Column(Integer, nullable=False)
     correct_answers = Column(Integer, nullable=False)
     wrong_answers = Column(Integer, nullable=False)
@@ -274,34 +273,61 @@ class Withdrawal(Base):
 #  Daily Questions Table
 # =================================
 class TriviaQuestionsDaily(Base):
-    """Track which questions are allocated to users each day"""
+    """Shared daily questions pool (0-4 questions per day for all users)"""
     __tablename__ = "trivia_questions_daily"
 
     id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
     date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    is_common = Column(Boolean, default=False)  # True for first question
+    question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
     question_order = Column(Integer, nullable=False)  # 1-4 for ordering
-    
-    # Question allocation tracking (prevents reallocation to other users)
-    is_used = Column(Boolean, default=False)  # True if question allocated to any user today
-    was_changed = Column(Boolean, default=False)  # Track if question was changed via lifeline
-    
-    # User attempt tracking (specific to this user)
-    user_attempted = Column(Boolean, default=False)  # True if this user attempted this question
-    user_answer = Column(String, nullable=True)  # User's answer
-    user_is_correct = Column(Boolean, nullable=True)  # Whether the user's answer was correct
-    user_answered_at = Column(DateTime, nullable=True)  # When the user answered
-    
-    # Legacy fields (deprecated, use user_* fields instead)
-    answer = Column(String, nullable=True)  # DEPRECATED: Use user_answer
-    is_correct = Column(Boolean, nullable=True)  # DEPRECATED: Use user_is_correct
-    answered_at = Column(DateTime, nullable=True)  # DEPRECATED: Use user_answered_at
+    is_common = Column(Boolean, default=False)  # True for first question (free for all)
+    is_used = Column(Boolean, default=False)  # True if ANY user has viewed/unlocked this question
     
     # Relationships
-    user = relationship("User", back_populates="daily_questions")
     question = relationship("Trivia", backref="daily_allocations")
+    __table_args__ = (
+        UniqueConstraint('date', 'question_order', name='uq_daily_question_order'),
+        UniqueConstraint('date', 'question_number', name='uq_daily_question_number'),
+    )
+
+# =================================
+#  User Daily Questions Table (Unlocks + Attempts)
+# =================================
+class UnlockMethod(PyEnum):
+    FREE = 'free'
+    GEMS = 'gems'
+    USD = 'usd'
+
+class QuestionStatus(PyEnum):
+    LOCKED = 'locked'
+    VIEWED = 'viewed'
+    ANSWERED_WRONG = 'answered_wrong'
+    ANSWERED_CORRECT = 'answered_correct'
+    SKIPPED = 'skipped'
+
+class TriviaUserDaily(Base):
+    """Per-user, per-day, per-question unlocks and attempts"""
+    __tablename__ = "trivia_user_daily"
+
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
+    date = Column(Date, primary_key=True, nullable=False)
+    question_order = Column(Integer, primary_key=True, nullable=False)  # 1-4
+    
+    question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
+    unlock_method = Column(String, nullable=True)  # 'free', 'gems', 'usd' - NULL = not unlocked
+    viewed_at = Column(DateTime, nullable=True)  # When user unlocked/viewed
+    user_answer = Column(String, nullable=True)  # User's submitted answer
+    is_correct = Column(Boolean, nullable=True)  # Whether answer was correct
+    answered_at = Column(DateTime, nullable=True)  # When user answered
+    status = Column(String, nullable=False, default='locked')  # locked, viewed, answered_wrong, answered_correct, skipped
+    retry_count = Column(Integer, default=0, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="daily_user_questions")
+    question = relationship("Trivia", backref="user_daily_attempts")
+    __table_args__ = (
+        UniqueConstraint('account_id', 'date', 'question_order', name='uq_user_daily_question'),
+    )
 
 # =================================
 #  Cosmetics - Avatars Table

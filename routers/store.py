@@ -9,7 +9,7 @@ from pathlib import Path as FilePath
 from sqlalchemy.sql import func
 
 from db import get_db
-from models import User, Trivia, TriviaQuestionsDaily, GemPackageConfig, BoostConfig, UserGemPurchase
+from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, GemPackageConfig, BoostConfig, UserGemPurchase, TriviaUserDaily
 from routers.dependencies import get_current_user, get_admin_user
 
 router = APIRouter(prefix="/store", tags=["Store"])
@@ -246,22 +246,29 @@ async def use_gameplay_boost(
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    # Get daily question allocation
+    # Get user's daily question unlock/attempt
     today = datetime.utcnow().date()
-    daily_question = db.query(TriviaQuestionsDaily).filter(
-        TriviaQuestionsDaily.account_id == user.account_id,
-        TriviaQuestionsDaily.question_number == request.question_number,
-        func.date(TriviaQuestionsDaily.date) == today
+    user_daily = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.question_number == request.question_number,
+        TriviaUserDaily.date == today
     ).first()
 
-    if not daily_question:
-        raise HTTPException(status_code=400, detail="Question not allocated for today")
+    if not user_daily or user_daily.unlock_method is None:
+        raise HTTPException(status_code=400, detail="Question not unlocked for today")
 
-    if daily_question.user_attempted and request.boost_type not in ["extra_chance"]:
+    if user_daily.status in ['answered_correct', 'answered_wrong'] and request.boost_type not in ["extra_chance"]:
         raise HTTPException(status_code=400, detail="Question already attempted")
 
     # Process boost
     response = {}
+    
+    # Get daily pool question for reference
+    daily_pool_q = db.query(TriviaQuestionsDaily).filter(
+        func.date(TriviaQuestionsDaily.date) == today,
+        TriviaQuestionsDaily.question_number == request.question_number
+    ).first()
+    
     if request.boost_type == "fifty_fifty":
         # Get correct answer and one random wrong answer
         options = ["a", "b", "c", "d"]
@@ -286,35 +293,11 @@ async def use_gameplay_boost(
         }
 
     elif request.boost_type in ["question_reroll", "change_question"]:
-        # Get a new unused question
-        new_question = db.query(Trivia).filter(
-            Trivia.question_done == False
-        ).order_by(func.random()).first()
-
-        if not new_question:
-            raise HTTPException(status_code=400, detail="No questions available")
-
-        # Update daily question
-        daily_question.question_number = new_question.question_number
-        daily_question.was_changed = True
-        
-        # Mark new question as used
-        new_question.question_done = True
-        new_question.que_displayed_date = datetime.utcnow()
-        
-        response = {
-            "question_number": new_question.question_number,
-            "question": new_question.question,
-            "options": {
-                "a": new_question.option_a,
-                "b": new_question.option_b,
-                "c": new_question.option_c,
-                "d": new_question.option_d
-            },
-            "category": new_question.category,
-            "difficulty": new_question.difficulty_level,
-            "picture_url": new_question.picture_url
-        }
+        # Change question boost is deprecated - use /trivia/unlock-next instead
+        raise HTTPException(
+            status_code=400, 
+            detail="Change question boost is deprecated. Use /trivia/unlock-next to unlock the next question in sequence."
+        )
 
     elif request.boost_type == "hint":
         response = {
@@ -322,18 +305,23 @@ async def use_gameplay_boost(
         }
     
     elif request.boost_type == "extra_chance":
-        if not daily_question.user_attempted:
-            raise HTTPException(status_code=400, detail="Question hasn't been attempted yet")
+        # Check if question was answered wrong (can retry)
+        if user_daily.status != 'answered_wrong':
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Question cannot be retried. Current status: {user_daily.status}. Only wrong answers can be retried."
+            )
         
-        # Reset the question state completely
-        daily_question.user_attempted = False
-        daily_question.user_answer = None
-        daily_question.user_is_correct = None
-        daily_question.user_answered_at = None
-        daily_question.was_changed = False  # Reset any previous changes
+        # Reset the question state for retry
+        user_daily.status = 'viewed'
+        user_daily.user_answer = None
+        user_daily.is_correct = None
+        user_daily.answered_at = None
+        user_daily.retry_count += 1
         
         response = {
             "message": "Question has been reset for a fresh attempt",
+            "retry_count": user_daily.retry_count,
             "question": {
                 "question_number": question.question_number,
                 "question": question.question,
@@ -350,14 +338,48 @@ async def use_gameplay_boost(
         }
     
     elif request.boost_type == "auto_submit":
-        if daily_question.user_attempted:
+        if user_daily.status in ['answered_correct', 'answered_wrong']:
             raise HTTPException(status_code=400, detail="Question already attempted")
         
-        # Mark question as used and record correct answer
-        daily_question.user_attempted = True
-        daily_question.user_answer = question.correct_answer
-        daily_question.user_is_correct = True
-        daily_question.user_answered_at = datetime.utcnow()
+        # Mark question as answered with correct answer
+        user_daily.user_answer = question.correct_answer
+        user_daily.is_correct = True
+        user_daily.answered_at = datetime.utcnow()
+        user_daily.status = 'answered_correct'
+        
+        # Update entries
+        entry = db.query(TriviaQuestionsEntries).filter(
+            TriviaQuestionsEntries.account_id == user.account_id,
+            TriviaQuestionsEntries.date == today
+        ).first()
+        
+        if not entry:
+            entry = TriviaQuestionsEntries(
+                account_id=user.account_id,
+                ques_attempted=1,
+                correct_answers=1,
+                wrong_answers=0,
+                date=today
+            )
+            db.add(entry)
+        else:
+            entry.ques_attempted += 1
+            entry.correct_answers += 1
+        
+        # Update eligibility
+        from rewards_logic import update_user_eligibility
+        update_user_eligibility(db, user.account_id, today)
+        
+        # Mark remaining questions as skipped
+        remaining = db.query(TriviaUserDaily).filter(
+            TriviaUserDaily.account_id == user.account_id,
+            TriviaUserDaily.date == today,
+            TriviaUserDaily.question_order > user_daily.question_order,
+            TriviaUserDaily.status.notin_(['answered_correct', 'answered_wrong'])
+        ).all()
+        
+        for rem in remaining:
+            rem.status = 'skipped'
         
         # Return the correct answer and mark it as auto-submitted
         response = {
