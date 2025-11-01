@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
 from sqlalchemy.orm import Session
 from db import get_db
-from models import User, Avatar, Frame, Badge
+from models import User, Avatar, Frame, Badge, CountryCode
+import logging
 from descope.descope_client import DescopeClient
 from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, STORE_PASSWORD_IN_DESCOPE, STORE_PASSWORD_IN_NEONDB
 from auth import validate_descope_jwt
-import logging
 from datetime import datetime, timedelta, date as DateType
 from collections import defaultdict
+from typing import Optional
 import time
 from pydantic import BaseModel, Field
 import re
@@ -49,6 +50,7 @@ class BindPasswordData(BaseModel):
     username: str = Field(..., description="Display name / username to set")
     country: str = Field(..., description="User country")
     date_of_birth: DateType = Field(..., description="User date of birth (YYYY-MM-DD)")
+    referral_code: Optional[str] = Field(None, description="Optional referral code")
 
 
 def _validate_password_strength(password: str):
@@ -144,6 +146,7 @@ async def bind_password(
             f"LoginId: '{data.email}', "
             f"Username: '{data.username}', "
             f"Country: '{data.country}', "
+            f"ReferralCode: '{data.referral_code if data.referral_code else 'None'}', "
             f"Password: '{data.password}', "
             f"PasswordLength: {len(data.password)}, "
             f"Timestamp: '{datetime.utcnow().isoformat()}'"
@@ -374,12 +377,45 @@ async def bind_password(
             # Hash and store password in NeonDB if enabled
             if STORE_PASSWORD_IN_NEONDB:
                 existing_user.password = pwd_context.hash(data.password)
+            
+            # Process referral code if provided (only if user doesn't already have one)
+            if data.referral_code and not existing_user.referred_by:
+                try:
+                    referrer = db.query(User).filter(User.referral_code == data.referral_code).first()
+                    if not referrer:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid referral code '{data.referral_code}'. Please check and try again."
+                        )
+                    
+                    if referrer.account_id == existing_user.account_id:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="You cannot use your own referral code."
+                        )
+                    
+                    # Update referrer's count and mark current user as referred
+                    referrer.referral_count += 1
+                    existing_user.referred_by = data.referral_code
+                    logging.info(
+                        f"[REFERRAL] Successfully applied referral code: {data.referral_code} from user {referrer.username} to {existing_user.email}"
+                    )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logging.error(f"Error processing referral code: {str(e)}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Error processing referral code. Please try again."
+                    )
+            
             db.commit()
             logging.info(
                 f"[LOCAL_DB] Updated existing user in local database - "
                 f"Email: '{data.email}', "
                 f"DescopeUserId: '{user_id}', "
-                f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}"
+                f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}, "
+                f"ReferralCode: {data.referral_code if data.referral_code else 'None'}"
             )
         else:
             # Check if username is taken by another user
@@ -392,6 +428,33 @@ async def bind_password(
                         "message": f"Username '{data.username}' is already taken"
                     }
                 )
+
+            # Process referral code if provided (for new users)
+            referred_by_code = None
+            if data.referral_code:
+                try:
+                    referrer = db.query(User).filter(User.referral_code == data.referral_code).first()
+                    if not referrer:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid referral code '{data.referral_code}'. Please check and try again."
+                        )
+                    
+                    # For new users, we can't check if they're using their own code since they don't exist yet
+                    # But we'll set referred_by and increment referrer's count
+                    referrer.referral_count += 1
+                    referred_by_code = data.referral_code
+                    logging.info(
+                        f"[REFERRAL] New user will be referred by: {data.referral_code} from user {referrer.username}"
+                    )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logging.error(f"Error processing referral code: {str(e)}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Error processing referral code. Please try again."
+                    )
 
             # Create new user
             new_user = User(
@@ -411,6 +474,7 @@ async def bind_password(
                 sign_up_date=datetime.utcnow(),
                 wallet_balance=0.0,
                 total_spent=0.0,
+                referred_by=referred_by_code,
                 # Hash and store password in NeonDB if enabled
                 password=pwd_context.hash(data.password) if STORE_PASSWORD_IN_NEONDB else None,
             )
@@ -420,7 +484,8 @@ async def bind_password(
                 f"[LOCAL_DB] Created new user in local database - "
                 f"Email: '{data.email}', "
                 f"DescopeUserId: '{user_id}', "
-                f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}"
+                f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}, "
+                f"ReferralCode: {data.referral_code if data.referral_code else 'None'}"
             )
         
         # Final success log
@@ -659,3 +724,90 @@ async def dev_sign_in(
             raise HTTPException(status_code=403, detail="Account is locked or blocked")
         else:
             raise HTTPException(status_code=502, detail=f"Failed to sign in: {error_msg}")
+
+class ReferralCheck(BaseModel):
+    referral_code: str = Field(..., description="Referral code to validate")
+
+@router.post("/validate-referral")
+async def validate_referral_code(
+    referral_data: ReferralCheck,
+    db: Session = Depends(get_db)
+):
+    """
+    Validate if a referral code is valid.
+    No authentication required.
+    """
+    try:
+        # Find the referrer
+        referrer = db.query(User).filter(User.referral_code == referral_data.referral_code).first()
+        
+        if not referrer:
+            return {
+                "status": "error",
+                "message": f"Invalid referral code '{referral_data.referral_code}'. Please check and try again.",
+                "code": "INVALID_REFERRAL_CODE",
+                "valid": False
+            }
+        
+        # Referral code is valid
+        return {
+            "status": "success",
+            "message": "Referral code is valid.",
+            "referrer_username": referrer.username if referrer.username else "Anonymous User",
+            "valid": True
+        }
+            
+    except Exception as e:
+        logging.error(f"Error validating referral code: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"An error occurred while validating the referral code: {str(e)}",
+            "code": "VALIDATE_REFERRAL_ERROR",
+            "valid": False
+        }
+
+@router.get("/countries")
+async def get_countries(
+    db: Session = Depends(get_db)
+):
+    """
+    Get list of countries and country codes with flags.
+    No authentication required.
+    Returns both a simple country list and detailed country codes with flag URLs.
+    """
+    try:
+        # Simple country list (for compatibility)
+        countries = [
+            "United States", "Canada", "United Kingdom", "Australia", "India",
+            "Germany", "France", "Japan", "Brazil", "Mexico", "China", "Spain",
+            "Italy", "Russia", "South Korea", "Singapore", "New Zealand",
+            "South Africa", "Nigeria", "Kenya", "Egypt", "Saudi Arabia",
+            "United Arab Emirates", "Pakistan", "Bangladesh", "Malaysia",
+            "Indonesia", "Philippines", "Vietnam", "Thailand"
+        ]
+        
+        # Get all country codes with flags from database
+        country_codes = db.query(CountryCode).order_by(CountryCode.country_name).all()
+        
+        # Format the country codes
+        country_codes_data = []
+        for code in country_codes:
+            country_codes_data.append({
+                "code": code.code,
+                "country_name": code.country_name,
+                "flag_url": code.flag_url,
+                "country_iso": code.country_iso
+            })
+        
+        return {
+            "status": "success",
+            "countries": sorted(countries),
+            "country_codes": country_codes_data
+        }
+    except Exception as e:
+        logging.error(f"Error fetching countries: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"An unexpected error occurred: {str(e)}",
+            "code": "UNEXPECTED_ERROR"
+        }
