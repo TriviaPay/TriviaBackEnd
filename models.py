@@ -73,7 +73,6 @@ class User(Base):
     stripe_customer_id = Column(String, nullable=True, index=True)  # Stripe customer ID for payment methods
 
     # Store purchased items
-    owned_cosmetics = Column(Text, nullable=True)  # JSON string of owned cosmetic items
     owned_boosts = Column(Text, nullable=True)  # JSON string of owned boost items
     
     # Cosmetic selections
@@ -313,7 +312,9 @@ class Avatar(Base):
     id = Column(String, primary_key=True, index=True)  # Unique ID for the avatar
     name = Column(String, nullable=False)  # Display name
     description = Column(String, nullable=True)  # Description of the avatar
-    image_url = Column(String, nullable=False)  # URL to the avatar image
+    bucket = Column(String, nullable=True)  # Private storage bucket name
+    object_key = Column(String, nullable=True)  # Private storage key
+    mime_type = Column(String, nullable=True)  # e.g., image/png, application/json
     price_gems = Column(Integer, nullable=True)  # Price in gems (if purchasable with gems)
     price_usd = Column(Float, nullable=True)  # Price in USD (if purchasable with real money)
     is_premium = Column(Boolean, default=False)  # Whether it's a premium avatar
@@ -332,7 +333,9 @@ class Frame(Base):
     id = Column(String, primary_key=True, index=True)  # Unique ID for the frame
     name = Column(String, nullable=False)  # Display name
     description = Column(String, nullable=True)  # Description of the frame
-    image_url = Column(String, nullable=False)  # URL to the frame image
+    bucket = Column(String, nullable=True)  # Private storage bucket name
+    object_key = Column(String, nullable=True)  # Private storage key
+    mime_type = Column(String, nullable=True)  # e.g., image/png, application/json
     price_gems = Column(Integer, nullable=True)  # Price in gems (if purchasable with gems)
     price_usd = Column(Float, nullable=True)  # Price in USD (if purchasable with real money)
     is_premium = Column(Boolean, default=False)  # Whether it's a premium frame
