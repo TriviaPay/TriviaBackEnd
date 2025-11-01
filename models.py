@@ -385,6 +385,11 @@ class UserAvatar(Base):
     # Relationships
     user = relationship("User", backref="owned_avatars")
     avatar = relationship("Avatar", back_populates="users")
+    
+    __table_args__ = (
+        # Unique constraint ensures idempotent buys: one user can only own each avatar once
+        UniqueConstraint('user_id', 'avatar_id', name='uq_user_avatar'),
+    )
 
 
 # =================================
@@ -401,6 +406,11 @@ class UserFrame(Base):
     # Relationships
     user = relationship("User", backref="owned_frames")
     frame = relationship("Frame", back_populates="users")
+    
+    __table_args__ = (
+        # Unique constraint ensures idempotent buys: one user can only own each frame once
+        UniqueConstraint('user_id', 'frame_id', name='uq_user_frame'),
+    )
 
 # =================================
 #  Badge Table
@@ -645,11 +655,18 @@ class LiveChatMessage(Base):
     message = Column(String, nullable=False)
     message_type = Column(String, default="text")  # "text", "system", "announcement"
     likes = Column(Integer, default=0)
+    client_message_id = Column(String, nullable=True)  # Optional client-provided ID for idempotency
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships - using back_populates to match existing pattern
     session = relationship("LiveChatSession", back_populates="messages")
     user = relationship("User", back_populates="live_chat_messages")
+    
+    # Note: Unique constraint is created via migration script as a partial index
+    # to allow NULL values while enforcing uniqueness when client_message_id is provided
+    # __table_args__ = (
+    #     UniqueConstraint('session_id', 'user_id', 'client_message_id', name='uq_client_message_id'),
+    # )
 
 # =================================
 #  Live Chat Likes Table
