@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from db import get_db
 from models import User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsDaily, Trivia, Badge, Avatar, Frame, TriviaQuestionsEntries
 from routers.dependencies import get_current_user, get_admin_user
+from utils.storage import presign_get
 from sqlalchemy.sql import extract
 import os
 import json
@@ -120,27 +121,31 @@ async def get_daily_winners(
             if user.badge_info:
                 badge_image_url = user.badge_image_url
             
-            # Get avatar URL
+            # Get avatar URL (presigned)
             avatar_url = None
             if user.selected_avatar_id:
-                avatar_query = text("""
-                    SELECT image_url FROM avatars 
-                    WHERE id = :avatar_id
-                """)
-                avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
-                if avatar_result:
-                    avatar_url = avatar_result[0]
+                avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
+                if avatar_obj:
+                    bucket = getattr(avatar_obj, "bucket", None)
+                    object_key = getattr(avatar_obj, "object_key", None)
+                    if bucket and object_key:
+                        try:
+                            avatar_url = presign_get(bucket, object_key, expires=900)
+                        except Exception as e:
+                            logging.warning(f"Failed to presign avatar {avatar_obj.id}: {e}")
             
-            # Get frame URL
+            # Get frame URL (presigned)
             frame_url = None
             if user.selected_frame_id:
-                frame_query = text("""
-                    SELECT image_url FROM frames 
-                    WHERE id = :frame_id
-                """)
-                frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
-                if frame_result:
-                    frame_url = frame_result[0]
+                frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
+                if frame_obj:
+                    bucket = getattr(frame_obj, "bucket", None)
+                    object_key = getattr(frame_obj, "object_key", None)
+                    if bucket and object_key:
+                        try:
+                            frame_url = presign_get(bucket, object_key, expires=900)
+                        except Exception as e:
+                            logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
             
             result.append(WinnerResponse(
                 username=user.username or f"User{user.account_id}",
@@ -221,27 +226,31 @@ async def get_weekly_winners(
             if user.badge_info:
                 badge_image_url = user.badge_image_url
             
-            # Get avatar URL
+            # Get avatar URL (presigned)
             avatar_url = None
             if user.selected_avatar_id:
-                avatar_query = text("""
-                    SELECT image_url FROM avatars 
-                    WHERE id = :avatar_id
-                """)
-                avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
-                if avatar_result:
-                    avatar_url = avatar_result[0]
+                avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
+                if avatar_obj:
+                    bucket = getattr(avatar_obj, "bucket", None)
+                    object_key = getattr(avatar_obj, "object_key", None)
+                    if bucket and object_key:
+                        try:
+                            avatar_url = presign_get(bucket, object_key, expires=900)
+                        except Exception as e:
+                            logging.warning(f"Failed to presign avatar {avatar_obj.id}: {e}")
             
-            # Get frame URL
+            # Get frame URL (presigned)
             frame_url = None
             if user.selected_frame_id:
-                frame_query = text("""
-                    SELECT image_url FROM frames 
-                    WHERE id = :frame_id
-                """)
-                frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
-                if frame_result:
-                    frame_url = frame_result[0]
+                frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
+                if frame_obj:
+                    bucket = getattr(frame_obj, "bucket", None)
+                    object_key = getattr(frame_obj, "object_key", None)
+                    if bucket and object_key:
+                        try:
+                            frame_url = presign_get(bucket, object_key, expires=900)
+                        except Exception as e:
+                            logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
             
             result.append(WinnerResponse(
                 username=user.username or f"User{user.account_id}",
@@ -305,27 +314,31 @@ async def get_all_time_winners(
             if user.badge_info:
                 badge_image_url = user.badge_image_url
             
-            # Get avatar URL
+            # Get avatar URL (presigned)
             avatar_url = None
             if user.selected_avatar_id:
-                avatar_query = text("""
-                    SELECT image_url FROM avatars 
-                    WHERE id = :avatar_id
-                """)
-                avatar_result = db.execute(avatar_query, {"avatar_id": user.selected_avatar_id}).first()
-                if avatar_result:
-                    avatar_url = avatar_result[0]
+                avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
+                if avatar_obj:
+                    bucket = getattr(avatar_obj, "bucket", None)
+                    object_key = getattr(avatar_obj, "object_key", None)
+                    if bucket and object_key:
+                        try:
+                            avatar_url = presign_get(bucket, object_key, expires=900)
+                        except Exception as e:
+                            logging.warning(f"Failed to presign avatar {avatar_obj.id}: {e}")
             
-            # Get frame URL
+            # Get frame URL (presigned)
             frame_url = None
             if user.selected_frame_id:
-                frame_query = text("""
-                    SELECT image_url FROM frames 
-                    WHERE id = :frame_id
-                """)
-                frame_result = db.execute(frame_query, {"frame_id": user.selected_frame_id}).first()
-                if frame_result:
-                    frame_url = frame_result[0]
+                frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
+                if frame_obj:
+                    bucket = getattr(frame_obj, "bucket", None)
+                    object_key = getattr(frame_obj, "object_key", None)
+                    if bucket and object_key:
+                        try:
+                            frame_url = presign_get(bucket, object_key, expires=900)
+                        except Exception as e:
+                            logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
             
             result.append(WinnerResponse(
                 username=user.username or f"User{user.account_id}",

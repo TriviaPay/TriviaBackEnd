@@ -534,21 +534,22 @@ async def dev_mint_session(
     logging.error("Descope management client could not mint a session JWT in this environment")
     raise HTTPException(status_code=501, detail="Minting session is not supported by the current Descope SDK/mode")
 
-class DevOtpInitRequest(BaseModel):
-    email: str = Field(..., description="Email to send OTP to")
+class DevSignInRequest(BaseModel):
+    email: str = Field(..., description="Email address (loginId)", example="triviapay3@gmail.com")
+    password: str = Field(..., description="User password", example="Trivia@1")
 
-class DevOtpVerifyRequest(BaseModel):
-    email: str = Field(..., description="Email that received the OTP")
-    code: str = Field(..., description="OTP code from email")
 
-@router.post("/dev/otp/send")
-async def dev_send_otp(
+@router.post("/dev/sign-in")
+async def dev_sign_in(
     request: Request,
-    data: DevOtpInitRequest,
-    x_dev_secret: str = Header(None, alias="X-Dev-Secret", description="Dev-only secret to authorize"),
+    data: DevSignInRequest,
+    x_dev_secret: str = Header(None, alias="X-Dev-Secret", description="Dev-only secret to authorize", example="TriviaPay"),
 ):
     """
-    Dev-only: Send OTP to email address for testing
+    Dev-only: Sign in with email and password, returns access token (session JWT)
+    
+    This endpoint uses Descope's password authentication API to authenticate users
+    and returns the session JWT token for use in subsequent requests.
     """
     if os.getenv("ENVIRONMENT", "development") != "development":
         raise HTTPException(status_code=403, detail="Not available in this environment")
@@ -557,10 +558,15 @@ async def dev_send_otp(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     email = data.email.strip()
+    password = data.password
+    
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    if not password:
+        raise HTTPException(status_code=400, detail="Password is required")
     
     try:
         from descope import DescopeClient
-        from descope.common import DeliveryMethod
         
         project_id = os.getenv("DESCOPE_PROJECT_ID", DESCOPE_PROJECT_ID)
         if not project_id:
@@ -568,55 +574,28 @@ async def dev_send_otp(
             
         client = DescopeClient(project_id=project_id, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
         
-        # Try sign-up-or-in (works for both new and existing users)
-        response = client.otp.sign_up_or_in(DeliveryMethod.EMAIL, email)
+        # Sign in with email and password using Descope's password authentication
+        # This will work for both sign-up and sign-in if the user exists
+        try:
+            response = client.password.sign_in(email, password)
+        except AttributeError:
+            # Fallback: try alternative method names
+            try:
+                response = client.auth.sign_in(email, password)
+            except AttributeError:
+                # Try with login_id parameter
+                try:
+                    response = client.password.sign_in(login_id=email, password=password)
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500, 
+                        detail=f"Descope SDK method not found. Available methods: {dir(client)}. Error: {str(e)}"
+                    )
         
-        return {
-            "email": email,
-            "message": "OTP sent successfully! Check your email.",
-            "next_step": "Use the /dev/otp/verify endpoint with the OTP code from your email"
-        }
-        
-    except ImportError:
-        raise HTTPException(status_code=500, detail="Descope Python SDK not installed")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to send OTP: {str(e)}")
-
-@router.post("/dev/otp/verify")
-async def dev_verify_otp(
-    request: Request,
-    data: DevOtpVerifyRequest,
-    x_dev_secret: str = Header(None, alias="X-Dev-Secret", description="Dev-only secret to authorize"),
-):
-    """
-    Dev-only: Verify OTP and get JWT token for testing
-    """
-    if os.getenv("ENVIRONMENT", "development") != "development":
-        raise HTTPException(status_code=403, detail="Not available in this environment")
-    dev_secret = os.getenv("DEV_ADMIN_SECRET")
-    if not dev_secret or x_dev_secret != dev_secret:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    email = data.email.strip()
-    code = data.code.strip()
-    
-    try:
-        from descope import DescopeClient
-        from descope.common import DeliveryMethod
-        
-        project_id = os.getenv("DESCOPE_PROJECT_ID", DESCOPE_PROJECT_ID)
-        if not project_id:
-            raise HTTPException(status_code=500, detail="Descope project ID not configured")
-            
-        client = DescopeClient(project_id=project_id, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
-        
-        # Verify the OTP code using the correct Python SDK pattern
-        response = client.otp.verify_code(DeliveryMethod.EMAIL, email, code)
-        
-        # Extract session JWT from response - try multiple possible locations
+        # Extract session JWT from response
         session_jwt = None
-        logging.debug(f"OTP verify response type: {type(response)}")
-        logging.debug(f"OTP verify response: {response}")
+        logging.debug(f"Sign-in response type: {type(response)}")
+        logging.debug(f"Sign-in response: {response}")
         
         # Try different ways to extract the JWT
         if hasattr(response, 'session_jwt'):
@@ -633,14 +612,16 @@ async def dev_verify_otp(
                 session_jwt = (response.get("sessionJwt") or 
                               response.get("session_jwt") or 
                               response.get("jwt") or
-                              response.get("token"))
+                              response.get("token") or
+                              response.get("session_token"))
         elif hasattr(response, '__dict__'):
             # If it's an object, try to access its attributes
             resp_dict = response.__dict__
             session_jwt = (resp_dict.get("sessionJwt") or 
                           resp_dict.get("session_jwt") or 
                           resp_dict.get("jwt") or
-                          resp_dict.get("token"))
+                          resp_dict.get("token") or
+                          resp_dict.get("session_token"))
         
         # If still no JWT, try to convert response to string and see if it's the JWT itself
         if not session_jwt:
@@ -649,14 +630,32 @@ async def dev_verify_otp(
                 session_jwt = resp_str
         
         if not session_jwt:
-            raise HTTPException(status_code=502, detail=f"No session JWT found in response. Response type: {type(response)}, Response: {response}")
-            
+            logging.error(f"No session JWT found in response. Response type: {type(response)}, Response: {response}")
+            raise HTTPException(
+                status_code=502, 
+                detail=f"No session JWT found in response. Response type: {type(response)}"
+            )
+        
+        logging.info(f"[DEV_SIGN_IN] ✅ Successfully signed in user: {email}")
+        
         return {
-            "email": email,
-            "session_jwt": session_jwt
+            "access_token": session_jwt
         }
         
     except ImportError:
         raise HTTPException(status_code=500, detail="Descope Python SDK not installed")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to verify OTP: {str(e)}")
+        error_msg = str(e)
+        logging.error(f"[DEV_SIGN_IN] ❌ Failed to sign in user {email}: {error_msg}")
+        
+        # Check for specific error types
+        if "invalid" in error_msg.lower() or "incorrect" in error_msg.lower() or "wrong" in error_msg.lower():
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        elif "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
+            raise HTTPException(status_code=404, detail="User not found")
+        elif "locked" in error_msg.lower() or "blocked" in error_msg.lower():
+            raise HTTPException(status_code=403, detail="Account is locked or blocked")
+        else:
+            raise HTTPException(status_code=502, detail=f"Failed to sign in: {error_msg}")

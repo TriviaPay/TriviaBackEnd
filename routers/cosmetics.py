@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from db import get_db
 from models import User, Avatar, Frame, UserAvatar, UserFrame
 from routers.dependencies import get_current_user, verify_admin
+from utils.storage import presign_get
 
 # Load environment variables
 load_dotenv()
@@ -29,10 +30,12 @@ router = APIRouter(prefix="/cosmetics", tags=["Cosmetics"])
 class CosmeticBase(BaseModel):
     name: str
     description: Optional[str] = None
-    image_url: str
     price_gems: Optional[int] = None
     price_usd: Optional[float] = None
     is_premium: bool = False
+    bucket: Optional[str] = None  # S3 bucket name
+    object_key: Optional[str] = None  # S3 object key
+    mime_type: Optional[str] = None  # MIME type (e.g., image/png, application/json)
 
 class AvatarCreate(CosmeticBase):
     """Schema for creating a new avatar"""
@@ -42,6 +45,8 @@ class AvatarResponse(CosmeticBase):
     """Schema for avatar response"""
     id: str
     created_at: datetime
+    url: Optional[str] = None
+    mime_type: Optional[str] = None
     
     class Config:
         orm_mode = True
@@ -54,6 +59,8 @@ class FrameResponse(CosmeticBase):
     """Schema for frame response"""
     id: str
     created_at: datetime
+    url: Optional[str] = None
+    mime_type: Optional[str] = None
     
     class Config:
         orm_mode = True
@@ -63,9 +70,10 @@ class UserCosmeticResponse(BaseModel):
     id: str
     name: str
     description: Optional[str]
-    image_url: str
     is_premium: bool
     purchase_date: datetime
+    url: Optional[str] = None  # Presigned URL (primary)
+    mime_type: Optional[str] = None
     
     class Config:
         orm_mode = True
@@ -90,7 +98,7 @@ class SelectResponse(BaseModel):
 @router.get("/avatars", response_model=List[AvatarResponse])
 async def get_all_avatars(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 100
 ):
@@ -98,55 +106,81 @@ async def get_all_avatars(
     Get all available avatars, ordered by most recently added first
     """
     avatars = db.query(Avatar).order_by(desc(Avatar.created_at)).offset(skip).limit(limit).all()
-    return avatars
+    out: List[AvatarResponse] = []
+    for av in avatars:
+        signed = None
+        bucket = getattr(av, "bucket", None)
+        object_key = getattr(av, "object_key", None)
+        if bucket and object_key:
+            try:
+                signed = presign_get(bucket, object_key, expires=900)
+                if not signed:
+                    logging.warning(f"presign_get returned None for avatar {av.id} with bucket={bucket}, key={object_key}")
+            except Exception as e:
+                logging.error(f"Failed to presign avatar {av.id}: {e}", exc_info=True)
+        else:
+            logging.debug(f"Avatar {av.id} missing bucket/object_key: bucket={bucket}, object_key={object_key}")
+        out.append(AvatarResponse(
+            id=av.id,
+            name=av.name,
+            description=av.description,
+            price_gems=av.price_gems,
+            price_usd=av.price_usd,
+            is_premium=av.is_premium,
+            created_at=av.created_at,
+            url=signed,
+            mime_type=getattr(av, "mime_type", None)
+        ))
+    return out
 
 @router.get("/avatars/owned", response_model=List[UserCosmeticResponse])
 async def get_user_avatars(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get all avatars owned by the current user
     """
-    # Find the user
-    user = db.query(User).filter(User.sub == current_user['sub']).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Get user avatars with joined data
-    user_avatars = db.query(
-        Avatar.id, 
-        Avatar.name, 
-        Avatar.description, 
-        Avatar.image_url, 
-        Avatar.is_premium, 
-        UserAvatar.purchase_date
-    ).join(
+    user = current_user
+    rows = db.query(Avatar, UserAvatar.purchase_date).join(
         UserAvatar, UserAvatar.avatar_id == Avatar.id
-    ).filter(
-        UserAvatar.user_id == user.account_id
-    ).all()
-    
-    # Sort by purchase date, newest first
-    result = list(user_avatars)
-    result.sort(key=lambda x: x.purchase_date, reverse=True)
-    
-    return result
+    ).filter(UserAvatar.user_id == user.account_id).order_by(desc(UserAvatar.purchase_date)).all()
+    out: List[UserCosmeticResponse] = []
+    for av, purchased_at in rows:
+        signed = None
+        bucket = getattr(av, "bucket", None)
+        object_key = getattr(av, "object_key", None)
+        if bucket and object_key:
+            try:
+                signed = presign_get(bucket, object_key, expires=900)
+                if not signed:
+                    logging.warning(f"presign_get returned None for avatar {av.id} with bucket={bucket}, key={object_key}")
+            except Exception as e:
+                logging.error(f"Failed to presign avatar {av.id}: {e}", exc_info=True)
+        else:
+            logging.debug(f"Avatar {av.id} missing bucket/object_key: bucket={bucket}, object_key={object_key}")
+        out.append(UserCosmeticResponse(
+            id=av.id,
+            name=av.name,
+            description=av.description,
+            is_premium=av.is_premium,
+            purchase_date=purchased_at,
+            url=signed,
+            mime_type=getattr(av, "mime_type", None)
+        ))
+    return out
 
 @router.post("/avatars/buy/{avatar_id}", response_model=PurchaseResponse)
 async def buy_avatar(
     avatar_id: str = Path(..., description="The ID of the avatar to purchase"),
     payment_method: str = Query(..., description="Payment method: 'gems' or 'usd'"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Purchase an avatar using gems or USD
     """
-    # Find the user
-    user = db.query(User).filter(User.sub == current_user['sub']).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = current_user
     
     # Find the avatar
     avatar = db.query(Avatar).filter(Avatar.id == avatar_id).first()
@@ -242,15 +276,12 @@ async def buy_avatar(
 async def select_avatar(
     avatar_id: str = Path(..., description="The ID of the avatar to select"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Select an avatar as the current profile avatar
     """
-    # Find the user
-    user = db.query(User).filter(User.sub == current_user['sub']).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = current_user
     
     # Check if user owns this avatar or if it's a default avatar
     avatar = db.query(Avatar).filter(Avatar.id == avatar_id).first()
@@ -262,7 +293,7 @@ async def select_avatar(
         UserAvatar.avatar_id == avatar_id
     ).first()
     
-    if not ownership and not avatar.is_default:
+    if not ownership:
         raise HTTPException(
             status_code=403,
             detail=f"You don't own the avatar with ID {avatar_id}"
@@ -308,10 +339,12 @@ async def create_avatar(
         id=avatar_id,
         name=avatar.name,
         description=avatar.description,
-        image_url=avatar.image_url,
         price_gems=avatar.price_gems,
         price_usd=avatar.price_usd,
         is_premium=avatar.is_premium,
+        bucket=avatar.bucket,
+        object_key=avatar.object_key,
+        mime_type=avatar.mime_type,
         created_at=datetime.utcnow()
     )
     
@@ -343,10 +376,12 @@ async def update_avatar(
     # Update avatar fields
     avatar.name = avatar_update.name
     avatar.description = avatar_update.description
-    avatar.image_url = avatar_update.image_url
     avatar.price_gems = avatar_update.price_gems
     avatar.price_usd = avatar_update.price_usd
     avatar.is_premium = avatar_update.is_premium
+    avatar.bucket = avatar_update.bucket
+    avatar.object_key = avatar_update.object_key
+    avatar.mime_type = avatar_update.mime_type
     
     db.commit()
     db.refresh(avatar)
@@ -392,7 +427,7 @@ async def delete_avatar(
 @router.get("/frames", response_model=List[FrameResponse])
 async def get_all_frames(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 100
 ):
@@ -400,55 +435,69 @@ async def get_all_frames(
     Get all available frames, ordered by most recently added first
     """
     frames = db.query(Frame).order_by(desc(Frame.created_at)).offset(skip).limit(limit).all()
-    return frames
+    out: List[FrameResponse] = []
+    for fr in frames:
+        signed = None
+        if getattr(fr, "bucket", None) and getattr(fr, "object_key", None):
+            try:
+                signed = presign_get(fr.bucket, fr.object_key, expires=900)
+            except Exception as e:
+                logging.warning(f"Failed to presign frame {fr.id}: {e}")
+        out.append(FrameResponse(
+            id=fr.id,
+            name=fr.name,
+            description=fr.description,
+            price_gems=fr.price_gems,
+            price_usd=fr.price_usd,
+            is_premium=fr.is_premium,
+            created_at=fr.created_at,
+            url=signed,
+            mime_type=getattr(fr, "mime_type", None)
+        ))
+    return out
 
 @router.get("/frames/owned", response_model=List[UserCosmeticResponse])
 async def get_user_frames(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get all frames owned by the current user
     """
-    # Find the user
-    user = db.query(User).filter(User.sub == current_user['sub']).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Get user frames with joined data
-    user_frames = db.query(
-        Frame.id, 
-        Frame.name, 
-        Frame.description, 
-        Frame.image_url, 
-        Frame.is_premium, 
-        UserFrame.purchase_date
-    ).join(
+    user = current_user
+    rows = db.query(Frame, UserFrame.purchase_date).join(
         UserFrame, UserFrame.frame_id == Frame.id
-    ).filter(
-        UserFrame.user_id == user.account_id
-    ).all()
-    
-    # Sort by purchase date, newest first
-    result = list(user_frames)
-    result.sort(key=lambda x: x.purchase_date, reverse=True)
-    
-    return result
+    ).filter(UserFrame.user_id == user.account_id).order_by(desc(UserFrame.purchase_date)).all()
+    out: List[UserCosmeticResponse] = []
+    for fr, purchased_at in rows:
+        signed = None
+        if getattr(fr, "bucket", None) and getattr(fr, "object_key", None):
+            try:
+                signed = presign_get(fr.bucket, fr.object_key, expires=900)
+            except Exception as e:
+                logging.warning(f"Failed to presign frame {fr.id}: {e}")
+        out.append(UserCosmeticResponse(
+            id=fr.id,
+            name=fr.name,
+            description=fr.description,
+            is_premium=fr.is_premium,
+            purchase_date=purchased_at,
+            url=signed,
+            mime_type=getattr(fr, "mime_type", None)
+        ))
+    return out
 
 @router.post("/frames/buy/{frame_id}", response_model=PurchaseResponse)
 async def buy_frame(
     frame_id: str = Path(..., description="The ID of the frame to purchase"),
     payment_method: str = Query(..., description="Payment method: 'gems' or 'usd'"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Purchase a frame using gems or USD
     """
-    # Find the user
-    user = db.query(User).filter(User.sub == current_user['sub']).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = current_user
     
     # Find the frame
     frame = db.query(Frame).filter(Frame.id == frame_id).first()
@@ -544,15 +593,12 @@ async def buy_frame(
 async def select_frame(
     frame_id: str = Path(..., description="The ID of the frame to select"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Select a frame as the current profile frame
     """
-    # Find the user
-    user = db.query(User).filter(User.sub == current_user['sub']).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = current_user
     
     # Check if user owns this frame or if it's a default frame
     frame = db.query(Frame).filter(Frame.id == frame_id).first()
@@ -564,7 +610,7 @@ async def select_frame(
         UserFrame.frame_id == frame_id
     ).first()
     
-    if not ownership and not frame.is_default:
+    if not ownership:
         raise HTTPException(
             status_code=403,
             detail=f"You don't own the frame with ID {frame_id}"
@@ -610,10 +656,12 @@ async def create_frame(
         id=frame_id,
         name=frame.name,
         description=frame.description,
-        image_url=frame.image_url,
         price_gems=frame.price_gems,
         price_usd=frame.price_usd,
         is_premium=frame.is_premium,
+        bucket=frame.bucket,
+        object_key=frame.object_key,
+        mime_type=frame.mime_type,
         created_at=datetime.utcnow()
     )
     
@@ -645,10 +693,12 @@ async def update_frame(
     # Update frame fields
     frame.name = frame_update.name
     frame.description = frame_update.description
-    frame.image_url = frame_update.image_url
     frame.price_gems = frame_update.price_gems
     frame.price_usd = frame_update.price_usd
     frame.is_premium = frame_update.is_premium
+    frame.bucket = frame_update.bucket
+    frame.object_key = frame_update.object_key
+    frame.mime_type = frame_update.mime_type
     
     db.commit()
     db.refresh(frame)
@@ -713,7 +763,7 @@ async def import_avatars_from_json(
     # Check if this is a single avatar or a collection
     if "avatars" in json_data:
         avatars = json_data.get("avatars", [])
-    elif "id" in json_data and "name" in json_data and "image_url" in json_data:
+    elif "id" in json_data and "name" in json_data:
         # This is a single avatar
         avatars = [json_data]
     else:
@@ -748,10 +798,12 @@ async def import_avatars_from_json(
                     id=avatar_id,
                     name=avatar_data.get("name", "Unnamed Avatar"),
                     description=avatar_data.get("description"),
-                    image_url=avatar_data.get("image_url", ""),
                     price_gems=avatar_data.get("price_gems"),
                     price_usd=avatar_data.get("price_usd"),
                     is_premium=avatar_data.get("is_premium", False),
+                    bucket=avatar_data.get("bucket"),
+                    object_key=avatar_data.get("object_key"),
+                    mime_type=avatar_data.get("mime_type"),
                     created_at=datetime.utcnow()
                 )
                 db.add(new_avatar)
@@ -794,7 +846,7 @@ async def import_frames_from_json(
     # Check if this is a single frame or a collection
     if "frames" in json_data:
         frames = json_data.get("frames", [])
-    elif "id" in json_data and "name" in json_data and "image_url" in json_data:
+    elif "id" in json_data and "name" in json_data:
         # This is a single frame
         frames = [json_data]
     else:
@@ -829,10 +881,12 @@ async def import_frames_from_json(
                     id=frame_id,
                     name=frame_data.get("name", "Unnamed Frame"),
                     description=frame_data.get("description"),
-                    image_url=frame_data.get("image_url", ""),
                     price_gems=frame_data.get("price_gems"),
                     price_usd=frame_data.get("price_usd"),
                     is_premium=frame_data.get("is_premium", False),
+                    bucket=frame_data.get("bucket"),
+                    object_key=frame_data.get("object_key"),
+                    mime_type=frame_data.get("mime_type"),
                     created_at=datetime.utcnow()
                 )
                 db.add(new_frame)

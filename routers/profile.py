@@ -7,7 +7,8 @@ from datetime import datetime, date
 import random
 import string
 from db import get_db
-from models import User, Badge, CountryCode
+from models import User, Badge, CountryCode, Avatar, Frame
+from utils.storage import presign_get
 from routers.dependencies import get_current_user
 import logging
 from utils import get_letter_profile_pic
@@ -666,9 +667,8 @@ async def get_user_gems(
 class ExtendedProfileUpdate(BaseModel):
     """
     Model for updating extended user profile data including name, address, and contact information.
-    The username field is optional since it can only be updated once.
+    Username is not included here as it can only be updated once per user and requires a purchase after that.
     """
-    username: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     mobile: Optional[str] = None
@@ -691,7 +691,7 @@ async def update_extended_profile(
 ):
     """
     Update extended user profile information including contact details and address.
-    Username can only be updated once - subsequent attempts will be rejected.
+    Username updates are not handled here - use the dedicated username update endpoint instead.
     """
     try:
         # Get the current user from database
@@ -699,45 +699,7 @@ async def update_extended_profile(
         if not user:
             raise HTTPException(status_code=404, detail=f"User not found")
         
-        # Handle username update (if provided)
-        if profile.username:
-            # Check if username has already been updated before
-            if user.username_updated:
-                return {
-                    "status": "error",
-                    "message": "You have already used your free username update. Username cannot be changed again.",
-                    "code": "USERNAME_ALREADY_UPDATED"
-                }
-            
-            # Check if the username is actually changing
-            if user.username != profile.username:
-                # Check if username already exists for another user
-                existing_user = db.query(User).filter(
-                    User.username == profile.username, 
-                    User.account_id != current_user.account_id
-                ).first()
-                
-                if existing_user:
-                    logging.info(f"Username '{profile.username}' is already taken by account_id: {existing_user.account_id}")
-                    return {
-                        "status": "error",
-                        "message": f"The username '{profile.username}' is already taken. Please choose a different username.",
-                        "code": "USERNAME_TAKEN"
-                    }
-                
-                # Store old username for comparison
-                old_username = user.username
-                
-                # Update username and mark as updated
-                user.username = profile.username
-                user.username_updated = True
-                logging.info(f"Updating username from '{old_username}' to '{user.username}' for user with account_id: {user.account_id}")
-                
-                # Update profile picture based on the new username's first letter
-                user.profile_pic_url = get_letter_profile_pic(profile.username, db)
-                logging.info(f"Updated profile picture for user '{user.username}' based on first letter")
-        
-        # Update other profile fields if provided
+        # Update profile fields (username updates are handled separately)
         if profile.first_name is not None:
             user.first_name = profile.first_name
         
@@ -790,7 +752,6 @@ async def update_extended_profile(
                 "status": "success",
                 "message": "Profile updated successfully",
                 "data": {
-                    "username": user.username,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
                     "mobile": user.mobile,
@@ -812,20 +773,11 @@ async def update_extended_profile(
             db.rollback()
             error_str = str(e).lower()
             logging.error(f"Database integrity error: {error_str}")
-            
-            # Check if the error is specifically about username uniqueness
-            if "unique" in error_str and "username" in error_str:
-                return {
-                    "status": "error",
-                    "message": f"The username '{profile.username}' is already taken. Please choose a different username.",
-                    "code": "USERNAME_TAKEN"
-                }
-            else:
-                return {
-                    "status": "error",
-                    "message": "Database error while updating profile. Please try again.",
-                    "code": "DB_INTEGRITY_ERROR"
-                }
+            return {
+                "status": "error",
+                "message": "Database error while updating profile. Please try again.",
+                "code": "DB_INTEGRITY_ERROR"
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -952,3 +904,98 @@ def change_username(new_username: str, user=Depends(get_current_user), db=Depend
     except Exception as e:
         logging.error(f"/change-username error: {e}")
         raise HTTPException(status_code=400, detail="Something went wrong")
+
+@router.get("/summary", status_code=200)
+async def get_profile_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Compact profile summary with identity, address, profile pic, and active avatar/frame.
+    """
+    try:
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        avatar_obj = None
+        frame_obj = None
+
+        if user.selected_avatar_id:
+            avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
+        if user.selected_frame_id:
+            frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
+
+        # Build avatar/frame objects with optional presigned URLs
+        avatar_payload = None
+        if avatar_obj:
+            signed = None
+            bucket = getattr(avatar_obj, "bucket", None)
+            object_key = getattr(avatar_obj, "object_key", None)
+            if bucket and object_key:
+                try:
+                    signed = presign_get(bucket, object_key, expires=900)
+                    if not signed:
+                        logging.warning(f"presign_get returned None for avatar {avatar_obj.id} with bucket={bucket}, key={object_key}")
+                except Exception as e:
+                    logging.error(f"Failed to presign avatar {avatar_obj.id}: {e}", exc_info=True)
+            else:
+                logging.debug(f"Avatar {avatar_obj.id} missing bucket/object_key: bucket={bucket}, object_key={object_key}")
+            avatar_payload = {
+                "id": avatar_obj.id,
+                "name": avatar_obj.name,
+                "url": signed,
+                "mime_type": getattr(avatar_obj, "mime_type", None)
+            }
+
+        frame_payload = None
+        if frame_obj:
+            signed = None
+            bucket = getattr(frame_obj, "bucket", None)
+            object_key = getattr(frame_obj, "object_key", None)
+            if bucket and object_key:
+                try:
+                    signed = presign_get(bucket, object_key, expires=900)
+                    if not signed:
+                        logging.warning(f"presign_get returned None for frame {frame_obj.id} with bucket={bucket}, key={object_key}")
+                except Exception as e:
+                    logging.error(f"Failed to presign frame {frame_obj.id}: {e}", exc_info=True)
+            else:
+                logging.debug(f"Frame {frame_obj.id} missing bucket/object_key: bucket={bucket}, object_key={object_key}")
+            frame_payload = {
+                "id": frame_obj.id,
+                "name": frame_obj.name,
+                "url": signed,
+                "mime_type": getattr(frame_obj, "mime_type", None)
+            }
+
+        return {
+            "status": "success",
+            "data": {
+                "username": user.username,
+                "account_id": user.account_id,
+                "email": user.email,
+                "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+                "gender": getattr(user, "gender", None),
+                "address1": user.street_1,
+                "address2": user.street_2,
+                "apt_number": user.suite_or_apt_number,
+                "city": user.city,
+                "state": user.state,
+                "country": user.country,
+                "zip": user.zip,
+                "profile_pic_url": user.profile_pic_url,
+                "avatar": avatar_payload,
+                "frame": frame_payload,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching profile summary: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"An unexpected error occurred: {str(e)}",
+            "code": "UNEXPECTED_ERROR",
+        }
+
