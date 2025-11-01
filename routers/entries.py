@@ -13,7 +13,7 @@ def get_all_entries(
 ):
     """
     Endpoint to fetch all entries.
-    Returns the number_of_entries for all users.
+    Returns the question entry stats for all users.
     """
     entries = db.query(TriviaQuestionsEntries).all()  # Fetch all records from TriviaQuestionsEntries table
     
@@ -22,7 +22,13 @@ def get_all_entries(
 
     return {
         "entries": [
-            {"account_id": e.account_id, "number_of_entries": e.number_of_entries}
+            {
+                "account_id": e.account_id,
+                "ques_attempted": e.ques_attempted,
+                "correct_answers": e.correct_answers,
+                "wrong_answers": e.wrong_answers,
+                "date": e.date.isoformat()
+            }
             for e in entries
         ]
     }

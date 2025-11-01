@@ -1,112 +1,67 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, and_
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import random
 import json
 
 from db import get_db
-from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries
+from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, TriviaUserDaily
 from routers.dependencies import get_current_user
 from pathlib import Path as FilePath
 
 router = APIRouter(prefix="/trivia", tags=["Trivia"])
 
+# Load store configuration for boost costs
+STORE_CONFIG_PATH = FilePath("config/store_items.json")
+with open(STORE_CONFIG_PATH) as f:
+    store_config = json.load(f)
+
 @router.get("/questions")
 async def get_daily_questions(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    check_expiration: bool = None,  # Added to handle the parameter but not use it
-    require_email: bool = None      # Added to handle the parameter but not use it
+    check_expiration: bool = None,
+    require_email: bool = None
 ):
-    """Get all of user's daily questions (deprecated, use /current-question instead)"""
+    """
+    Get today's shared question pool (0-4 questions) with user's unlock status.
+    Returns all questions in today's pool with unlock status per user.
+    """
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Get today's questions
-    today = datetime.utcnow().date()
-    daily_questions = db.query(TriviaQuestionsDaily).filter(
-        TriviaQuestionsDaily.account_id == user.account_id,
+    today = date.today()
+    
+    # Get today's shared pool (0-4 questions)
+    daily_pool = db.query(TriviaQuestionsDaily).filter(
         func.date(TriviaQuestionsDaily.date) == today
     ).order_by(TriviaQuestionsDaily.question_order).all()
-
-    # If no questions allocated today, allocate new ones
-    if not daily_questions:
-        # Get unused questions
-        unused_questions = db.query(Trivia).filter(
-            Trivia.question_done == False
-        ).order_by(func.random()).limit(4).all()
-
-        # If we don't have enough questions, reset the question_done status for all questions
-        if len(unused_questions) < 4:
-            # Count total questions to ensure we have enough in the database
-            total_questions = db.query(Trivia).count()
-            if total_questions < 4:
-                raise HTTPException(status_code=400, detail="Not enough questions in database")
-                
-            # Reset question_done status for all questions
-            db.query(Trivia).update({Trivia.question_done: False})
-            db.commit()
-            
-            # Try again to get questions
-            unused_questions = db.query(Trivia).filter(
-                Trivia.question_done == False
-            ).order_by(func.random()).limit(4).all()
-
-        if len(unused_questions) < 4:
-            raise HTTPException(status_code=400, detail="Not enough questions available")
-
-        # Check if any of the questions are already assigned for today (unique constraint)
-        # We need to avoid (date, question_number) duplicates
-        already_assigned_question_numbers = [q.question_number for q in db.query(TriviaQuestionsDaily.question_number).filter(
-            func.date(TriviaQuestionsDaily.date) == today
-        ).all()]
-        
-        # Replace any questions that would violate the constraint
-        for i in range(len(unused_questions)):
-            if unused_questions[i].question_number in already_assigned_question_numbers:
-                # Need to find a replacement question that's not already assigned
-                replacement = db.query(Trivia).filter(
-                    Trivia.question_done == False,
-                    ~Trivia.question_number.in_(already_assigned_question_numbers)
-                ).order_by(func.random()).first()
-                
-                if replacement:
-                    unused_questions[i] = replacement
-                    already_assigned_question_numbers.append(replacement.question_number)
-
-        # Allocate questions
-        daily_questions = []
-        for i, q in enumerate(unused_questions):
-            # Skip if this would cause a constraint violation
-            if q.question_number in already_assigned_question_numbers and db.query(TriviaQuestionsDaily).filter(
-                func.date(TriviaQuestionsDaily.date) == today,
-                TriviaQuestionsDaily.question_number == q.question_number
-            ).first():
-                # Find another question to use instead
-                continue
-                
-            dq = TriviaQuestionsDaily(
-                is_used=True,  # Mark as allocated to prevent reallocation
-                account_id=user.account_id,
-                question_number=q.question_number,
-                is_common=(i == 0),  # First question is common
-                question_order=i + 1
-            )
-            db.add(dq)
-            daily_questions.append(dq)
-            
-            # Mark question as used
-            q.question_done = True
-            q.que_displayed_date = datetime.utcnow()
-
-        db.commit()
-
-    # Format response
+    
+    # Get user's unlocks for today
+    user_unlocks = {
+        (ud.date, ud.question_order): ud 
+        for ud in db.query(TriviaUserDaily).filter(
+            TriviaUserDaily.account_id == user.account_id,
+            TriviaUserDaily.date == today
+        ).all()
+    }
+    
     questions = []
-    for dq in daily_questions:
+    for dq in daily_pool:
+        user_daily = user_unlocks.get((today, dq.question_order))
         q = dq.question
+        
+        unlock_status = {
+            "is_unlocked": user_daily is not None and user_daily.unlock_method is not None,
+            "unlock_method": user_daily.unlock_method if user_daily else None,
+            "status": user_daily.status if user_daily else "locked",
+            "user_answer": user_daily.user_answer if user_daily else None,
+            "is_correct": user_daily.is_correct if user_daily else None,
+            "answered_at": user_daily.answered_at.isoformat() if user_daily and user_daily.answered_at else None,
+        }
+        
         questions.append({
             "question_number": q.question_number,
             "question": q.question,
@@ -121,10 +76,7 @@ async def get_daily_questions(
             "picture_url": q.picture_url,
             "order": dq.question_order,
             "is_common": dq.is_common,
-            "is_used": dq.is_used,  # Question allocated to user
-            "user_attempted": dq.user_attempted,  # User attempted this question
-            "user_is_correct": dq.user_is_correct,  # User's answer was correct
-            "user_answer": dq.user_answer  # User's answer
+            **unlock_status
         })
 
     return {"questions": questions}
@@ -134,48 +86,41 @@ async def get_current_question(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get the user's current question (either the common question or the next unanswered one)"""
+    """
+    Get the user's current question based on their unlocks.
+    Auto-unlocks Q1 if eligible (free, first question).
+    Returns the question the user should see next.
+    """
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Get today's questions
-    today = datetime.utcnow().date()
+    today = date.today()
     
-    # Ensure entries record exists for today (populate when user accesses trivia)
-    entry = db.query(TriviaQuestionsEntries).filter(
-        TriviaQuestionsEntries.account_id == user.account_id,
-        TriviaQuestionsEntries.date == today
-    ).first()
-    
-    if not entry:
-        # Create a new entry when user first accesses trivia for the day
-        entry = TriviaQuestionsEntries(
-            account_id=user.account_id,
-            number_of_entries=0,
-            ques_attempted=0,
-            correct_answers=0,
-            wrong_answers=0,
-            date=today
-        )
-        db.add(entry)
-        db.commit()
-    
-    # First, check if the user has already answered a question correctly today
-    daily_questions = db.query(TriviaQuestionsDaily).filter(
-        TriviaQuestionsDaily.account_id == user.account_id,
+    # Get today's shared pool
+    daily_pool = db.query(TriviaQuestionsDaily).filter(
         func.date(TriviaQuestionsDaily.date) == today
     ).order_by(TriviaQuestionsDaily.question_order).all()
     
-    # Check if user has already answered a question correctly today
-    correct_question = None
-    for dq in daily_questions:
-        if dq.is_used and dq.is_correct:
-            correct_question = dq
-            break
+    if not daily_pool:
+        raise HTTPException(status_code=404, detail="No questions available for today")
     
-    # If user has answered correctly today, return that question
-    if correct_question:
-        q = correct_question.question
+    # Check if user has answered correctly today
+    user_correct = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today,
+        TriviaUserDaily.status == 'answered_correct'
+    ).first()
+    
+    if user_correct:
+        # User already answered correctly, return that question
+        dq = db.query(TriviaQuestionsDaily).filter(
+            func.date(TriviaQuestionsDaily.date) == today,
+            TriviaQuestionsDaily.question_order == user_correct.question_order
+        ).first()
+        if not dq:
+            raise HTTPException(status_code=404, detail="Question not found")
+        
+        q = dq.question
         return {
             "question_number": q.question_number,
             "question": q.question,
@@ -191,128 +136,74 @@ async def get_current_question(
             "hint": q.hint,
             "correct_answer": q.correct_answer,
             "total_gems": user.gems,
-            "order": correct_question.question_order,
-            "is_common": correct_question.is_common,
-            "is_used": correct_question.is_used,
-            "total_questions": len(daily_questions),
-            "questions_answered": sum(1 for dq in daily_questions if dq.is_used),
-            "is_correct": correct_question.is_correct,
-            "user_answer": correct_question.answer,
+            "order": dq.question_order,
+            "is_common": dq.is_common,
+            "is_correct": user_correct.is_correct,
+            "user_answer": user_correct.user_answer,
             "explanation": q.explanation,
-            "answered_at": correct_question.answered_at,
-            "daily_completed": True  # Indicate that daily trivia is completed
+            "answered_at": user_correct.answered_at.isoformat() if user_correct.answered_at else None,
+            "daily_completed": True
         }
     
-    # If no questions allocated today or no correct answers yet, proceed with normal logic
-    if not daily_questions:
-        # Get unused questions
-        unused_questions = db.query(Trivia).filter(
-            Trivia.question_done == False
-        ).order_by(func.random()).limit(4).all()
-
-        # If we don't have enough questions, reset the question_done status for all questions
-        if len(unused_questions) < 4:
-            # Count total questions to ensure we have enough in the database
-            total_questions = db.query(Trivia).count()
-            if total_questions < 4:
-                raise HTTPException(status_code=400, detail="Not enough questions in database")
-                
-            # Reset question_done status for all questions
-            db.query(Trivia).update({Trivia.question_done: False})
-            db.commit()
-            
-            # Try again to get questions
-            unused_questions = db.query(Trivia).filter(
-                Trivia.question_done == False
-            ).order_by(func.random()).limit(4).all()
-
-        if len(unused_questions) < 4:
-            raise HTTPException(status_code=400, detail="Not enough questions available")
-
-        # Make sure the common question is the same for all users today
-        # First, check if any user has already been assigned a common question today
-        common_question = db.query(TriviaQuestionsDaily).filter(
-            func.date(TriviaQuestionsDaily.date) == today,
-            TriviaQuestionsDaily.is_common == True
-        ).first()
-        
-        if common_question:
-            # Use the existing common question
-            common_question_number = common_question.question_number
-            # Replace the first question with the common one
-            unused_questions[0] = db.query(Trivia).filter(
-                Trivia.question_number == common_question_number
-            ).first()
-            
-            # If we can't find the common question, just use the first random one
-            if not unused_questions[0]:
-                unused_questions[0] = db.query(Trivia).filter(
-                    Trivia.question_done == False
-                ).order_by(func.random()).first()
-
-        # Check if any of the questions are already assigned for today (unique constraint)
-        # We need to avoid (date, question_number) duplicates
-        already_assigned_question_numbers = [q.question_number for q in db.query(TriviaQuestionsDaily.question_number).filter(
-            func.date(TriviaQuestionsDaily.date) == today
-        ).all()]
-        
-        # Replace any questions that would violate the constraint
-        for i in range(len(unused_questions)):
-            if unused_questions[i].question_number in already_assigned_question_numbers:
-                # Need to find a replacement question that's not already assigned
-                replacement = db.query(Trivia).filter(
-                    Trivia.question_done == False,
-                    ~Trivia.question_number.in_(already_assigned_question_numbers)
-                ).order_by(func.random()).first()
-                
-                if replacement:
-                    unused_questions[i] = replacement
-                    already_assigned_question_numbers.append(replacement.question_number)
-
-        # Allocate questions
-        daily_questions = []
-        for i, q in enumerate(unused_questions):
-            # Skip if this would cause a constraint violation
-            if q.question_number in already_assigned_question_numbers and db.query(TriviaQuestionsDaily).filter(
-                func.date(TriviaQuestionsDaily.date) == today,
-                TriviaQuestionsDaily.question_number == q.question_number
-            ).first():
-                # Find another question to use instead
-                continue
-                
-            dq = TriviaQuestionsDaily(
-                is_used=True,  # Mark as allocated to prevent reallocation
-                account_id=user.account_id,
-                question_number=q.question_number,
-                is_common=(i == 0),  # First question is common
-                question_order=i + 1
-            )
-            db.add(dq)
-            daily_questions.append(dq)
-            
-            # Mark question as used
-            q.question_done = True
-            q.que_displayed_date = datetime.utcnow()
-
+    # Get user's unlocks for today
+    user_unlocks = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today
+    ).order_by(TriviaUserDaily.question_order).all()
+    
+    # Determine next allowed question order
+    max_unlocked_order = 0
+    if user_unlocks:
+        max_unlocked_order = max(ud.question_order for ud in user_unlocks if ud.unlock_method is not None)
+    
+    # Auto-unlock Q1 if not unlocked yet and it exists
+    q1 = next((dq for dq in daily_pool if dq.question_order == 1), None)
+    if q1 and max_unlocked_order == 0:
+        # Auto-unlock Q1 for free
+        user_daily = TriviaUserDaily(
+            account_id=user.account_id,
+            date=today,
+            question_order=1,
+            question_number=q1.question_number,
+            unlock_method='free',
+            viewed_at=datetime.utcnow(),
+            status='viewed'
+        )
+        db.add(user_daily)
+        # Mark daily pool question as used
+        q1.is_used = True
         db.commit()
-
-    # Find the current unanswered question
-    current_question = None
-    for dq in daily_questions:
-        if not dq.is_used:
-            current_question = dq
+        db.refresh(user_daily)
+        max_unlocked_order = 1
+    
+    # Find current question (highest unlocked, not yet answered correctly)
+    current_dq = None
+    for order in range(max_unlocked_order, 0, -1):
+        user_daily = next((ud for ud in user_unlocks if ud.question_order == order), None)
+        if user_daily and user_daily.status not in ['answered_correct', 'skipped']:
+            current_dq = next((dq for dq in daily_pool if dq.question_order == order), None)
             break
     
-    # If all questions are answered, return the last one
-    if not current_question and daily_questions:
-        current_question = daily_questions[-1]
-        
-    # If somehow we still don't have a question, return an error
-    if not current_question:
-        raise HTTPException(status_code=404, detail="No questions available")
+    if not current_dq:
+        # Get Q1 if available
+        current_dq = q1 or daily_pool[0]
+        if current_dq.question_order == 1 and max_unlocked_order == 0:
+            # Should have been unlocked above, but just in case
+            user_daily = TriviaUserDaily(
+                account_id=user.account_id,
+                date=today,
+                question_order=1,
+                question_number=current_dq.question_number,
+                unlock_method='free',
+                viewed_at=datetime.utcnow(),
+                status='viewed'
+            )
+            db.add(user_daily)
+            current_dq.is_used = True
+            db.commit()
     
-    # Format response for the single question
-    q = current_question.question
+    q = current_dq.question
+    current_user_daily = next((ud for ud in user_unlocks if ud.question_order == current_dq.question_order), None)
     
     return {
         "question_number": q.question_number,
@@ -329,12 +220,234 @@ async def get_current_question(
         "hint": q.hint,
         "correct_answer": q.correct_answer,
         "total_gems": user.gems,
-        "order": current_question.question_order,
-        "is_common": current_question.is_common,
-        "is_used": current_question.is_used,
-        "total_questions": len(daily_questions),
-        "questions_answered": sum(1 for dq in daily_questions if dq.is_used),
-        "daily_completed": False  # Indicate that daily trivia is not completed yet
+        "order": current_dq.question_order,
+        "is_common": current_dq.is_common,
+        "status": current_user_daily.status if current_user_daily else "viewed",
+        "total_questions": len(daily_pool),
+        "daily_completed": False
+    }
+
+@router.post("/unlock-next")
+async def unlock_next_question(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Unlock the next question in sequence (Q2, Q3, or Q4) using gems.
+    Charges 10 gems (change_question cost from config).
+    """
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    today = date.today()
+    
+    # Check if user has answered correctly today
+    user_correct = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today,
+        TriviaUserDaily.status == 'answered_correct'
+    ).first()
+    
+    if user_correct:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You have already answered correctly today. Come back tomorrow!"
+        )
+    
+    # Get user's unlocks to find next order
+    user_unlocks = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today,
+        TriviaUserDaily.unlock_method.isnot(None)
+    ).order_by(TriviaUserDaily.question_order).all()
+    
+    max_unlocked_order = max((ud.question_order for ud in user_unlocks), default=0)
+    next_order = max_unlocked_order + 1
+    
+    if next_order > 4:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="All questions are already unlocked"
+        )
+    
+    # Get next question from today's pool
+    next_daily = db.query(TriviaQuestionsDaily).filter(
+        func.date(TriviaQuestionsDaily.date) == today,
+        TriviaQuestionsDaily.question_order == next_order
+    ).first()
+    
+    if not next_daily:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Question {next_order} not available for today"
+        )
+    
+    # Check cost
+    boost_cost = store_config["gameplay_boosts"]["change_question"]["gems"]
+    
+    if user.gems < boost_cost:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Insufficient gems. You need {boost_cost} gems to unlock the next question."
+        )
+    
+    # Charge gems
+    user.gems -= boost_cost
+    
+    # Create or update user_daily record
+    existing = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today,
+        TriviaUserDaily.question_order == next_order
+    ).first()
+    
+    if existing:
+        existing.unlock_method = 'gems'
+        existing.viewed_at = datetime.utcnow()
+        existing.status = 'viewed'
+        user_daily = existing
+    else:
+        user_daily = TriviaUserDaily(
+            account_id=user.account_id,
+            date=today,
+            question_order=next_order,
+            question_number=next_daily.question_number,
+            unlock_method='gems',
+            viewed_at=datetime.utcnow(),
+            status='viewed'
+        )
+        db.add(user_daily)
+    
+    # Mark daily pool question as used
+    next_daily.is_used = True
+    
+    db.commit()
+    db.refresh(user_daily)
+    
+    q = next_daily.question
+    
+    return {
+        "success": True,
+        "remaining_gems": user.gems,
+        "unlocked_question": {
+            "question_number": q.question_number,
+            "question": q.question,
+            "options": {
+                "a": q.option_a,
+                "b": q.option_b,
+                "c": q.option_c,
+                "d": q.option_d
+            },
+            "category": q.category,
+            "difficulty": q.difficulty_level,
+            "picture_url": q.picture_url,
+            "hint": q.hint,
+            "order": next_daily.question_order,
+            "is_common": next_daily.is_common
+        }
+    }
+
+@router.post("/retry/{question_number}")
+async def retry_question(
+    question_number: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retry a question after answering incorrectly (150 gems).
+    Resets the question to allow a new attempt.
+    """
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    today = date.today()
+    
+    # Check if user has answered correctly today
+    user_correct = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today,
+        TriviaUserDaily.status == 'answered_correct'
+    ).first()
+    
+    if user_correct:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You have already answered correctly today. Come back tomorrow!"
+        )
+    
+    # Find user's row for this question today
+    user_daily = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today,
+        TriviaUserDaily.question_number == question_number
+    ).first()
+    
+    if not user_daily:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found or not unlocked"
+        )
+    
+    # Verify status is answered_wrong
+    if user_daily.status != 'answered_wrong':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot retry question. Current status: {user_daily.status}"
+        )
+    
+    # Check cost
+    boost_cost = store_config["gameplay_boosts"]["extra_chance"]["gems"]
+    
+    if user.gems < boost_cost:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Insufficient gems. You need {boost_cost} gems to retry this question."
+        )
+    
+    # Charge gems
+    user.gems -= boost_cost
+    
+    # Reset question for retry
+    user_daily.status = 'viewed'
+    user_daily.user_answer = None
+    user_daily.is_correct = None
+    user_daily.answered_at = None
+    user_daily.retry_count += 1
+    
+    db.commit()
+    db.refresh(user_daily)
+    
+    # Get question details
+    question = db.query(Trivia).filter(Trivia.question_number == question_number).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    
+    # Get daily pool info
+    daily_q = db.query(TriviaQuestionsDaily).filter(
+        func.date(TriviaQuestionsDaily.date) == today,
+        TriviaQuestionsDaily.question_number == question_number
+    ).first()
+    
+    return {
+        "success": True,
+        "remaining_gems": user.gems,
+        "retry_count": user_daily.retry_count,
+        "question": {
+            "question_number": question.question_number,
+            "question": question.question,
+            "options": {
+                "a": question.option_a,
+                "b": question.option_b,
+                "c": question.option_c,
+                "d": question.option_d
+            },
+            "category": question.category,
+            "difficulty": question.difficulty_level,
+            "picture_url": question.picture_url,
+            "hint": question.hint,
+            "order": daily_q.question_order if daily_q else None,
+            "is_common": daily_q.is_common if daily_q else False
+        }
     }
 
 @router.post("/submit-answer")
@@ -344,85 +457,96 @@ async def submit_answer(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Submit answer for a question"""
+    """
+    Submit answer for a question.
+    Validates question is unlocked, sequential answering, and not already answered correctly today.
+    """
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Check if user is answering questions in sequence
-    today = datetime.utcnow().date()
-    
-    # Get all user's questions for today ordered by question_order
-    user_questions = db.query(TriviaQuestionsDaily).filter(
-        TriviaQuestionsDaily.account_id == user.account_id,
-        func.date(TriviaQuestionsDaily.date) == today
-    ).order_by(TriviaQuestionsDaily.question_order).all()
-    
-    if not user_questions:
-        raise HTTPException(status_code=400, detail="No questions allocated for today")
-    
-    # Find the current question in the sequence
-    current_question = None
-    for q in user_questions:
-        if q.question_number == question_number:
-            current_question = q
-            break
-    
-    if not current_question:
-        raise HTTPException(status_code=400, detail="Question not allocated for today")
-    
-    # Check if user is answering in sequence
-    # User must answer questions in order (1, 2, 3, 4)
-    for i, q in enumerate(user_questions):
-        if q.question_number == question_number:
-            # This is the question user wants to answer
-            expected_order = i + 1  # 1-based order
-            if q.question_order != expected_order:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Please answer questions in order. You should answer question {expected_order} next."
-                )
-            break
-    
-    # Check if this question was already attempted
-    if current_question.user_attempted:
-        raise HTTPException(status_code=400, detail="Question already attempted")
+    today = date.today()
     
     # Check if user has already answered correctly today
-    already_correct = any(q.user_is_correct for q in user_questions if q.user_attempted)
-    if already_correct:
+    user_correct = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today,
+        TriviaUserDaily.status == 'answered_correct'
+    ).first()
+    
+    if user_correct:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="You have already answered a question correctly today. Come back tomorrow for new questions!"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You have already answered correctly today. Come back tomorrow for new questions!"
         )
-
+    
+    # Find user's row for this question today
+    user_daily = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today,
+        TriviaUserDaily.question_number == question_number
+    ).first()
+    
+    if not user_daily:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found or not unlocked"
+        )
+    
+    # Validate question is unlocked
+    if user_daily.unlock_method is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question is not unlocked"
+        )
+    
+    # Validate sequential answering
+    user_unlocks = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == today,
+        TriviaUserDaily.unlock_method.isnot(None)
+    ).order_by(TriviaUserDaily.question_order).all()
+    
+    # Check if user is answering in order
+    answered_orders = [ud.question_order for ud in user_unlocks if ud.status in ['answered_correct', 'answered_wrong']]
+    if answered_orders and max(answered_orders) >= user_daily.question_order:
+        # Check if there's a gap (unanswered question before this one)
+        expected_next = max(answered_orders) + 1
+        if user_daily.question_order > expected_next:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Please answer questions in order. You should answer question {expected_next} next."
+            )
+    
+    # Validate not already answered
+    if user_daily.status in ['answered_correct', 'answered_wrong']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question already answered"
+        )
+    
     # Get the question
     question = db.query(Trivia).filter(Trivia.question_number == question_number).first()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    # Use the current question we found
-    daily_question = current_question
-
     # Check answer
     is_correct = answer.lower() == question.correct_answer.lower()
     
-    # Record the user's attempt
-    daily_question.user_attempted = True
-    daily_question.user_answer = answer
-    daily_question.user_is_correct = is_correct
-    daily_question.user_answered_at = datetime.utcnow()
+    # Update user_daily
+    user_daily.user_answer = answer
+    user_daily.is_correct = is_correct
+    user_daily.answered_at = datetime.utcnow()
+    user_daily.status = 'answered_correct' if is_correct else 'answered_wrong'
     
-    # Update the TriviaQuestionsEntries table for reward eligibility
+    # Update or create entries record
     entry = db.query(TriviaQuestionsEntries).filter(
         TriviaQuestionsEntries.account_id == user.account_id,
         TriviaQuestionsEntries.date == today
     ).first()
     
     if not entry:
-        # Create a new entry if one doesn't exist for today
         entry = TriviaQuestionsEntries(
             account_id=user.account_id,
-            number_of_entries=0,
             ques_attempted=1,
             correct_answers=1 if is_correct else 0,
             wrong_answers=0 if is_correct else 1,
@@ -430,44 +554,35 @@ async def submit_answer(
         )
         db.add(entry)
     else:
-        # Update existing entry
-        # Use the ORM to avoid directly updating the TriviaQuestionsEntries object
-        # This ensures SQLAlchemy builds the correct UPDATE statement with the composite primary key
-        db.query(TriviaQuestionsEntries).filter(
-            TriviaQuestionsEntries.account_id == user.account_id,
-            TriviaQuestionsEntries.date == today
-        ).update({
-            TriviaQuestionsEntries.ques_attempted: TriviaQuestionsEntries.ques_attempted + 1,
-            TriviaQuestionsEntries.correct_answers: TriviaQuestionsEntries.correct_answers + (1 if is_correct else 0),
-            TriviaQuestionsEntries.wrong_answers: TriviaQuestionsEntries.wrong_answers + (0 if is_correct else 1)
-        })
+        entry.ques_attempted += 1
+        if is_correct:
+            entry.correct_answers += 1
+        else:
+            entry.wrong_answers += 1
     
-    db.commit()
-    
-    # If answer is correct, mark all remaining questions as used to prevent further attempts
+    # If correct, mark remaining questions as skipped
     if is_correct:
-        # Update daily eligibility flag for the user
         from rewards_logic import update_user_eligibility
         update_user_eligibility(db, user.account_id, today)
         
-        remaining_questions = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.account_id == user.account_id,
-            func.date(TriviaQuestionsDaily.date) == today,
-            TriviaQuestionsDaily.user_attempted == False
+        # Mark all remaining unlocked questions as skipped
+        remaining = db.query(TriviaUserDaily).filter(
+            TriviaUserDaily.account_id == user.account_id,
+            TriviaUserDaily.date == today,
+            TriviaUserDaily.question_order > user_daily.question_order,
+            TriviaUserDaily.status.notin_(['answered_correct', 'answered_wrong'])
         ).all()
         
-        for q in remaining_questions:
-            q.user_attempted = True
-            q.user_answer = None
-            q.user_is_correct = None
-        
-        db.commit()
+        for rem in remaining:
+            rem.status = 'skipped'
+    
+    db.commit()
 
     return {
         "is_correct": is_correct,
         "correct_answer": question.correct_answer,
         "explanation": question.explanation,
-        "daily_completed": is_correct  # Indicate if daily trivia is completed
+        "daily_completed": is_correct
     }
 
 @router.get("/")
@@ -558,35 +673,34 @@ async def get_question_status(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get the status of a specific question for the current user (whether it's answered and if correct)"""
+    """Get the status of a specific question for the current user"""
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Get today's daily question allocation for this question
-    today = datetime.utcnow().date()
-    daily_question = db.query(TriviaQuestionsDaily).filter(
-        TriviaQuestionsDaily.account_id == user.account_id,
-        TriviaQuestionsDaily.question_number == question_number,
-        func.date(TriviaQuestionsDaily.date) == today
+    today = date.today()
+    
+    user_daily = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.question_number == question_number,
+        TriviaUserDaily.date == today
     ).first()
     
-    if not daily_question:
-        raise HTTPException(status_code=404, detail="Question not found in today's allocation")
+    if not user_daily:
+        raise HTTPException(status_code=404, detail="Question not found or not unlocked")
     
-    # Get the question details
     question = db.query(Trivia).filter(Trivia.question_number == question_number).first()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
     
-    # Return the status
     return {
         "question_number": question_number,
-        "is_answered": daily_question.is_used,
-        "is_correct": daily_question.is_correct,
-        "user_answer": daily_question.answer,
-        "correct_answer": question.correct_answer if daily_question.is_used else None,
-        "answered_at": daily_question.answered_at,
-        "explanation": question.explanation if daily_question.is_used else None
+        "is_answered": user_daily.status in ['answered_correct', 'answered_wrong'],
+        "is_correct": user_daily.is_correct,
+        "user_answer": user_daily.user_answer,
+        "correct_answer": question.correct_answer if user_daily.status in ['answered_correct', 'answered_wrong'] else None,
+        "answered_at": user_daily.answered_at.isoformat() if user_daily.answered_at else None,
+        "explanation": question.explanation if user_daily.status in ['answered_correct', 'answered_wrong'] else None,
+        "status": user_daily.status
     }
 
 @router.post("/reset-questions")
@@ -595,11 +709,9 @@ async def reset_questions(
     db: Session = Depends(get_db)
 ):
     """Reset all trivia questions to unused status (for admin use)"""
-    # Check if user is admin (you may want to add proper admin check here)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Reset all questions
     updated_count = db.query(Trivia).update({Trivia.question_done: False})
     db.commit()
     
@@ -607,11 +719,6 @@ async def reset_questions(
         "message": f"Successfully reset {updated_count} questions to unused status",
         "updated_count": updated_count
     }
-
-# Load store configuration for boost costs
-STORE_CONFIG_PATH = FilePath("config/store_items.json")
-with open(STORE_CONFIG_PATH) as f:
-    store_config = json.load(f)
 
 @router.get("/boost-availability")
 async def get_boost_availability(
@@ -625,10 +732,8 @@ async def get_boost_availability(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Get boost costs from config
     gameplay_boosts = store_config.get("gameplay_boosts", {})
     
-    # Calculate how many of each boost user can afford
     available_boosts = {}
     for boost_type, boost_info in gameplay_boosts.items():
         if 'gems' in boost_info:
@@ -641,23 +746,10 @@ async def get_boost_availability(
         else:
             available_boosts[boost_type] = 0
     
-    # Get remaining question changes for today
-    today = datetime.utcnow().date()
-    daily_questions = db.query(TriviaQuestionsDaily).filter(
-        TriviaQuestionsDaily.account_id == user.account_id,
-        func.date(TriviaQuestionsDaily.date) == today
-    ).all()
-    
-    # Count how many questions have been changed today
-    changes_used_today = sum(1 for dq in daily_questions if dq.was_changed)
-    question_changes_remaining = max(0, 3 - changes_used_today)
-    
     return {
         "available_boosts": available_boosts,
-        "question_changes_remaining": question_changes_remaining,
         "total_gems": user.gems,
         "boost_costs": {boost_type: boost_info.get('gems', 0) 
                        for boost_type, boost_info in gameplay_boosts.items() 
                        if 'gems' in boost_info}
     }
-
