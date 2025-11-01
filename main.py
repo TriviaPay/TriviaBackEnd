@@ -100,6 +100,16 @@ app.add_middleware(
     allow_headers=["*", "Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
 )
 
+# NOTE: SSE (Server-Sent Events) streams must NOT be compressed.
+# FastAPI doesn't auto-compress by default, but if you add compression middleware
+# (e.g., GZipMiddleware), ensure it excludes 'text/event-stream' content type.
+# Compression breaks SSE streaming because proxies/browsers buffer compressed responses.
+#
+# Timeout requirements for SSE:
+# - Uvicorn: Set --timeout-keep-alive to at least 300s (default is 5s, too short for SSE)
+# - Nginx: Set proxy_read_timeout to at least 3600s (default is 60s)
+# - Redis: Ensure connection timeout is higher than SSE heartbeat interval
+
 # Include only required routers
 app.include_router(login.router)     # Auth0 login
 app.include_router(refresh.router)   # Token refresh

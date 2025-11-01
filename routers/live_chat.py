@@ -1,24 +1,32 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status, Body
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Body, Query
+from fastapi.responses import StreamingResponse, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import Dict, Any, AsyncGenerator, Optional, Set
+from collections import defaultdict
 import json
 import os
 import pytz
-from collections import defaultdict
 import asyncio
 import logging
+import hashlib
 
 from db import get_db
 from models import User, LiveChatSession, LiveChatMessage, LiveChatLike, LiveChatViewer
 from routers.dependencies import get_current_user
 from utils.draw_calculations import get_next_draw_time
+from utils.redis_pubsub import publish_event, subscribe
+from utils.viewer_tracking import mark_viewer_seen, get_active_viewer_count
+from auth import validate_descope_jwt
 from config import (
     LIVE_CHAT_ENABLED, 
     LIVE_CHAT_PRE_DRAW_HOURS, 
     LIVE_CHAT_POST_DRAW_HOURS,
     LIVE_CHAT_MAX_MESSAGES_PER_USER_PER_MINUTE,
-    LIVE_CHAT_MESSAGE_HISTORY_LIMIT
+    LIVE_CHAT_MESSAGE_HISTORY_LIMIT,
+    LIVE_CHAT_MAX_MESSAGE_LENGTH,
+    SSE_HEARTBEAT_SECONDS
 )
 
 # Configure logging
@@ -26,48 +34,107 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/live-chat", tags=["Live Chat"])
 
-# WebSocket connection manager
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: Dict[int, List[WebSocket]] = defaultdict(list)
-        self.user_sessions: Dict[WebSocket, int] = {}  # WebSocket -> user_id mapping
-        
-    async def connect(self, websocket: WebSocket, user_id: int, session_id: int):
-        await websocket.accept()
-        self.active_connections[session_id].append(websocket)
-        self.user_sessions[websocket] = user_id
-        logger.info(f"User {user_id} connected to session {session_id}")
-        
-    def disconnect(self, websocket: WebSocket, session_id: int):
-        if websocket in self.active_connections[session_id]:
-            self.active_connections[session_id].remove(websocket)
-        if websocket in self.user_sessions:
-            user_id = self.user_sessions[websocket]
-            del self.user_sessions[websocket]
-            logger.info(f"User {user_id} disconnected from session {session_id}")
-            
-    async def send_personal_message(self, message: str, websocket: WebSocket):
-        try:
-            await websocket.send_text(message)
-        except Exception as e:
-            logger.error(f"Failed to send personal message: {e}")
-        
-    async def broadcast_to_session(self, message: str, session_id: int, exclude_user: int = None):
-        disconnected_websockets = []
-        for websocket in self.active_connections[session_id]:
-            if exclude_user and self.user_sessions.get(websocket) == exclude_user:
-                continue
-            try:
-                await websocket.send_text(message)
-            except Exception as e:
-                logger.error(f"Failed to broadcast to websocket: {e}")
-                disconnected_websockets.append(websocket)
-        
-        # Remove broken connections
-        for websocket in disconnected_websockets:
-            self.disconnect(websocket, session_id)
+# Connection tracking for per-user limits
+_active_sse_connections: Dict[int, Set[int]] = defaultdict(set)  # user_id -> set of session_ids
+_max_concurrent_streams_per_user = 3
 
-manager = ConnectionManager()
+
+def sse_format(data: Dict, event: Optional[str] = None, id_: Optional[str] = None) -> bytes:
+    """
+    Build an SSE frame.
+    JSON encoding prevents CRLF injection from user content.
+    
+    Args:
+        data: Dictionary to send as JSON
+        event: Optional event type name
+        id_: Optional event ID
+        
+    Returns:
+        Formatted SSE bytes
+    """
+    chunks = []
+    if event:
+        chunks.append(f"event: {event}\n")
+    if id_:
+        chunks.append(f"id: {id_}\n")
+    # One 'data:' line; keep it under a few KB
+    # JSON encoding ensures no CRLF injection from user content
+    payload = json.dumps(data, separators=(",", ":"))
+    chunks.append(f"data: {payload}\n\n")
+    return "".join(chunks).encode("utf-8")
+
+
+def sse_retry(ms: int = 5000) -> bytes:
+    """Generate SSE retry hint frame."""
+    return f"retry: {ms}\n\n".encode("utf-8")
+
+
+def hash_user_id(user_id: int) -> str:
+    """Hash user ID for logging (privacy)."""
+    return hashlib.sha256(str(user_id).encode()).hexdigest()[:8]
+
+
+def get_user_from_token(token: Optional[str], db: Session) -> User:
+    """
+    Authenticate user from token (query param or Authorization header).
+    
+    Args:
+        token: JWT token string (not logged for security)
+        db: Database session
+        
+    Returns:
+        User object
+        
+    Raises:
+        HTTPException: If authentication fails
+    """
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+    
+    try:
+        user_info = validate_descope_jwt(token)
+        
+        # Find user in database
+        user = db.query(User).filter(User.descope_user_id == user_info['userId']).first()
+        if not user:
+            # Try by email
+            email = user_info.get('loginIds', [None])[0] or user_info.get('email')
+            if email:
+                user = db.query(User).filter(User.email == email).first()
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+            
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Authentication failed: {str(e)}")
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
+
+
+def check_token_expiry(token: str) -> bool:
+    """
+    Check if token is expired (for heartbeat checks).
+    
+    Args:
+        token: JWT token string
+        
+    Returns:
+        True if token is valid (not expired), False otherwise
+    """
+    try:
+        from auth import decode_jwt_payload
+        payload = decode_jwt_payload(token)
+        exp = payload.get('exp')
+        if not exp:
+            return True  # No expiry claim, assume valid
+        
+        import time
+        return exp > time.time()
+    except Exception as e:
+        logger.debug(f"Token expiry check failed: {e}")
+        return False
 
 def get_display_username(user: User) -> str:
     """
@@ -83,7 +150,15 @@ def get_display_username(user: User) -> str:
     return f"User{user.account_id}"
 
 def is_chat_window_active() -> bool:
-    """Check if we're within the chat window (before/after draw)"""
+    """
+    Check if we're within the active chat window.
+    
+    Chat is active:
+    - LIVE_CHAT_PRE_DRAW_HOURS (default 1h) before the next draw
+    - LIVE_CHAT_POST_DRAW_HOURS (default 1h) after the draw completes
+    
+    This ensures chat is only available during the relevant draw windows.
+    """
     if not LIVE_CHAT_ENABLED:
         return False
         
@@ -222,22 +297,206 @@ def get_current_active_session(db: Session) -> LiveChatSession:
     return get_or_create_active_session(db)
 
 async def broadcast_viewer_count_update(db: Session, session_id: int):
-    """Broadcast viewer count update to all connected users"""
-    active_viewers = db.query(LiveChatViewer).filter(
-        LiveChatViewer.session_id == session_id,
-        LiveChatViewer.is_active == True,
-        LiveChatViewer.last_seen >= datetime.utcnow() - timedelta(minutes=5)
-    ).count()
+    """Publish viewer count update event to Redis"""
+    active_viewers = get_active_viewer_count(session_id, db)
     
-    await manager.broadcast_to_session(
-        json.dumps({
-            "type": "viewer_count_update",
-            "viewer_count": active_viewers
-        }),
-        session_id
-    )
+    await publish_event(session_id, {
+        "type": "viewer_count_update",
+        "viewer_count": active_viewers
+    })
     
     return active_viewers
+
+@router.options("/sse/{session_id}")
+async def live_chat_sse_options():
+    """
+    CORS preflight handler for SSE endpoint.
+    Returns CORS headers to allow GET requests from browser clients.
+    """
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Origin, X-Requested-With",
+            "Access-Control-Max-Age": "86400",  # 24 hours
+        }
+    )
+
+
+@router.get("/sse/{session_id}")
+async def live_chat_sse(
+    request: Request,
+    session_id: int,
+    token: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db)
+):
+    """
+    SSE endpoint for real-time chat events.
+    Accepts token via query param ?token=... or Authorization header.
+    
+    Session window: Chat is only active 1h before and 1h after draw time.
+    This is enforced by the is_chat_window_active() check.
+    """
+    if not LIVE_CHAT_ENABLED or not is_chat_window_active():
+        raise HTTPException(status_code=403, detail="Chat is not active")
+    
+    # Extract token from query param or Authorization header
+    if not token:
+        auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+    
+    # Authenticate user
+    user = get_user_from_token(token, db)
+    user_id_hash = hash_user_id(user.account_id)
+    
+    # Check connection limit per user
+    active_connections = _active_sse_connections[user.account_id]
+    if len(active_connections) >= _max_concurrent_streams_per_user:
+        logger.warning(f"Connection limit exceeded for user {user_id_hash}")
+        raise HTTPException(
+            status_code=429,
+            detail=f"Maximum {_max_concurrent_streams_per_user} concurrent streams allowed per user"
+        )
+    
+    # Verify session exists and is active
+    # session_id is validated as int by FastAPI, preventing Redis channel injection
+    if session_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+    
+    session = db.query(LiveChatSession).filter(LiveChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Track connection
+    _active_sse_connections[user.account_id].add(session_id)
+    logger.info(f"SSE connection opened: user={user_id_hash}, session={session_id}")
+    
+    try:
+        async def event_stream() -> AsyncGenerator[bytes, None]:
+            """
+            Multiplex 2 sources:
+            1) Redis pub/sub messages for this session
+            2) Heartbeats to keep the connection alive and refresh viewer presence
+            """
+            # Send retry hint first (helps clients know how fast to reconnect)
+            yield sse_retry(5000)
+            
+            # Kick: immediately mark presence and send current viewer count
+            await mark_viewer_seen(session_id, user.account_id, db)
+            vc = get_active_viewer_count(session_id, db)
+            yield sse_format({"type": "viewer_count_update", "viewer_count": vc})
+            
+            # Store token for expiry checks during heartbeats
+            current_token = token
+            
+            # Redis subscription
+            redis_msgs = subscribe(session_id)
+            redis_iter = redis_msgs.__aiter__()
+            
+            # Heartbeat task
+            heartbeat = asyncio.create_task(asyncio.sleep(SSE_HEARTBEAT_SECONDS))
+            pending = set()
+            
+            try:
+                while True:
+                    # Check if client disconnected (top of loop)
+                    if await request.is_disconnected():
+                        logger.debug(f"SSE client disconnected: user={user_id_hash}, session={session_id}")
+                        break
+                    
+                    # Race heartbeat vs redis message
+                    redis_next_task = asyncio.create_task(redis_iter.__anext__())
+                    pending = {heartbeat, redis_next_task}
+                    done, pending = await asyncio.wait(
+                        pending,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    
+                    if heartbeat in done:
+                        # Check token expiry during heartbeat
+                        if current_token and not check_token_expiry(current_token):
+                            logger.info(f"Token expired for user {user_id_hash}, disconnecting")
+                            break
+                        
+                        # Update presence + send heartbeat + publish viewer count
+                        await mark_viewer_seen(session_id, user.account_id, db)
+                        vc = get_active_viewer_count(session_id, db)
+                        # Publish viewer count update so all clients see it
+                        await publish_event(session_id, {
+                            "type": "viewer_count_update",
+                            "viewer_count": vc
+                        })
+                        yield b": heartbeat\n\n"
+                        # Reset heartbeat
+                        heartbeat = asyncio.create_task(asyncio.sleep(SSE_HEARTBEAT_SECONDS))
+                    
+                    for task in list(done):
+                        if task is heartbeat:
+                            continue
+                        # A redis message arrived
+                        try:
+                            raw = await task  # JSON string published by server
+                            event_data = json.loads(raw)
+                            yield sse_format(event_data)
+                        except StopAsyncIteration:
+                            logger.debug(f"Redis subscription ended: user={user_id_hash}, session={session_id}")
+                            break
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse Redis message: {e}")
+                            continue
+                        except Exception as e:
+                            logger.error(f"Error processing Redis message: {e}")
+                            continue
+                    
+                    # Cancel any pending tasks (except heartbeat if it's still valid)
+                    for task in list(pending):
+                        if task != heartbeat:
+                            task.cancel()
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                pass
+                        
+            except StopAsyncIteration:
+                logger.debug(f"Redis subscription ended: user={user_id_hash}, session={session_id}")
+            except asyncio.CancelledError:
+                logger.debug(f"SSE stream cancelled: user={user_id_hash}, session={session_id}")
+            except Exception as e:
+                logger.error(f"Error in SSE stream: user={user_id_hash}, session={session_id}, error={str(e)}")
+            finally:
+                # Cancel all pending tasks
+                heartbeat.cancel()
+                try:
+                    await heartbeat
+                except asyncio.CancelledError:
+                    pass
+                for task in list(pending):
+                    if task != heartbeat:
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                logger.info(f"SSE connection closed: user={user_id_hash}, session={session_id}")
+        
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+                "Access-Control-Allow-Origin": "*",  # Or lock down to your app origin
+            },
+        )
+    finally:
+        # Remove connection tracking
+        _active_sse_connections[user.account_id].discard(session_id)
+        if not _active_sse_connections[user.account_id]:
+            del _active_sse_connections[user.account_id]
+
 
 @router.get("/status")
 async def get_chat_status(
@@ -365,24 +624,13 @@ async def like_session(
     db.add(new_like)
     session.total_likes += 1
     db.commit()
+    db.refresh(session)
     
-    # Broadcast like update
-    await manager.broadcast_to_session(
-        json.dumps({
-            "type": "session_like_update",
-            "total_likes": session.total_likes
-        }),
-        session.id
-    )
-    
-    # Broadcast like count update
-    await manager.broadcast_to_session(
-        json.dumps({
-            "type": "like_count_update",
-            "total_likes": session.total_likes
-        }),
-        session.id
-    )
+    # Publish like update to Redis
+    await publish_event(session.id, {
+        "type": "session_like_update",
+        "total_likes": session.total_likes
+    })
     
     return {"message": "Session liked successfully", "total_likes": session.total_likes}
 
@@ -419,16 +667,14 @@ async def like_message(
     db.add(new_like)
     message.likes += 1
     db.commit()
+    db.refresh(message)
     
-    # Broadcast message like update
-    await manager.broadcast_to_session(
-        json.dumps({
-            "type": "message_like_update",
-            "message_id": message_id,
-            "likes": message.likes
-        }),
-        message.session_id
-    )
+    # Publish message like update to Redis
+    await publish_event(message.session_id, {
+        "type": "message_like_update",
+        "message_id": message_id,
+        "likes": message.likes
+    })
     
     return {"message": "Message liked successfully", "likes": message.likes}
 
@@ -568,20 +814,56 @@ async def get_chat_stats(
         "end_time": session.end_time.isoformat()
     }
 
+class SendMessageRequest(BaseModel):
+    message: str = Field(..., min_length=1, description="Message text")
+    client_message_id: Optional[str] = Field(None, description="Optional client-provided ID for idempotency")
+
+
 @router.post("/send-message")
 async def send_message_rest(
-    message: str = Body(..., embed=True),
+    request: SendMessageRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Send a message via REST API (for testing purposes)"""
+    """
+    Send a message via REST API.
+    
+    Supports idempotent writes: if client_message_id is provided and matches
+    an existing message from the same user in this session, returns the existing
+    message ID to prevent duplicates on mobile network retries.
+    """
     if not LIVE_CHAT_ENABLED or not is_chat_window_active():
         raise HTTPException(status_code=403, detail="Chat is not active")
     
-    if not message or not message.strip():
+    message = request.message.strip()
+    if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
+    # Validate message length
+    if len(message) > LIVE_CHAT_MAX_MESSAGE_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Message exceeds maximum length of {LIVE_CHAT_MAX_MESSAGE_LENGTH} characters"
+        )
+    
     session = get_current_active_session(db)
+    
+    # Check for duplicate message (idempotent write)
+    if request.client_message_id:
+        existing_message = db.query(LiveChatMessage).filter(
+            LiveChatMessage.session_id == session.id,
+            LiveChatMessage.user_id == current_user.account_id,
+            LiveChatMessage.client_message_id == request.client_message_id
+        ).first()
+        
+        if existing_message:
+            logger.debug(f"Duplicate message detected (idempotent write): client_message_id={request.client_message_id}")
+            return {
+                "message": "Message already sent",
+                "message_id": existing_message.id,
+                "created_at": existing_message.created_at.isoformat(),
+                "duplicate": True
+            }
     
     # Rate limiting
     recent_messages = db.query(LiveChatMessage).filter(
@@ -596,16 +878,17 @@ async def send_message_rest(
     new_message = LiveChatMessage(
         session_id=session.id,
         user_id=current_user.account_id,
-        message=message.strip(),
-        message_type="text"
+        message=message,
+        message_type="text",
+        client_message_id=request.client_message_id if request.client_message_id else None
     )
     
     db.add(new_message)
     db.commit()
     db.refresh(new_message)
     
-    # Broadcast message to all connected users via WebSocket
-    message_response = {
+    # Publish message to Redis for SSE clients
+    message_event = {
         "type": "new_message",
         "message": {
             "id": new_message.id,
@@ -621,175 +904,76 @@ async def send_message_rest(
         }
     }
     
-    await manager.broadcast_to_session(
-        json.dumps(message_response),
-        session.id
-    )
+    await publish_event(session.id, message_event)
     
     return {
         "message": "Message sent successfully",
         "message_id": new_message.id,
-        "created_at": new_message.created_at.isoformat()
+        "created_at": new_message.created_at.isoformat(),
+        "duplicate": False
     }
 
-# WebSocket authentication helper
-async def authenticate_websocket_user(token: str, db: Session) -> User:
-    """Authenticate user for WebSocket connection"""
-    try:
-        from auth import validate_descope_jwt
-        user_info = validate_descope_jwt(token)
-        
-        # Find user in database
-        user = db.query(User).filter(User.descope_user_id == user_info['userId']).first()
-        if not user:
-            # Try by email
-            email = user_info.get('loginIds', [None])[0] or user_info.get('email')
-            if email:
-                user = db.query(User).filter(User.email == email).first()
-        
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-            
-        return user
-    except Exception as e:
-        logger.error(f"WebSocket authentication failed: {e}")
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
 
-@router.websocket("/ws/{session_id}")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    session_id: int,
-    token: str = None,
-    db: Session = Depends(get_db)
+@router.get("/metrics")
+async def get_live_chat_metrics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """WebSocket endpoint for real-time chat"""
-    if not LIVE_CHAT_ENABLED or not is_chat_window_active():
-        await websocket.close(code=status.WS_1003_UNSUPPORTED_DATA, reason="Chat not active")
-        return
+    """
+    Get live chat metrics (admin-only endpoint).
     
-    # Authenticate user
-    try:
-        user = await authenticate_websocket_user(token, db)
-        user_id = user.account_id
-    except HTTPException as e:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e.detail))
-        return
+    Returns:
+    - Current open SSE connections count
+    - Connections per user breakdown
+    - Total messages sent today
+    - Active sessions count
+    """
+    # Only allow admins to access metrics
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
     
-    # Connect to session
-    await manager.connect(websocket, user_id, session_id)
+    # Count active SSE connections
+    total_connections = sum(len(sessions) for sessions in _active_sse_connections.values())
+    connections_per_user = {
+        str(user_id): len(sessions) 
+        for user_id, sessions in _active_sse_connections.items()
+    }
     
-    # Add user to viewers
-    session = db.query(LiveChatSession).filter(LiveChatSession.id == session_id).first()
-    if session:
-        # Check if viewer already exists
-        existing_viewer = db.query(LiveChatViewer).filter(
-            LiveChatViewer.session_id == session_id,
-            LiveChatViewer.user_id == user_id
-        ).first()
-        
-        if existing_viewer:
-            existing_viewer.is_active = True
-            existing_viewer.last_seen = datetime.utcnow()
-        else:
-            viewer = LiveChatViewer(
-                session_id=session_id,
-                user_id=user_id,
-                is_active=True
-            )
-        db.add(viewer)
+    # Count messages sent today
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    messages_today = db.query(LiveChatMessage).filter(
+        LiveChatMessage.created_at >= today_start
+    ).count()
     
-    db.commit()
+    # Count active sessions
+    active_sessions = db.query(LiveChatSession).filter(
+        LiveChatSession.is_active == True
+    ).count()
     
-    # Broadcast updated viewer count
-    await broadcast_viewer_count_update(db, session_id)
+    # Count total active viewers across all sessions
+    active_viewers_total = db.query(LiveChatViewer).filter(
+        LiveChatViewer.is_active == True,
+        LiveChatViewer.last_seen >= datetime.utcnow() - timedelta(minutes=5)
+    ).count()
     
-    try:
-        while True:
-            # Receive message
-            data = await websocket.receive_text()
-            message_data = json.loads(data)
-            
-            if message_data.get("type") == "message":
-                # Handle new message
-                message_text = message_data.get("message", "").strip()
-                if not message_text:
-                    continue
-                
-                # Rate limiting
-                recent_messages = db.query(LiveChatMessage).filter(
-                    LiveChatMessage.user_id == user_id,
-                    LiveChatMessage.created_at >= datetime.utcnow() - timedelta(minutes=1)
-                ).count()
-                
-                if recent_messages >= LIVE_CHAT_MAX_MESSAGES_PER_USER_PER_MINUTE:
-                    await manager.send_personal_message(
-                        json.dumps({"type": "error", "message": "Rate limit exceeded"}),
-                        websocket
-                    )
-                    continue
-                
-                # Save message
-                new_message = LiveChatMessage(
-                    session_id=session_id,
-                    user_id=user_id,
-                    message=message_text,
-                    message_type="text"
-                )
-                
-                db.add(new_message)
-                db.commit()
-                db.refresh(new_message)
-                
-                # Broadcast message to all connected users
-                message_response = {
-                    "type": "new_message",
-                    "message": {
-                        "id": new_message.id,
-                        "user_id": user_id,
-                        "username": get_display_username(user),
-                        "profile_pic": user.profile_pic_url,
-                        "message": message_text,
-                        "message_type": "text",
-                        "likes": 0,
-                        "created_at": new_message.created_at.isoformat(),
-                        "is_winner": user.badge_id in ["gold", "silver", "bronze"],
-                        "is_host": user.is_admin
-                    }
-                }
-                
-                await manager.broadcast_to_session(
-                    json.dumps(message_response),
-                    session_id
-                )
-            
-            elif message_data.get("type") == "ping":
-                # Update viewer last_seen timestamp
-                viewer = db.query(LiveChatViewer).filter(
-                    LiveChatViewer.session_id == session_id,
-                    LiveChatViewer.user_id == user_id
-                ).first()
-                if viewer:
-                    viewer.last_seen = datetime.utcnow()
-                    db.commit()
-                
-                await manager.send_personal_message(
-                    json.dumps({"type": "pong"}),
-                    websocket
-                )
-                
-    except WebSocketDisconnect:
-        manager.disconnect(websocket, session_id)
-        
-        # Update viewer status
-        if session:
-            viewer = db.query(LiveChatViewer).filter(
-                LiveChatViewer.session_id == session_id,
-                LiveChatViewer.user_id == user_id
-            ).first()
-            if viewer:
-                viewer.is_active = False
-                viewer.last_seen = datetime.utcnow()
-                db.commit()
-                
-                # Broadcast updated viewer count
-                await broadcast_viewer_count_update(db, session_id)
+    return {
+        "status": "success",
+        "metrics": {
+            "sse_connections": {
+                "total": total_connections,
+                "per_user": connections_per_user,
+                "max_per_user": _max_concurrent_streams_per_user
+            },
+            "messages": {
+                "today": messages_today
+            },
+            "sessions": {
+                "active": active_sessions
+            },
+            "viewers": {
+                "active_total": active_viewers_total
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    }
+

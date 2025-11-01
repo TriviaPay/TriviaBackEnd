@@ -43,3 +43,10 @@ LIVE_CHAT_PRE_DRAW_HOURS = int(os.getenv("LIVE_CHAT_PRE_DRAW_HOURS", "1"))  # Ho
 LIVE_CHAT_POST_DRAW_HOURS = int(os.getenv("LIVE_CHAT_POST_DRAW_HOURS", "1"))  # Hours after draw
 LIVE_CHAT_MAX_MESSAGES_PER_USER_PER_MINUTE = int(os.getenv("LIVE_CHAT_MAX_MESSAGES_PER_USER_PER_MINUTE", "10"))
 LIVE_CHAT_MESSAGE_HISTORY_LIMIT = int(os.getenv("LIVE_CHAT_MESSAGE_HISTORY_LIMIT", "100"))  # fallback 2 hours
+LIVE_CHAT_MAX_MESSAGE_LENGTH = int(os.getenv("LIVE_CHAT_MAX_MESSAGE_LENGTH", "1000"))  # Maximum message length in characters
+
+# Redis settings
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# SSE settings
+SSE_HEARTBEAT_SECONDS = int(os.getenv("SSE_HEARTBEAT_SECONDS", "25"))

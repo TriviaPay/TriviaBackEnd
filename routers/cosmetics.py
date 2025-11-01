@@ -220,23 +220,43 @@ async def buy_avatar(
         # Deduct gems from user
         user.gems -= avatar.price_gems
         
-        # Create ownership record
-        new_ownership = UserAvatar(
-            user_id=user.account_id,
-            avatar_id=avatar_id,
-            purchase_date=datetime.utcnow()
-        )
-        
-        db.add(new_ownership)
-        db.commit()
-        
-        return PurchaseResponse(
-            status="success",
-            message=f"Successfully purchased avatar '{avatar.name}' for {avatar.price_gems} gems",
-            item_id=avatar_id,
-            purchase_date=new_ownership.purchase_date,
-            gems_spent=avatar.price_gems
-        )
+        # Create ownership record with idempotency handling
+        try:
+            new_ownership = UserAvatar(
+                user_id=user.account_id,
+                avatar_id=avatar_id,
+                purchase_date=datetime.utcnow()
+            )
+            
+            db.add(new_ownership)
+            db.commit()
+            db.refresh(new_ownership)
+            
+            return PurchaseResponse(
+                status="success",
+                message=f"Successfully purchased avatar '{avatar.name}' for {avatar.price_gems} gems",
+                item_id=avatar_id,
+                purchase_date=new_ownership.purchase_date,
+                gems_spent=avatar.price_gems
+            )
+        except IntegrityError:
+            # Idempotent buy: ownership already exists (from unique constraint)
+            db.rollback()
+            # Refund gems
+            user.gems += avatar.price_gems
+            db.commit()
+            # Get existing ownership
+            existing = db.query(UserAvatar).filter(
+                UserAvatar.user_id == user.account_id,
+                UserAvatar.avatar_id == avatar_id
+            ).first()
+            return PurchaseResponse(
+                status="success",
+                message=f"You already own the avatar '{avatar.name}'",
+                item_id=avatar_id,
+                purchase_date=existing.purchase_date,
+                gems_spent=0  # No gems spent for duplicate
+            )
     
     elif payment_method == "usd":
         # Check if the avatar can be purchased with USD
@@ -247,24 +267,40 @@ async def buy_avatar(
             )
         
         # TODO: Implement actual payment processing
-        # For now, just create the ownership record
-        
-        new_ownership = UserAvatar(
-            user_id=user.account_id,
-            avatar_id=avatar_id,
-            purchase_date=datetime.utcnow()
-        )
-        
-        db.add(new_ownership)
-        db.commit()
-        
-        return PurchaseResponse(
-            status="success",
-            message=f"Successfully purchased avatar '{avatar.name}' for ${avatar.price_usd}",
-            item_id=avatar_id,
-            purchase_date=new_ownership.purchase_date,
-            usd_spent=avatar.price_usd
-        )
+        # For now, just create the ownership record with idempotency handling
+        try:
+            new_ownership = UserAvatar(
+                user_id=user.account_id,
+                avatar_id=avatar_id,
+                purchase_date=datetime.utcnow()
+            )
+            
+            db.add(new_ownership)
+            db.commit()
+            db.refresh(new_ownership)
+            
+            return PurchaseResponse(
+                status="success",
+                message=f"Successfully purchased avatar '{avatar.name}' for ${avatar.price_usd}",
+                item_id=avatar_id,
+                purchase_date=new_ownership.purchase_date,
+                usd_spent=avatar.price_usd
+            )
+        except IntegrityError:
+            # Idempotent buy: ownership already exists (from unique constraint)
+            db.rollback()
+            # Get existing ownership
+            existing = db.query(UserAvatar).filter(
+                UserAvatar.user_id == user.account_id,
+                UserAvatar.avatar_id == avatar_id
+            ).first()
+            return PurchaseResponse(
+                status="success",
+                message=f"You already own the avatar '{avatar.name}'",
+                item_id=avatar_id,
+                purchase_date=existing.purchase_date,
+                usd_spent=0  # No USD spent for duplicate
+            )
     
     else:
         raise HTTPException(
@@ -314,13 +350,13 @@ async def select_avatar(
 async def create_avatar(
     avatar: AvatarCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to create a new avatar
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Use provided ID or generate a new one
     avatar_id = avatar.id if avatar.id else str(uuid.uuid4())
@@ -360,13 +396,13 @@ async def update_avatar(
     avatar_id: str = Path(..., description="The ID of the avatar to update"),
     avatar_update: AvatarCreate = Body(..., description="Updated avatar data"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to update an existing avatar
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Find the avatar
     avatar = db.query(Avatar).filter(Avatar.id == avatar_id).first()
@@ -393,13 +429,13 @@ async def update_avatar(
 async def delete_avatar(
     avatar_id: str = Path(..., description="The ID of the avatar to delete"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to delete an avatar
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Find the avatar
     avatar = db.query(Avatar).filter(Avatar.id == avatar_id).first()
@@ -537,23 +573,43 @@ async def buy_frame(
         # Deduct gems from user
         user.gems -= frame.price_gems
         
-        # Create ownership record
-        new_ownership = UserFrame(
-            user_id=user.account_id,
-            frame_id=frame_id,
-            purchase_date=datetime.utcnow()
-        )
-        
-        db.add(new_ownership)
-        db.commit()
-        
-        return PurchaseResponse(
-            status="success",
-            message=f"Successfully purchased frame '{frame.name}' for {frame.price_gems} gems",
-            item_id=frame_id,
-            purchase_date=new_ownership.purchase_date,
-            gems_spent=frame.price_gems
-        )
+        # Create ownership record with idempotency handling
+        try:
+            new_ownership = UserFrame(
+                user_id=user.account_id,
+                frame_id=frame_id,
+                purchase_date=datetime.utcnow()
+            )
+            
+            db.add(new_ownership)
+            db.commit()
+            db.refresh(new_ownership)
+            
+            return PurchaseResponse(
+                status="success",
+                message=f"Successfully purchased frame '{frame.name}' for {frame.price_gems} gems",
+                item_id=frame_id,
+                purchase_date=new_ownership.purchase_date,
+                gems_spent=frame.price_gems
+            )
+        except IntegrityError:
+            # Idempotent buy: ownership already exists (from unique constraint)
+            db.rollback()
+            # Refund gems
+            user.gems += frame.price_gems
+            db.commit()
+            # Get existing ownership
+            existing = db.query(UserFrame).filter(
+                UserFrame.user_id == user.account_id,
+                UserFrame.frame_id == frame_id
+            ).first()
+            return PurchaseResponse(
+                status="success",
+                message=f"You already own the frame '{frame.name}'",
+                item_id=frame_id,
+                purchase_date=existing.purchase_date,
+                gems_spent=0  # No gems spent for duplicate
+            )
     
     elif payment_method == "usd":
         # Check if the frame can be purchased with USD
@@ -564,24 +620,40 @@ async def buy_frame(
             )
         
         # TODO: Implement actual payment processing
-        # For now, just create the ownership record
-        
-        new_ownership = UserFrame(
-            user_id=user.account_id,
-            frame_id=frame_id,
-            purchase_date=datetime.utcnow()
-        )
-        
-        db.add(new_ownership)
-        db.commit()
-        
-        return PurchaseResponse(
-            status="success",
-            message=f"Successfully purchased frame '{frame.name}' for ${frame.price_usd}",
-            item_id=frame_id,
-            purchase_date=new_ownership.purchase_date,
-            usd_spent=frame.price_usd
-        )
+        # For now, just create the ownership record with idempotency handling
+        try:
+            new_ownership = UserFrame(
+                user_id=user.account_id,
+                frame_id=frame_id,
+                purchase_date=datetime.utcnow()
+            )
+            
+            db.add(new_ownership)
+            db.commit()
+            db.refresh(new_ownership)
+            
+            return PurchaseResponse(
+                status="success",
+                message=f"Successfully purchased frame '{frame.name}' for ${frame.price_usd}",
+                item_id=frame_id,
+                purchase_date=new_ownership.purchase_date,
+                usd_spent=frame.price_usd
+            )
+        except IntegrityError:
+            # Idempotent buy: ownership already exists (from unique constraint)
+            db.rollback()
+            # Get existing ownership
+            existing = db.query(UserFrame).filter(
+                UserFrame.user_id == user.account_id,
+                UserFrame.frame_id == frame_id
+            ).first()
+            return PurchaseResponse(
+                status="success",
+                message=f"You already own the frame '{frame.name}'",
+                item_id=frame_id,
+                purchase_date=existing.purchase_date,
+                usd_spent=0  # No USD spent for duplicate
+            )
     
     else:
         raise HTTPException(
@@ -631,13 +703,13 @@ async def select_frame(
 async def create_frame(
     frame: FrameCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to create a new frame
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Use provided ID or generate a new one
     frame_id = frame.id if frame.id else str(uuid.uuid4())
@@ -677,13 +749,13 @@ async def update_frame(
     frame_id: str = Path(..., description="The ID of the frame to update"),
     frame_update: FrameCreate = Body(..., description="Updated frame data"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to update an existing frame
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Find the frame
     frame = db.query(Frame).filter(Frame.id == frame_id).first()
@@ -710,13 +782,13 @@ async def update_frame(
 async def delete_frame(
     frame_id: str = Path(..., description="The ID of the frame to delete"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to delete a frame
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Find the frame
     frame = db.query(Frame).filter(Frame.id == frame_id).first()
@@ -751,14 +823,14 @@ class BulkImportResponse(BaseModel):
 async def import_avatars_from_json(
     json_data: Dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Bulk import avatars from a JSON file or import a single avatar.
     Accepts either a single avatar object or an object with an "avatars" array.
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Check if this is a single avatar or a collection
     if "avatars" in json_data:
@@ -834,14 +906,14 @@ async def import_avatars_from_json(
 async def import_frames_from_json(
     json_data: Dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Bulk import frames from a JSON file or import a single frame.
     Accepts either a single frame object or an object with a "frames" array.
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     # Check if this is a single frame or a collection
     if "frames" in json_data:
@@ -917,13 +989,13 @@ async def import_frames_from_json(
 @router.get("/admin/avatars/stats", response_model=Dict[str, Any])
 async def get_avatar_stats(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Admin endpoint to get statistics about avatars usage
     """
     # Check admin access
-    verify_admin(current_user, db)
+    verify_admin(current_user)
     
     total_avatars = db.query(Avatar).count()
     default_avatars = db.query(Avatar).filter(Avatar.is_default == True).count()
