@@ -598,7 +598,7 @@ async def like_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Like the current live session"""
+    """Like the current live session. Idempotent: if already liked, returns current count."""
     if not LIVE_CHAT_ENABLED or not is_chat_window_active():
         raise HTTPException(status_code=403, detail="Chat is not active")
     
@@ -612,7 +612,24 @@ async def like_session(
     ).first()
     
     if existing_like:
-        raise HTTPException(status_code=400, detail="Already liked this session")
+        # Already liked - recalculate total_likes from database to ensure accuracy
+        # This handles cases where total_likes field might be out of sync
+        actual_count = db.query(LiveChatLike).filter(
+            LiveChatLike.session_id == session.id,
+            LiveChatLike.message_id.is_(None)  # Only session-level likes
+        ).count()
+        
+        # Sync the count back to the session if it differs
+        if session.total_likes != actual_count:
+            session.total_likes = actual_count
+            db.commit()
+            db.refresh(session)
+        
+        return {
+            "message": "Session already liked",
+            "total_likes": actual_count,
+            "already_liked": True
+        }
     
     # Add like
     new_like = LiveChatLike(
@@ -632,7 +649,11 @@ async def like_session(
         "total_likes": session.total_likes
     })
     
-    return {"message": "Session liked successfully", "total_likes": session.total_likes}
+    return {
+        "message": "Session liked successfully",
+        "total_likes": session.total_likes,
+        "already_liked": False
+    }
 
 @router.post("/like-message/{message_id}")
 async def like_message(
@@ -640,7 +661,7 @@ async def like_message(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Like a specific message"""
+    """Like a specific message. Idempotent: if already liked, returns current count."""
     if not LIVE_CHAT_ENABLED or not is_chat_window_active():
         raise HTTPException(status_code=403, detail="Chat is not active")
     
@@ -655,7 +676,13 @@ async def like_message(
     ).first()
     
     if existing_like:
-        raise HTTPException(status_code=400, detail="Already liked this message")
+        # Already liked - return success with current count (idempotent behavior)
+        db.refresh(message)
+        return {
+            "message": "Message already liked",
+            "likes": message.likes,
+            "already_liked": True
+        }
     
     # Add like
     new_like = LiveChatLike(
@@ -676,7 +703,11 @@ async def like_message(
         "likes": message.likes
     })
     
-    return {"message": "Message liked successfully", "likes": message.likes}
+    return {
+        "message": "Message liked successfully",
+        "likes": message.likes,
+        "already_liked": False
+    }
 
 @router.get("/viewers")
 async def get_viewer_count(
@@ -740,8 +771,19 @@ async def get_like_count(
     
     session = get_current_active_session(db)
     
+    # Recalculate to ensure accuracy (count from actual like records)
+    actual_count = db.query(LiveChatLike).filter(
+        LiveChatLike.session_id == session.id,
+        LiveChatLike.message_id.is_(None)  # Only session-level likes
+    ).count()
+    
+    # Sync if needed
+    if session.total_likes != actual_count:
+        session.total_likes = actual_count
+        db.commit()
+    
     return {
-        "total_likes": session.total_likes,
+        "total_likes": actual_count,
         "session_id": session.id,
         "session_name": session.session_name
     }
