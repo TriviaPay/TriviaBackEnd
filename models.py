@@ -416,12 +416,21 @@ class UserFrame(Base):
 #  Badge Table
 # =================================
 class Badge(Base):
+    """
+    Badge model for user achievement badges.
+    
+    Note: image_url should contain a PUBLIC S3 URL (not presigned).
+    Badges are shared assets (only 4 total), so they should be publicly accessible
+    to avoid unnecessary presigned URL generation and expiration.
+    
+    Example URL format: https://triviapay-assets.s3.us-east-2.amazonaws.com/badges/bronze.png
+    """
     __tablename__ = "badges"
     
     id = Column(String, primary_key=True, index=True)  # Unique ID for the badge (e.g., "bronze", "silver", "gold")
     name = Column(String, nullable=False)  # Display name
     description = Column(String, nullable=True)  # Description of the badge
-    image_url = Column(String, nullable=False)  # URL to the badge image
+    image_url = Column(String, nullable=False)  # Public S3 URL to the badge image (not presigned)
     level = Column(Integer, nullable=False)  # Numeric level (for ordering, e.g., 1 for bronze, 2 for silver)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When the badge was added
     

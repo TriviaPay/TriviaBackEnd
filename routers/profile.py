@@ -19,6 +19,33 @@ router = APIRouter(prefix="/profile", tags=["Profile"])
 
 client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
 
+# ======== Helper Functions ========
+
+def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
+    """
+    Get badge information for a user.
+    Returns badge id, name, and image_url (public S3 URL).
+    
+    Args:
+        user: User object with badge_id
+        db: Database session
+        
+    Returns:
+        Dictionary with badge info or None if user has no badge
+    """
+    if not user.badge_id:
+        return None
+    
+    badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
+    if not badge:
+        return None
+    
+    return {
+        "id": badge.id,
+        "name": badge.name,
+        "image_url": badge.image_url  # Public URL, no presigning needed
+    }
+
 def generate_referral_code():
     """Generate a unique 5-digit referral code"""
     return ''.join(random.choices(string.digits, k=5))
@@ -46,13 +73,14 @@ async def get_user_badges(
         badges = db.query(Badge).order_by(Badge.level).all()
         
         # Format response
+        # Note: Badge URLs are public S3 URLs (not presigned), so return directly
         badges_list = []
         for badge in badges:
             badge_dict = {
                 "id": badge.id,
                 "name": badge.name,
                 "description": badge.description,
-                "image_url": badge.image_url,
+                "image_url": badge.image_url,  # Public URL, no presigning needed
                 "level": badge.level,
                 "is_current": user.badge_id == badge.id
             }
@@ -149,10 +177,14 @@ async def get_user_gems(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
+        # Get badge information
+        badge_info = get_badge_info(user, db)
+        
         return {
             "status": "success",
             "username": user.username,
-            "gems": user.gems
+            "gems": user.gems,
+            "badge": badge_info
         }
     except HTTPException:
         raise
@@ -247,6 +279,9 @@ async def update_extended_profile(
             db.commit()
             logging.info(f"Extended profile successfully updated for user: {user.username}")
             
+            # Get badge information
+            badge_info = get_badge_info(user, db)
+            
             # Return success response with updated profile details
             return {
                 "status": "success",
@@ -266,7 +301,8 @@ async def update_extended_profile(
                         "zip": user.zip,
                         "country": user.country
                     },
-                    "username_updated": user.username_updated
+                    "username_updated": user.username_updated,
+                    "badge": badge_info
                 }
             }
         except IntegrityError as e:
@@ -307,6 +343,9 @@ async def get_complete_profile(
         dob_formatted = user.date_of_birth.isoformat() if user.date_of_birth else None
         signup_date_formatted = user.sign_up_date.isoformat() if user.sign_up_date else None
         
+        # Get badge information
+        badge_info = get_badge_info(user, db)
+        
         # Return all user fields
         return {
             "status": "success",
@@ -334,7 +373,8 @@ async def get_complete_profile(
                 "profile_pic_url": user.profile_pic_url,
                 "username_updated": user.username_updated,
                 "referral_code": user.referral_code,
-                "is_referred": bool(user.referred_by)
+                "is_referred": bool(user.referred_by),
+                "badge": badge_info
             }
         }
     except HTTPException:
@@ -436,6 +476,9 @@ async def get_profile_summary(
                 "mime_type": getattr(frame_obj, "mime_type", None)
             }
 
+        # Get badge information
+        badge_info = get_badge_info(user, db)
+
         return {
             "status": "success",
             "data": {
@@ -454,6 +497,7 @@ async def get_profile_summary(
                 "profile_pic_url": user.profile_pic_url,
                 "avatar": avatar_payload,
                 "frame": frame_payload,
+                "badge": badge_info,
             },
         }
     except HTTPException:

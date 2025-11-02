@@ -4,7 +4,7 @@ from db import get_db
 from models import User, Avatar, Frame, Badge, CountryCode
 import logging
 from descope.descope_client import DescopeClient
-from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, STORE_PASSWORD_IN_DESCOPE, STORE_PASSWORD_IN_NEONDB
+from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, STORE_PASSWORD_IN_DESCOPE, STORE_PASSWORD_IN_NEONDB, AWS_DEFAULT_PROFILE_PIC_BASE_URL
 from auth import validate_descope_jwt
 from datetime import datetime, timedelta, date as DateType
 from collections import defaultdict
@@ -43,6 +43,41 @@ def check_rate_limit(identifier: str) -> bool:
     # Add current request
     rate_limit_store[identifier].append(now)
     return True
+
+def get_default_profile_pic_url(username: str) -> Optional[str]:
+    """
+    Generate default profile picture URL based on first letter of username.
+    
+    Uses AWS_DEFAULT_PROFILE_PIC_BASE_URL environment variable.
+    Format: {BASE_URL}{first_letter}.png
+    Example: https://triviapics.s3.us-east-2.amazonaws.com/default_profile_pics/a.png
+    
+    Args:
+        username: The username to generate profile pic for
+        
+    Returns:
+        Profile picture URL string or None if base URL not configured
+    """
+    if not AWS_DEFAULT_PROFILE_PIC_BASE_URL:
+        logging.warning("AWS_DEFAULT_PROFILE_PIC_BASE_URL not configured, skipping default profile pic")
+        return None
+    
+    if not username:
+        return None
+    
+    # Get the first letter of the username, convert to lowercase
+    first_letter = username[0].lower()
+    
+    # If not a letter, default to 'a'
+    if not first_letter.isalpha():
+        first_letter = 'a'
+    
+    # Construct URL: base_url + letter + .png
+    # Ensure base_url ends with / to avoid double slashes
+    base_url = AWS_DEFAULT_PROFILE_PIC_BASE_URL.rstrip('/')
+    profile_pic_url = f"{base_url}/{first_letter}.png"
+    
+    return profile_pic_url
 
 class BindPasswordData(BaseModel):
     email: str = Field(..., description="User email (loginId)")
@@ -374,6 +409,14 @@ async def bind_password(
             existing_user.country = data.country
             existing_user.date_of_birth = data.date_of_birth
             existing_user.descope_user_id = user_id
+            
+            # Set default profile pic URL if user doesn't have one
+            if not existing_user.profile_pic_url:
+                profile_pic_url = get_default_profile_pic_url(data.username)
+                if profile_pic_url:
+                    existing_user.profile_pic_url = profile_pic_url
+                    logging.info(f"Set default profile pic for existing user: {profile_pic_url}")
+            
             # Hash and store password in NeonDB if enabled
             if STORE_PASSWORD_IN_NEONDB:
                 existing_user.password = pwd_context.hash(data.password)
@@ -456,6 +499,11 @@ async def bind_password(
                         detail="Error processing referral code. Please try again."
                     )
 
+            # Generate default profile pic URL based on first letter of username
+            profile_pic_url = get_default_profile_pic_url(data.username)
+            if profile_pic_url:
+                logging.info(f"Generated default profile pic URL for new user: {profile_pic_url}")
+            
             # Create new user
             new_user = User(
                 descope_user_id=user_id,
@@ -463,6 +511,7 @@ async def bind_password(
                 username=data.username,
                 country=data.country,
                 date_of_birth=data.date_of_birth,
+                profile_pic_url=profile_pic_url,  # Set default profile pic based on first letter
                 notification_on=True,
                 gems=0,
                 streaks=0,

@@ -13,7 +13,7 @@ import logging
 import hashlib
 
 from db import get_db
-from models import User, LiveChatSession, LiveChatMessage, LiveChatLike, LiveChatViewer
+from models import User, LiveChatSession, LiveChatMessage, LiveChatLike, LiveChatViewer, Badge
 from routers.dependencies import get_current_user
 from utils.draw_calculations import get_next_draw_time
 from utils.redis_pubsub import publish_event, subscribe
@@ -148,6 +148,31 @@ def get_display_username(user: User) -> str:
         return user.email.split('@')[0]
     
     return f"User{user.account_id}"
+
+def get_badge_info_for_chat(user: User, db: Session) -> Optional[Dict[str, Any]]:
+    """
+    Get badge information for a user in chat context.
+    Returns badge id, name, and image_url (public S3 URL).
+    
+    Args:
+        user: User object with badge_id
+        db: Database session
+        
+    Returns:
+        Dictionary with badge info or None if user has no badge
+    """
+    if not user.badge_id:
+        return None
+    
+    badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
+    if not badge:
+        return None
+    
+    return {
+        "id": badge.id,
+        "name": badge.name,
+        "image_url": badge.image_url  # Public URL, no presigning needed
+    }
 
 def is_chat_window_active() -> bool:
     """
@@ -575,6 +600,14 @@ async def get_chat_messages(
         LiveChatMessage.session_id == session.id
     ).order_by(LiveChatMessage.created_at.desc()).limit(min(limit, LIVE_CHAT_MESSAGE_HISTORY_LIMIT)).all()
     
+    # Get badge info for all unique users to minimize queries
+    user_badges = {}
+    unique_user_ids = {msg.user_id for msg in messages}
+    for user_id in unique_user_ids:
+        user = db.query(User).filter(User.account_id == user_id).first()
+        if user:
+            user_badges[user_id] = get_badge_info_for_chat(user, db)
+    
     return {
         "messages": [
             {
@@ -582,6 +615,7 @@ async def get_chat_messages(
                 "user_id": msg.user_id,
                 "username": get_display_username(msg.user),
                 "profile_pic": msg.user.profile_pic_url,
+                "badge": user_badges.get(msg.user_id),
                 "message": msg.message,
                 "message_type": msg.message_type,
                 "likes": msg.likes,
@@ -929,6 +963,9 @@ async def send_message_rest(
     db.commit()
     db.refresh(new_message)
     
+    # Get badge information for the message
+    badge_info = get_badge_info_for_chat(current_user, db)
+    
     # Publish message to Redis for SSE clients
     message_event = {
         "type": "new_message",
@@ -937,6 +974,7 @@ async def send_message_rest(
             "user_id": current_user.account_id,
             "username": get_display_username(current_user),
             "profile_pic": current_user.profile_pic_url,
+            "badge": badge_info,
             "message": message.strip(),
             "message_type": "text",
             "likes": 0,

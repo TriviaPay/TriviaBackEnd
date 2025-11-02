@@ -117,9 +117,10 @@ async def get_daily_winners(
             ).scalar() or 0
             
             # Get badge information
+            # Note: Badge URLs are public S3 URLs (not presigned), so return directly
             badge_image_url = None
             if user.badge_info:
-                badge_image_url = user.badge_image_url
+                badge_image_url = user.badge_image_url  # Public URL, no presigning needed
             
             # Get avatar URL (presigned)
             avatar_url = None
@@ -222,9 +223,10 @@ async def get_weekly_winners(
             ).scalar() or 0
             
             # Get badge information
+            # Note: Badge URLs are public S3 URLs (not presigned), so return directly
             badge_image_url = None
             if user.badge_info:
-                badge_image_url = user.badge_image_url
+                badge_image_url = user.badge_image_url  # Public URL, no presigning needed
             
             # Get avatar URL (presigned)
             avatar_url = None
@@ -310,9 +312,10 @@ async def get_all_time_winners(
                 continue
             
             # Get badge information
+            # Note: Badge URLs are public S3 URLs (not presigned), so return directly
             badge_image_url = None
             if user.badge_info:
-                badge_image_url = user.badge_image_url
+                badge_image_url = user.badge_image_url  # Public URL, no presigning needed
             
             # Get avatar URL (presigned)
             avatar_url = None
@@ -359,6 +362,76 @@ async def get_all_time_winners(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving all-time winners: {str(e)}"
+        )
+
+@router.get("/reveal-winners")
+async def reveal_winners(
+    date_str: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Reveal profile pictures of all participants in a draw.
+    Returns only profile picture URLs for eligible participants.
+    
+    Args:
+        date_str: Optional date string in YYYY-MM-DD format. Defaults to today.
+        
+    Returns:
+        List of profile picture URLs for all participants in the draw
+    """
+    try:
+        # Determine the draw date
+        if date_str:
+            try:
+                draw_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid date format. Use YYYY-MM-DD."
+                )
+        else:
+            # Default to today's date
+            draw_date = date.today()
+        
+        # Get eligible participants for the draw date
+        participants = get_eligible_participants(db, draw_date)
+        
+        if not participants:
+            return {
+                "draw_date": draw_date.isoformat(),
+                "total_participants": 0,
+                "profile_pics": []
+            }
+        
+        # Get account IDs of participants
+        account_ids = [p["account_id"] for p in participants]
+        
+        # Query users to get their profile pictures
+        eligible_users = db.query(User).filter(
+            User.account_id.in_(account_ids)
+        ).all()
+        
+        # Extract profile picture URLs (only non-null values)
+        profile_pics = [
+            user.profile_pic_url 
+            for user in eligible_users 
+            if user.profile_pic_url
+        ]
+        
+        return {
+            "draw_date": draw_date.isoformat(),
+            "total_participants": len(participants),
+            "profile_pics": profile_pics
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error revealing winners: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving participant profile pictures: {str(e)}"
         )
 
 # ======== Admin Endpoints ========
