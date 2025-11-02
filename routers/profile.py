@@ -126,14 +126,13 @@ async def update_badge(
                 "data": {
                     "badge_id": badge.id,
                     "badge_name": badge.name,
-                    "badge_image_url": badge.image_url
+                    "badge": get_badge_info(user, db)  # Get badge info from badges table
                 }
             }
         
         # Update the user's badge (assign new badge or update to different badge)
         old_badge_id = user.badge_id
         user.badge_id = badge.id
-        user.badge_image_url = badge.image_url
         
         # Commit changes
         db.commit()
@@ -145,7 +144,7 @@ async def update_badge(
             "data": {
                 "badge_id": badge.id,
                 "badge_name": badge.name,
-                "badge_image_url": badge.image_url
+                "badge": get_badge_info(user, db)  # Get badge info from badges table
             }
         }
     

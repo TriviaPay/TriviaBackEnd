@@ -27,6 +27,7 @@ class WinnerResponse(BaseModel):
     amount_won: float
     total_amount_won: float = 0
     
+    profile_pic: Optional[str] = None  # Profile picture URL
     badge_image_url: Optional[str] = None
     avatar_url: Optional[str] = None
     frame_url: Optional[str] = None
@@ -64,6 +65,79 @@ from rewards_logic import (
 # ======== Helper Functions ========
 
 # All helper functions are now imported from rewards_logic.py for consistency
+
+def get_badge_info_for_winner(user: User, db: Session) -> Optional[Dict[str, Any]]:
+    """
+    Get badge information for a winner.
+    Returns badge id, name, and image_url (public S3 URL) or None.
+    
+    Args:
+        user: User object with badge_id
+        db: Database session
+        
+    Returns:
+        Dictionary with badge info or None if user has no badge
+    """
+    if not user.badge_id:
+        return None
+    
+    badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
+    if not badge:
+        return None
+    
+    return {
+        "id": badge.id,
+        "name": badge.name,
+        "image_url": badge.image_url  # Public URL, no presigning needed
+    }
+
+def get_winner_profile_data(user: User, db: Session) -> Dict[str, Any]:
+    """
+    Get complete profile data for a winner including avatar, frame, and badge.
+    
+    Args:
+        user: User object
+        db: Database session
+        
+    Returns:
+        Dictionary with username, profile_pic, profile_frame, avatar, and badge
+    """
+    # Get badge information
+    badge_info = get_badge_info_for_winner(user, db)
+    
+    # Get avatar URL (presigned)
+    avatar_url = None
+    if user.selected_avatar_id:
+        avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
+        if avatar_obj:
+            bucket = getattr(avatar_obj, "bucket", None)
+            object_key = getattr(avatar_obj, "object_key", None)
+            if bucket and object_key:
+                try:
+                    avatar_url = presign_get(bucket, object_key, expires=900)
+                except Exception as e:
+                    logging.warning(f"Failed to presign avatar {avatar_obj.id}: {e}")
+    
+    # Get frame URL (presigned)
+    frame_url = None
+    if user.selected_frame_id:
+        frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
+        if frame_obj:
+            bucket = getattr(frame_obj, "bucket", None)
+            object_key = getattr(frame_obj, "object_key", None)
+            if bucket and object_key:
+                try:
+                    frame_url = presign_get(bucket, object_key, expires=900)
+                except Exception as e:
+                    logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
+    
+    return {
+        "username": user.username or f"User{user.account_id}",
+        "profile_pic": user.profile_pic_url,
+        "profile_frame": frame_url,  # Presigned URL or None
+        "avatar": avatar_url,  # Presigned URL or None
+        "badge": badge_info  # Badge object (id, name, image_url) or None
+    }
 
 def get_eligible_users_wrapper(db: Session, draw_date: date) -> List[User]:
     """
@@ -116,46 +190,17 @@ async def get_daily_winners(
                 TriviaQuestionsWinners.account_id == user.account_id
             ).scalar() or 0
             
-            # Get badge information
-            # Note: Badge URLs are public S3 URLs (not presigned), so return directly
-            badge_image_url = None
-            if user.badge_info:
-                badge_image_url = user.badge_image_url  # Public URL, no presigning needed
-            
-            # Get avatar URL (presigned)
-            avatar_url = None
-            if user.selected_avatar_id:
-                avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
-                if avatar_obj:
-                    bucket = getattr(avatar_obj, "bucket", None)
-                    object_key = getattr(avatar_obj, "object_key", None)
-                    if bucket and object_key:
-                        try:
-                            avatar_url = presign_get(bucket, object_key, expires=900)
-                        except Exception as e:
-                            logging.warning(f"Failed to presign avatar {avatar_obj.id}: {e}")
-            
-            # Get frame URL (presigned)
-            frame_url = None
-            if user.selected_frame_id:
-                frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
-                if frame_obj:
-                    bucket = getattr(frame_obj, "bucket", None)
-                    object_key = getattr(frame_obj, "object_key", None)
-                    if bucket and object_key:
-                        try:
-                            frame_url = presign_get(bucket, object_key, expires=900)
-                        except Exception as e:
-                            logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
+            # Get complete profile data (badge, avatar, frame)
+            profile_data = get_winner_profile_data(user, db)
             
             result.append(WinnerResponse(
-                username=user.username or f"User{user.account_id}",
+                username=profile_data["username"],
                 amount_won=winner.prize_amount,
-                total_amount_won=total_won,
-                
-                badge_image_url=badge_image_url,
-                avatar_url=avatar_url,
-                frame_url=frame_url,
+                total_amount_won=float(total_won),
+                profile_pic=profile_data["profile_pic"],
+                badge_image_url=profile_data["badge"]["image_url"] if profile_data["badge"] else None,
+                avatar_url=profile_data["avatar"],
+                frame_url=profile_data["profile_frame"],
                 position=winner.position
             ))
         
@@ -222,46 +267,17 @@ async def get_weekly_winners(
                 TriviaQuestionsWinners.account_id == user.account_id
             ).scalar() or 0
             
-            # Get badge information
-            # Note: Badge URLs are public S3 URLs (not presigned), so return directly
-            badge_image_url = None
-            if user.badge_info:
-                badge_image_url = user.badge_image_url  # Public URL, no presigning needed
-            
-            # Get avatar URL (presigned)
-            avatar_url = None
-            if user.selected_avatar_id:
-                avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
-                if avatar_obj:
-                    bucket = getattr(avatar_obj, "bucket", None)
-                    object_key = getattr(avatar_obj, "object_key", None)
-                    if bucket and object_key:
-                        try:
-                            avatar_url = presign_get(bucket, object_key, expires=900)
-                        except Exception as e:
-                            logging.warning(f"Failed to presign avatar {avatar_obj.id}: {e}")
-            
-            # Get frame URL (presigned)
-            frame_url = None
-            if user.selected_frame_id:
-                frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
-                if frame_obj:
-                    bucket = getattr(frame_obj, "bucket", None)
-                    object_key = getattr(frame_obj, "object_key", None)
-                    if bucket and object_key:
-                        try:
-                            frame_url = presign_get(bucket, object_key, expires=900)
-                        except Exception as e:
-                            logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
+            # Get complete profile data (badge, avatar, frame)
+            profile_data = get_winner_profile_data(user, db)
             
             result.append(WinnerResponse(
-                username=user.username or f"User{user.account_id}",
-                amount_won=weekly_amount,
-                total_amount_won=total_won,
-                
-                badge_image_url=badge_image_url,
-                avatar_url=avatar_url,
-                frame_url=frame_url,
+                username=profile_data["username"],
+                amount_won=float(weekly_amount),
+                total_amount_won=float(total_won),
+                profile_pic=profile_data["profile_pic"],
+                badge_image_url=profile_data["badge"]["image_url"] if profile_data["badge"] else None,
+                avatar_url=profile_data["avatar"],
+                frame_url=profile_data["profile_frame"],
                 position=position
             ))
             
@@ -311,46 +327,17 @@ async def get_all_time_winners(
             if not user:
                 continue
             
-            # Get badge information
-            # Note: Badge URLs are public S3 URLs (not presigned), so return directly
-            badge_image_url = None
-            if user.badge_info:
-                badge_image_url = user.badge_image_url  # Public URL, no presigning needed
-            
-            # Get avatar URL (presigned)
-            avatar_url = None
-            if user.selected_avatar_id:
-                avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
-                if avatar_obj:
-                    bucket = getattr(avatar_obj, "bucket", None)
-                    object_key = getattr(avatar_obj, "object_key", None)
-                    if bucket and object_key:
-                        try:
-                            avatar_url = presign_get(bucket, object_key, expires=900)
-                        except Exception as e:
-                            logging.warning(f"Failed to presign avatar {avatar_obj.id}: {e}")
-            
-            # Get frame URL (presigned)
-            frame_url = None
-            if user.selected_frame_id:
-                frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
-                if frame_obj:
-                    bucket = getattr(frame_obj, "bucket", None)
-                    object_key = getattr(frame_obj, "object_key", None)
-                    if bucket and object_key:
-                        try:
-                            frame_url = presign_get(bucket, object_key, expires=900)
-                        except Exception as e:
-                            logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
+            # Get complete profile data (badge, avatar, frame)
+            profile_data = get_winner_profile_data(user, db)
             
             result.append(WinnerResponse(
-                username=user.username or f"User{user.account_id}",
-                amount_won=total_amount,
-                total_amount_won=total_amount,  # Same value for all-time
-                
-                badge_image_url=badge_image_url,
-                avatar_url=avatar_url,
-                frame_url=frame_url,
+                username=profile_data["username"],
+                amount_won=float(total_amount),
+                total_amount_won=float(total_amount),  # Same value for all-time
+                profile_pic=profile_data["profile_pic"],
+                badge_image_url=profile_data["badge"]["image_url"] if profile_data["badge"] else None,
+                avatar_url=profile_data["avatar"],
+                frame_url=profile_data["profile_frame"],
                 position=position
             ))
             
@@ -362,6 +349,106 @@ async def get_all_time_winners(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving all-time winners: {str(e)}"
+        )
+
+@router.get("/monthly-winners")
+async def get_monthly_winners(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get the list of top winners for a specific month.
+    Returns users who won the most in the specified month.
+    If year/month not provided, defaults to current month.
+    
+    Args:
+        year: Year (e.g., 2025). Defaults to current year.
+        month: Month (1-12). Defaults to current month.
+    """
+    try:
+        # Get current date in EST
+        est = pytz.timezone('US/Eastern')
+        now = datetime.now(est)
+        
+        # Use provided year/month or default to current month
+        target_year = year if year is not None else now.year
+        target_month = month if month is not None else now.month
+        
+        # Calculate start and end of the month
+        start_of_month = date(target_year, target_month, 1)
+        if target_month == 12:
+            end_of_month = date(target_year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end_of_month = date(target_year, target_month + 1, 1) - timedelta(days=1)
+        
+        # Get monthly winners (aggregated by account_id)
+        winners_query = text("""
+            SELECT 
+                dw.account_id, 
+                SUM(dw.prize_amount) as monthly_amount,
+                MIN(dw.position) as best_position
+            FROM winners_draw_results dw
+            WHERE dw.draw_date BETWEEN :start_date AND :end_date
+            GROUP BY dw.account_id
+            ORDER BY monthly_amount DESC
+            LIMIT 50
+        """)
+        
+        winners_result = db.execute(winners_query, {
+            "start_date": start_of_month,
+            "end_date": end_of_month
+        }).fetchall()
+        
+        # Format the response
+        result = []
+        position = 1
+        
+        for winner_data in winners_result:
+            account_id, monthly_amount, best_position = winner_data
+            
+            # Get user details
+            user = db.query(User).filter(User.account_id == account_id).first()
+            if not user:
+                continue
+            
+            # Calculate total amount won by user all-time
+            total_won = db.query(func.sum(TriviaQuestionsWinners.prize_amount)).filter(
+                TriviaQuestionsWinners.account_id == user.account_id
+            ).scalar() or 0
+            
+            # Get complete profile data (badge, avatar, frame)
+            profile_data = get_winner_profile_data(user, db)
+            
+            result.append({
+                "username": profile_data["username"],
+                "profile_pic": profile_data["profile_pic"],
+                "profile_frame": profile_data["profile_frame"],
+                "avatar": profile_data["avatar"],
+                "prize_amount": float(monthly_amount),
+                "badge": profile_data["badge"],
+                "total_amount_won": float(total_won),
+                "position": position
+            })
+            
+            position += 1
+        
+        return {
+            "year": target_year,
+            "month": target_month,
+            "period": f"{target_year}-{target_month:02d}",
+            "total_winners": len(result),
+            "winners": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error retrieving monthly winners: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving monthly winners: {str(e)}"
         )
 
 @router.get("/reveal-winners")
@@ -441,7 +528,7 @@ async def today_winners_reveal(
 ):
     """
     Reveal today's winners with complete profile information.
-    Returns username, profile pic, profile frame, avatar, prize amount, and badge for each winner.
+    Returns username, profile pic, profile frame, avatar, prize amount, badge, total_amount_won, and position.
     """
     try:
         # Get today's date
@@ -464,50 +551,23 @@ async def today_winners_reveal(
         result = []
         
         for winner, user in winners:
-            # Get badge information (public URL, no presigning needed)
-            badge_info = None
-            if user.badge_id:
-                badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
-                if badge:
-                    badge_info = {
-                        "id": badge.id,
-                        "name": badge.name,
-                        "image_url": badge.image_url  # Public URL
-                    }
+            # Calculate total amount won by user all-time
+            total_won = db.query(func.sum(TriviaQuestionsWinners.prize_amount)).filter(
+                TriviaQuestionsWinners.account_id == user.account_id
+            ).scalar() or 0
             
-            # Get avatar URL (presigned)
-            avatar_url = None
-            if user.selected_avatar_id:
-                avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
-                if avatar_obj:
-                    bucket = getattr(avatar_obj, "bucket", None)
-                    object_key = getattr(avatar_obj, "object_key", None)
-                    if bucket and object_key:
-                        try:
-                            avatar_url = presign_get(bucket, object_key, expires=900)
-                        except Exception as e:
-                            logging.warning(f"Failed to presign avatar {avatar_obj.id}: {e}")
-            
-            # Get frame URL (presigned)
-            frame_url = None
-            if user.selected_frame_id:
-                frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
-                if frame_obj:
-                    bucket = getattr(frame_obj, "bucket", None)
-                    object_key = getattr(frame_obj, "object_key", None)
-                    if bucket and object_key:
-                        try:
-                            frame_url = presign_get(bucket, object_key, expires=900)
-                        except Exception as e:
-                            logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
+            # Get complete profile data (badge, avatar, frame)
+            profile_data = get_winner_profile_data(user, db)
             
             result.append({
-                "username": user.username or f"User{user.account_id}",
-                "profile_pic": user.profile_pic_url,
-                "profile_frame": frame_url,  # Frame URL (presigned)
-                "avatar": avatar_url,  # Avatar URL (presigned)
+                "username": profile_data["username"],
+                "profile_pic": profile_data["profile_pic"],
+                "profile_frame": profile_data["profile_frame"],
+                "avatar": profile_data["avatar"],
                 "prize_amount": float(winner.prize_amount),
-                "badge": badge_info  # Badge info (id, name, image_url) or None
+                "badge": profile_data["badge"],
+                "total_amount_won": float(total_won),
+                "position": winner.position
             })
         
         return {

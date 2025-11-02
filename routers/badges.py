@@ -243,11 +243,11 @@ async def update_badge(
     badge.image_url = badge_update.image_url
     badge.level = badge_update.level
     
-    # Now update all users who have this badge to use the new image URL
-    users_updated = db.query(User).filter(User.badge_id == badge_id).update(
-        {"badge_image_url": badge_update.image_url},
-        synchronize_session=False
-    )
+    # Note: badge_image_url column has been removed from users table
+    # Badge URLs are now retrieved directly from badges table using badge_id
+    # No need to update users table when badge URL changes
+    # Count how many users have this badge (for informational purposes)
+    users_updated = db.query(User).filter(User.badge_id == badge_id).count()
     
     db.commit()
     db.refresh(badge)
