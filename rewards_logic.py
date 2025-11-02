@@ -348,24 +348,49 @@ def perform_draw(db: Session, draw_date: date) -> Dict[str, Any]:
 def get_user_details(user, db: Session) -> Dict[str, Any]:
     """
     Extract user details for display with cosmetic items (badge, avatar, frame).
+    Note: image_url fields have been removed from avatars and frames tables.
+    URLs should be generated using presigned URLs from bucket/object_key.
     """
-    # Get badge, avatar, and frame info
+    from utils.storage import presign_get
+    
+    # Get badge info
     badge_info = db.query(Badge).filter(Badge.id == user.badge_id).first() if user.badge_id else None
+    badge_image_url = badge_info.image_url if badge_info else None  # Badge URLs are public, no presigning
     
-    # Use selected_avatar_id instead of avatar_id (which doesn't exist in User model)
+    # Get avatar URL (presigned)
+    avatar_image_url = None
     avatar_id = getattr(user, 'selected_avatar_id', None)
-    avatar_info = db.query(Avatar).filter(Avatar.id == avatar_id).first() if avatar_id else None
+    if avatar_id:
+        avatar_info = db.query(Avatar).filter(Avatar.id == avatar_id).first()
+        if avatar_info:
+            bucket = getattr(avatar_info, "bucket", None)
+            object_key = getattr(avatar_info, "object_key", None)
+            if bucket and object_key:
+                try:
+                    avatar_image_url = presign_get(bucket, object_key, expires=900)
+                except Exception as e:
+                    logging.warning(f"Failed to presign avatar {avatar_info.id}: {e}")
     
-    # Use selected_frame_id instead of frame_id
+    # Get frame URL (presigned)
+    frame_image_url = None
     frame_id = getattr(user, 'selected_frame_id', None)
-    frame_info = db.query(Frame).filter(Frame.id == frame_id).first() if frame_id else None
+    if frame_id:
+        frame_info = db.query(Frame).filter(Frame.id == frame_id).first()
+        if frame_info:
+            bucket = getattr(frame_info, "bucket", None)
+            object_key = getattr(frame_info, "object_key", None)
+            if bucket and object_key:
+                try:
+                    frame_image_url = presign_get(bucket, object_key, expires=900)
+                except Exception as e:
+                    logging.warning(f"Failed to presign frame {frame_info.id}: {e}")
     
     return {
         "account_id": user.account_id,
         "username": user.username,
-        "badge_image_url": badge_info.image_url if badge_info else None,
-        "avatar_image_url": avatar_info.image_url if avatar_info else None,
-        "frame_image_url": frame_info.image_url if frame_info else None
+        "badge_image_url": badge_image_url,
+        "avatar_image_url": avatar_image_url,
+        "frame_image_url": frame_image_url
     }
 
 

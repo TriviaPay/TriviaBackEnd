@@ -63,7 +63,6 @@ class User(Base):
 
     # Badge fields
     badge_id = Column(String, ForeignKey("badges.id"), nullable=True)  # Reference to badge ID
-    badge_image_url = Column(String, nullable=True)  # URL to badge image (cached for performance)
 
     # Wallet fields
     wallet_balance = Column(Float, default=0.0)  # User's wallet balance
