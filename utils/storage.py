@@ -14,16 +14,221 @@ except Exception:  # keep import-time safe where boto3 may not be installed yet
 # AWS S3 configuration
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_REGION = os.getenv("AWS_REGION", "us-east-2")  # Default to us-east-2 (set AWS_REGION env var to override)
+# Default to us-east-2 (set AWS_REGION env var to override)
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 
-_s3_clients: Dict[str, any] = {}  # Cache clients by region
+# Environment variables that can override S3 endpoint (check and warn if set)
+_ENDPOINT_OVERRIDE_VARS = [
+    "AWS_ENDPOINT_URL_S3",
+    "AWS_S3_ENDPOINT",
+    "AWS_ENDPOINT_URL",
+    "AWS_DEFAULT_REGION",  # Can cause clients to default to us-east-1/global
+]
+
+def _check_endpoint_override_env_vars():
+    """
+    Check for environment variables that might override S3 endpoint.
+    Logs warnings if any are set that could cause issues.
+    """
+    problematic_vars = []
+    for var in _ENDPOINT_OVERRIDE_VARS:
+        value = os.getenv(var)
+        if value:
+            problematic_vars.append((var, value))
+    
+    if problematic_vars:
+        logging.warning("S3 endpoint override environment variables detected (may cause PermanentRedirect):")
+        for var, value in problematic_vars:
+            # Mask secrets but show enough to diagnose
+            masked_value = value if "amazonaws.com" in value else "***"
+            logging.warning(f"  {var}={masked_value}")
+        logging.warning("These may override explicit endpoint_url settings. Consider clearing them or setting to regional endpoint.")
+
+# Check on module load
+_check_endpoint_override_env_vars()
+
+_s3_clients: Dict[str, any] = {}  # Cache clients by region:addressing_style
 _bucket_regions: Dict[str, str] = {}  # Cache bucket regions
-_cached_key_id = None
+_bucket_addressing_styles: Dict[str, str] = {}  # Cache addressing style per bucket (virtual or path)
+_cached_creds = None  # Tuple of (access_key_id, secret_key, session_token) for cache invalidation
+
+def _invalidate_client(region: str, addressing_style: str = 'virtual'):
+    """Invalidate cached S3 client for a specific region and addressing style."""
+    global _s3_clients
+    cache_key = f"{region}:{addressing_style}"
+    _s3_clients.pop(cache_key, None)
+
+def _preferred_addressing_for_bucket(bucket: str) -> str:
+    """
+    Determine preferred addressing style for a bucket.
+    Buckets with dots in the name should use path-style to avoid TLS issues.
+    """
+    return 'path' if '.' in bucket else 'virtual'
+
+def _endpoint_for_region(region: str) -> Optional[str]:
+    """
+    Get the explicit regional S3 endpoint URL for a given region.
+    This ensures we always use the regional endpoint, not the global one.
+    
+    Args:
+        region: AWS region (e.g., 'us-east-2')
+    
+    Returns:
+        Regional endpoint URL (e.g., 'https://s3.us-east-2.amazonaws.com')
+    """
+    if not region:
+        return None
+    return f"https://s3.{region}.amazonaws.com"
+
+def _assert_client_endpoint(client, region: str):
+    """
+    Verify that the S3 client is using the expected regional endpoint.
+    Raises RuntimeError if endpoint doesn't match expectations (critical issue).
+    Logs debug info if verification succeeds.
+    
+    Args:
+        client: boto3 S3 client
+        region: Expected AWS region
+    
+    Raises:
+        RuntimeError: If endpoint doesn't match expected region
+    """
+    try:
+        url = getattr(client.meta, "endpoint_url", "")
+        expected_pattern = f"s3.{region}.amazonaws.com"
+        
+        # Check for problematic patterns
+        if not url:
+            raise RuntimeError(f"S3 client endpoint_url is empty or None")
+        if "s3.amazonaws.com" in url and region != "us-east-1":
+            # Global endpoint detected when we expect regional
+            raise RuntimeError(
+                f"S3 client using global endpoint 's3.amazonaws.com' but expected regional '{expected_pattern}'. "
+                f"Full URL: {url}. This will cause PermanentRedirect errors. "
+                f"Check for endpoint override environment variables or proxy issues."
+            )
+        if expected_pattern not in url:
+            # Wrong regional endpoint
+            raise RuntimeError(
+                f"S3 client endpoint mismatch: got '{url}' but expected to contain '{expected_pattern}'. "
+                f"This may cause PermanentRedirect errors."
+            )
+        
+        # Success - log at debug level
+        logging.debug(f"S3 client endpoint verified: {url} (region: {region})")
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logging.warning(f"Could not verify S3 client endpoint: {e}")
+        # Don't raise on verification failure, but log it
+
+def _assert_presigned_host(url: str, region: str):
+    """
+    Validate that a presigned URL uses a regional S3 host, not the global endpoint.
+    Raises RuntimeError if the URL host is invalid (indicates a bug in URL generation).
+    
+    This is a defensive check to catch any case where presigned URLs might be generated
+    with the wrong host (global endpoint instead of regional).
+    
+    Args:
+        url: Presigned URL string to validate
+        region: Expected AWS region
+    
+    Raises:
+        RuntimeError: If URL host doesn't match expected regional pattern
+    """
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        
+        # Acceptable patterns:
+        # 1. Virtual-hosted style: bucket.s3.region.amazonaws.com
+        # 2. Path-style: s3.region.amazonaws.com
+        # 3. For us-east-1 specifically: bucket.s3.amazonaws.com or s3.amazonaws.com (global endpoint is valid for us-east-1)
+        
+        is_valid = False
+        
+        if region == "us-east-1":
+            # For us-east-1, global endpoint is acceptable
+            is_valid = (
+                host.endswith(".s3.amazonaws.com") or  # bucket.s3.amazonaws.com (global us-east-1)
+                host == "s3.amazonaws.com" or           # s3.amazonaws.com (global)
+                host.endswith(".s3.us-east-1.amazonaws.com") or  # bucket.s3.us-east-1.amazonaws.com (regional)
+                host == "s3.us-east-1.amazonaws.com"    # s3.us-east-1.amazonaws.com (regional)
+            )
+        else:
+            # For all other regions, MUST use regional endpoint
+            is_valid = (
+                host.endswith(f".s3.{region}.amazonaws.com") or  # bucket.s3.region.amazonaws.com
+                host == f"s3.{region}.amazonaws.com"              # s3.region.amazonaws.com
+            )
+        
+        if not is_valid:
+            raise RuntimeError(
+                f"Presigned URL has invalid S3 host '{host}' for region '{region}'. "
+                f"Expected regional endpoint (e.g., 's3.{region}.amazonaws.com' or '*.s3.{region}.amazonaws.com'). "
+                f"Full URL host: {host}. This indicates a bug in presigned URL generation."
+            )
+        
+        logging.debug(f"Presigned URL host validated: {host} (region: {region})")
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logging.warning(f"Could not validate presigned URL host: {e}")
+        # Don't raise on validation failure (might be non-S3 URL), but log it
+
+def clear_bucket_region_cache(bucket: Optional[str] = None):
+    """
+    Clear cached bucket region(s) and addressing styles.
+    Also invalidates related S3 clients.
+    Useful when bucket region changes or to force re-detection.
+    
+    Args:
+        bucket: Specific bucket to clear, or None to clear all
+    """
+    global _bucket_regions, _bucket_addressing_styles
+    if bucket:
+        # Invalidate client for this bucket's cached region/style
+        old_region = _bucket_regions.get(bucket)
+        old_style = _bucket_addressing_styles.get(bucket, 'virtual')
+        if old_region:
+            _invalidate_client(old_region, old_style)
+        _bucket_regions.pop(bucket, None)
+        _bucket_addressing_styles.pop(bucket, None)
+        logging.info(f"Cleared region and addressing style cache for bucket: {bucket}")
+    else:
+        # Clear all caches and clients
+        _bucket_regions.clear()
+        _bucket_addressing_styles.clear()
+        _s3_clients.clear()
+        logging.info("Cleared all bucket region and addressing style caches")
+
+def _regional_s3_config() -> Optional[any]:
+    """
+    Create a Config that forces regional endpoints and prevents global endpoint usage.
+    This ensures GetBucketLocation and other S3 operations never hit s3.amazonaws.com.
+    """
+    if Config is None:
+        return None
+    return Config(
+        signature_version='s3v4',
+        s3={
+            'addressing_style': 'path',  # GetBucketLocation uses path-style
+            'use_accelerate_endpoint': False,
+            'use_global_endpoint': False,  # CRITICAL: Prevent global endpoint usage
+            'us_east_1_regional_endpoint': 'regional',  # CRITICAL: Use regional us-east-1, not global
+        }
+    )
 
 def _get_bucket_region(bucket: str) -> str:
     """
     Get the region for a specific bucket.
     Auto-detects the bucket region to avoid PermanentRedirect errors.
+    Defaults to AWS_REGION (us-east-2) if detection fails.
+    
+    IMPORTANT: This function explicitly avoids using the global s3.amazonaws.com endpoint
+    by forcing regional endpoint usage via endpoint_url and Config settings.
     """
     global _bucket_regions
     
@@ -31,26 +236,41 @@ def _get_bucket_region(bucket: str) -> str:
     if bucket in _bucket_regions:
         return _bucket_regions[bucket]
     
+    # Default to AWS_REGION (us-east-2) since user confirmed it's in us-east-2
+    # Only try to detect if we don't have it cached
     if boto3 is None:
-        raise RuntimeError("boto3 is required for presigning S3 URLs")
-    if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
-        raise RuntimeError("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set")
+        logging.warning(f"boto3 not available, using default region {AWS_REGION} for bucket '{bucket}'")
+        _bucket_regions[bucket] = AWS_REGION
+        return AWS_REGION
     
-    # First, try to get bucket location using a default region client
+    if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
+        logging.warning(f"AWS credentials not set, using default region {AWS_REGION} for bucket '{bucket}'")
+        _bucket_regions[bucket] = AWS_REGION
+        return AWS_REGION
+    
+    # Try to get bucket location using a regional endpoint client
+    # CRITICAL: We MUST use regional endpoint, not global s3.amazonaws.com
     try:
         session = boto3.session.Session()
-        # Use us-east-1 for get_bucket_location (it's the only region that supports this without explicit region)
+        
+        # Force regional us-east-1 endpoint (not global s3.amazonaws.com)
+        # GetBucketLocation works from any regional endpoint, but us-east-1 is commonly used
+        regional_config = _regional_s3_config()
+        
         temp_client = session.client(
             "s3",
-            region_name="us-east-1",
+            region_name="us-east-1",  # us-east-1 is fine, but we force REGIONAL endpoint below
             aws_access_key_id=AWS_ACCESS_KEY_ID,
             aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            # CRITICAL: Explicitly set regional endpoint to prevent botocore from using s3.amazonaws.com
+            endpoint_url="https://s3.us-east-1.amazonaws.com",
+            config=regional_config,  # Additional safeguard: Config prevents global endpoint fallback
         )
         
         response = temp_client.get_bucket_location(Bucket=bucket)
         region = response.get("LocationConstraint")
         
-        # us-east-1 returns None for LocationConstraint
+        # us-east-1 returns None or empty string for LocationConstraint
         if region is None or region == "":
             region = "us-east-1"
         
@@ -60,40 +280,80 @@ def _get_bucket_region(bucket: str) -> str:
         
     except ClientError as e:
         error_code = e.response.get("Error", {}).get("Code", "")
-        if error_code == "PermanentRedirect":
-            # Parse the error message to get the correct endpoint/region
-            error_message = e.response.get("Error", {}).get("Message", "")
-            logging.warning(f"PermanentRedirect for bucket '{bucket}': {error_message}")
-            # Fall back to default region
-            region = AWS_REGION
+        error_message = e.response.get("Error", {}).get("Message", "")
+        error_region = e.response.get("Error", {}).get("Region", "")
+        
+        # Log x-amz-bucket-region header if present (S3 tells us the actual bucket region)
+        try:
+            hdrs = e.response.get("ResponseMetadata", {}).get("HTTPHeaders", {})
+            amz_region = hdrs.get("x-amz-bucket-region")
+            if amz_region:
+                logging.warning(f"S3 says bucket '{bucket}' region is: {amz_region} (via x-amz-bucket-region header) - using this for region detection")
+                # Use the header value directly if present
+                _bucket_regions[bucket] = amz_region
+                return amz_region
+        except Exception:
+            pass
+        
+        if error_code in ("PermanentRedirect", "AuthorizationQueryParametersError"):
+            # Parse error message to extract expected region
+            region = None
+            
+            # First, check if Region field is in the error response (most reliable)
+            if error_region:
+                region = error_region
+                logging.info(f"Using region from error response Region field: {region}")
+            
+            # Otherwise, try to extract from error message
+            if not region and "expecting" in error_message.lower():
+                import re
+                region_match = re.search(r"expecting\s+['\"]?([a-z0-9-]+)['\"]?", error_message, re.IGNORECASE)
+                if region_match:
+                    region = region_match.group(1)
+                    logging.info(f"Extracted expected region from PermanentRedirect: {region}")
+            
+            # Fall back to default if we couldn't extract region
+            if not region:
+                logging.warning(f"PermanentRedirect/AuthorizationQueryParametersError for bucket '{bucket}': {error_message}, using default: {AWS_REGION}")
+                region = AWS_REGION
         elif error_code == "AccessDenied":
-            # If we can't access, use default region
+            # If we can't access, use default region (us-east-2 as confirmed by user)
             logging.warning(f"AccessDenied when detecting region for bucket '{bucket}', using default: {AWS_REGION}")
             region = AWS_REGION
         else:
-            logging.error(f"Error detecting region for bucket '{bucket}': {e}")
+            logging.error(f"Error detecting region for bucket '{bucket}': {e}, using default: {AWS_REGION}")
             region = AWS_REGION
         
         _bucket_regions[bucket] = region
         return region
     except Exception as e:
-        logging.error(f"Unexpected error detecting region for bucket '{bucket}': {e}")
+        logging.error(f"Unexpected error detecting region for bucket '{bucket}': {e}, using default: {AWS_REGION}")
         region = AWS_REGION
         _bucket_regions[bucket] = region
         return region
 
-def _get_s3_client_for_region(region: str):
-    """Get or create S3 client for a specific region"""
-    global _s3_clients, _cached_key_id
+def _get_s3_client_for_region(region: str, addressing_style: str = 'virtual'):
+    """Get or create S3 client for a specific region
     
-    # Invalidate all clients if credentials changed
-    if _cached_key_id != AWS_ACCESS_KEY_ID:
+    Args:
+        region: AWS region (e.g., 'us-east-2')
+        addressing_style: 'virtual' (bucket.s3.region.amazonaws.com) or 'path' (s3.region.amazonaws.com/bucket)
+    """
+    global _s3_clients, _cached_creds
+    
+    # Cache key includes both region and addressing style
+    cache_key = f"{region}:{addressing_style}"
+    
+    # Invalidate all clients if credentials changed (track access key, secret, and session token)
+    aws_session_token = os.getenv("AWS_SESSION_TOKEN")
+    creds_tuple = (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, aws_session_token)
+    if _cached_creds != creds_tuple:
         _s3_clients = {}
-        _cached_key_id = AWS_ACCESS_KEY_ID
+        _cached_creds = creds_tuple
     
-    # Return cached client for this region
-    if region in _s3_clients:
-        return _s3_clients[region]
+    # Return cached client for this region and style
+    if cache_key in _s3_clients:
+        return _s3_clients[cache_key]
     
     if boto3 is None:
         raise RuntimeError("boto3 is required for presigning S3 URLs")
@@ -101,25 +361,61 @@ def _get_s3_client_for_region(region: str):
         raise RuntimeError("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set")
     
     session = boto3.session.Session()
+    
     # Force signature version 4 (AWS4-HMAC-SHA256) - required by modern S3
-    # Use virtual-hosted-style addressing and ensure regional endpoint
+    # Use specified addressing style
+    # IMPORTANT: use_accelerate_endpoint=False ensures we don't use Transfer Acceleration
+    #            which would change the endpoint to s3-accelerate.amazonaws.com
+    # CRITICAL: use_global_endpoint=False and us_east_1_regional_endpoint='regional' prevent
+    #           botocore from ever falling back to the global s3.amazonaws.com endpoint
     config = Config(
         signature_version='s3v4',
         s3={
-            'addressing_style': 'virtual',  # Use bucket.s3.region.amazonaws.com format
+            'addressing_style': addressing_style,
+            'use_accelerate_endpoint': False,  # Must be False to avoid accelerate endpoint
+            'use_dualstack_endpoint': False,   # Must be False to avoid dualstack endpoint
+            'use_global_endpoint': False,      # CRITICAL: Prevent global endpoint fallback
+            'us_east_1_regional_endpoint': 'regional',  # CRITICAL: Use regional us-east-1, not global
         }
     ) if Config else None
     
-    client = session.client(
-        "s3",
-        region_name=region,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        config=config,
-    )
+    # Hard-pin the regional endpoint URL to prevent hitting global endpoint
+    # This overrides any environment variable settings (AWS_ENDPOINT_URL_S3, etc.)
+    endpoint_url = _endpoint_for_region(region)
     
-    _s3_clients[region] = client
-    logging.debug(f"Created S3 client for region: {region}")
+    if not endpoint_url:
+        raise RuntimeError(f"Cannot create S3 client: invalid region '{region}'")
+    
+    # Build client with credentials
+    client_params = {
+        "service_name": "s3",
+        "region_name": region,
+        "aws_access_key_id": AWS_ACCESS_KEY_ID,
+        "aws_secret_access_key": AWS_SECRET_ACCESS_KEY,
+        "config": config,
+    }
+    
+    # Explicitly set endpoint_url to ensure we use regional endpoint
+    # This MUST be set to override any environment variables (AWS_ENDPOINT_URL_S3, etc.)
+    # that might point to the global endpoint
+    client_params["endpoint_url"] = endpoint_url
+    
+    # Add session token if present (for temporary credentials)
+    if aws_session_token:
+        client_params["aws_session_token"] = aws_session_token
+    
+    # Create client - endpoint_url parameter should override any env var defaults
+    client = session.client(**client_params)
+    
+    # CRITICAL: Verify the endpoint URL matches expectations immediately after creation
+    # This will raise RuntimeError if something overrode our endpoint_url setting
+    _assert_client_endpoint(client, region)
+    
+    # Log the actual endpoint in use (helpful for debugging)
+    actual_endpoint = getattr(client.meta, "endpoint_url", "unknown")
+    logging.debug(f"Created S3 client for region: {region}, addressing_style: {addressing_style}, endpoint: {actual_endpoint}")
+    
+    _s3_clients[cache_key] = client
     return client
 
 def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
@@ -130,7 +426,7 @@ def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
     Args:
         bucket: S3 bucket name
         key: S3 object key (path)
-        expires: URL expiration time in seconds (default 15 minutes)
+        expires: URL expiration time in seconds (default 15 minutes, max 7 days = 604800)
     
     Returns:
         Presigned URL string or None if generation fails
@@ -141,12 +437,38 @@ def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
         logging.warning("AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set - cannot generate presigned URLs")
         return None
     
+    # Normalize key: strip leading slash to avoid // in URLs
+    if key.startswith('/'):
+        key = key[1:]
+        logging.debug(f"Normalized key by removing leading slash: {key}")
+    
+    # Validate expires (AWS SigV4 max is 7 days = 604800 seconds)
+    max_expires = 604800  # 7 days
+    if expires > max_expires:
+        logging.warning(f"Expires {expires} exceeds AWS max {max_expires}, clamping to {max_expires}")
+        expires = max_expires
+    
     try:
         # Auto-detect bucket region to avoid PermanentRedirect errors
         bucket_region = _get_bucket_region(bucket)
         
-        # Get S3 client for the bucket's region
-        s3 = _get_s3_client_for_region(bucket_region)
+        # Determine addressing style: use cached style or preferred style for this bucket
+        addressing_style = _bucket_addressing_styles.get(bucket, _preferred_addressing_for_bucket(bucket))
+        
+        s3 = _get_s3_client_for_region(bucket_region, addressing_style)
+        
+        # CRITICAL: Verify endpoint before generating URL - raise error if wrong
+        # This catches environment variable overrides, proxy issues, or SDK misconfigurations
+        _assert_client_endpoint(s3, bucket_region)
+        
+        # Double-check the endpoint right before presigning (defensive)
+        final_endpoint = getattr(s3.meta, "endpoint_url", "")
+        if "s3.us-east-2.amazonaws.com" not in final_endpoint and bucket_region == "us-east-2":
+            raise RuntimeError(
+                f"Endpoint verification failed immediately before presigning: {final_endpoint} "
+                f"(expected to contain 's3.us-east-2.amazonaws.com'). "
+                f"This indicates an endpoint override or SDK misconfiguration."
+            )
         
         # Generate presigned URL
         url = s3.generate_presigned_url(
@@ -155,29 +477,152 @@ def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
             ExpiresIn=expires,
         )
         
-        logging.debug(f"Generated presigned URL for bucket={bucket}, key={key}, region={bucket_region}")
+        # CRITICAL: Validate the presigned URL host to ensure it's regional (not global)
+        # This catches any bugs in URL generation before the URL is returned to clients
+        _assert_presigned_host(url, bucket_region)
+        
+        # Log the generated URL's host for debugging (without query params)
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            host = parsed.netloc
+            logging.debug(f"Generated presigned URL for bucket={bucket}, key={key}, region={bucket_region}, style={addressing_style}, host={host}")
+            
+            # Warn if we detect global endpoint in generated URL (should never happen with our fixes)
+            if bucket_region != "us-east-1" and ("s3.amazonaws.com" in host and host != f"s3.{bucket_region}.amazonaws.com"):
+                logging.error(
+                    f"WARNING: Presigned URL contains global endpoint in host '{host}' for non-us-east-1 region '{bucket_region}'. "
+                    f"This should never happen - investigate immediately!"
+                )
+        except Exception:
+            logging.debug(f"Generated presigned URL for bucket={bucket}, key={key}, region={bucket_region}, style={addressing_style}")
+        
         return url
         
     except ClientError as e:
         error_code = e.response.get("Error", {}).get("Code", "")
-        if error_code == "PermanentRedirect":
-            # Clear cached region and retry once
-            logging.warning(f"PermanentRedirect for bucket '{bucket}', clearing cache and retrying")
-            if bucket in _bucket_regions:
-                del _bucket_regions[bucket]
-            # Retry once
+        error_message = e.response.get("Error", {}).get("Message", "")
+        error_region = e.response.get("Error", {}).get("Region", "")
+        
+        # Log x-amz-bucket-region header if present (S3 tells us the actual bucket region)
+        try:
+            hdrs = e.response.get("ResponseMetadata", {}).get("HTTPHeaders", {})
+            amz_region = hdrs.get("x-amz-bucket-region")
+            if amz_region:
+                logging.warning(f"S3 says bucket '{bucket}' region is: {amz_region} (via x-amz-bucket-region header)")
+        except Exception:
+            pass
+        
+        if error_code in ("PermanentRedirect", "AuthorizationQueryParametersError"):
+            # Force fresh region detection before falling back
+            # This ensures we get the correct region from S3 if detection was wrong
+            old_region = _bucket_regions.pop(bucket, None)
+            old_style = _bucket_addressing_styles.get(bucket, 'virtual')
+            
+            # Invalidate old client to force rebuild
+            if old_region:
+                _invalidate_client(old_region, old_style)
+            
+            endpoint_hint = e.response.get("Error", {}).get("Endpoint", "")
+            bucket_region = None
+            addressing_style = 'virtual'
+            
+            # Try to re-detect region from S3
             try:
-                bucket_region = _get_bucket_region(bucket)
-                s3 = _get_s3_client_for_region(bucket_region)
+                detected_region = _get_bucket_region(bucket)
+                if detected_region:
+                    bucket_region = detected_region
+                    logging.info(f"Redetected region after redirect error: {bucket_region}")
+            except Exception as detect_error:
+                logging.warning(f"Region re-detection failed: {detect_error}")
+            
+            # Check if error specifies s3.amazonaws.com (global endpoint format)
+            if endpoint_hint == "s3.amazonaws.com" and error_code == "PermanentRedirect":
+                # PermanentRedirect with global endpoint hint suggests wrong endpoint was used
+                # User confirmed bucket is in us-east-2, try path-style addressing
+                if not bucket_region:
+                    bucket_region = AWS_REGION  # Use default (us-east-2) - user confirmed this
+                addressing_style = 'path'  # Path-style: s3.us-east-2.amazonaws.com/avatars/key
+                logging.info(f"PermanentRedirect with global endpoint hint for bucket '{bucket}', trying path-style addressing with region {bucket_region}")
+            else:
+                # For AuthorizationQueryParametersError, extract region from error response
+                if not bucket_region and error_region:
+                    bucket_region = error_region
+                    logging.info(f"Using region from error response Region field: {bucket_region}")
+                
+                # Otherwise, try to extract from error message
+                if not bucket_region and "expecting" in error_message.lower():
+                    import re
+                    region_match = re.search(r"expecting\s+['\"]?([a-z0-9-]+)['\"]?", error_message, re.IGNORECASE)
+                    if region_match:
+                        bucket_region = region_match.group(1)
+                        logging.info(f"Extracted expected region from error message: {bucket_region}")
+                
+                # Fall back to default if we couldn't extract region
+                if not bucket_region:
+                    bucket_region = AWS_REGION
+                    logging.warning(f"Could not extract region from error, using default: {bucket_region}")
+            
+            # Cache new region and addressing style, then retry
+            try:
+                _bucket_regions[bucket] = bucket_region
+                _bucket_addressing_styles[bucket] = addressing_style
+                s3 = _get_s3_client_for_region(bucket_region, addressing_style)
+                
+                # Verify endpoint before generating URL
+                _assert_client_endpoint(s3, bucket_region)
+                
+                # Final endpoint check before presigning
+                final_endpoint = getattr(s3.meta, "endpoint_url", "")
+                if bucket_region == "us-east-2" and "s3.us-east-2.amazonaws.com" not in final_endpoint:
+                    raise RuntimeError(f"Endpoint mismatch in retry: {final_endpoint}")
+                
                 url = s3.generate_presigned_url(
                     "get_object",
                     Params={"Bucket": bucket, "Key": key},
                     ExpiresIn=expires,
                 )
+                
+                # Validate the presigned URL host after retry
+                _assert_presigned_host(url, bucket_region)
+                
+                logging.info(f"Successfully generated presigned URL after correction: bucket={bucket}, region={bucket_region}, style={addressing_style}")
                 return url
             except Exception as retry_error:
-                logging.error(f"Retry failed for bucket={bucket}, key={key}: {retry_error}", exc_info=True)
-                return None
+                # If path-style didn't work, try virtual style with detected region
+                if addressing_style == 'path':
+                    logging.info(f"Path-style failed, trying virtual-hosted style with {bucket_region}")
+                    try:
+                        _invalidate_client(bucket_region, 'path')  # Clear failed path-style client
+                        s3 = _get_s3_client_for_region(bucket_region, 'virtual')
+                        
+                        # Verify endpoint before generating URL
+                        _assert_client_endpoint(s3, bucket_region)
+                        
+                        # Final endpoint check before presigning
+                        final_endpoint = getattr(s3.meta, "endpoint_url", "")
+                        if bucket_region == "us-east-2" and "s3.us-east-2.amazonaws.com" not in final_endpoint:
+                            raise RuntimeError(f"Endpoint mismatch in retry: {final_endpoint}")
+                        
+                        url = s3.generate_presigned_url(
+                            "get_object",
+                            Params={"Bucket": bucket, "Key": key},
+                            ExpiresIn=expires,
+                        )
+                        
+                        # Validate the presigned URL host after retry
+                        _assert_presigned_host(url, bucket_region)
+                        
+                        # Cache virtual style if it works
+                        _bucket_addressing_styles[bucket] = 'virtual'
+                        logging.info(f"Successfully generated presigned URL with virtual-hosted style: bucket={bucket}, region={bucket_region}")
+                        return url
+                    except Exception as second_retry_error:
+                        logging.error(f"Both addressing styles failed for bucket={bucket}, key={key}: {second_retry_error}", exc_info=True)
+                        return None
+                else:
+                    logging.error(f"Retry failed for bucket={bucket}, key={key}: {retry_error}", exc_info=True)
+                    return None
         else:
             logging.error(f"ClientError generating presigned URL for bucket={bucket}, key={key}: {e}", exc_info=True)
             return None
