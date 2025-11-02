@@ -3,11 +3,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, Integer, cast, select
 from db import SessionLocal
 from rewards_logic import perform_draw, reset_daily_eligibility_flags
 from cleanup_unused_questions import cleanup_unused_questions
-from models import User, TriviaQuestionsDaily, TriviaQuestionsWinners, UserSubscription
+from models import User, TriviaQuestionsDaily, TriviaQuestionsWinners, UserSubscription, TriviaUserDaily, TriviaQuestionsEntries
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,65 +27,121 @@ def get_detailed_draw_metrics(db: Session, draw_date: date) -> dict:
         # Users with subscription flag
         subscribed_users = db.query(User).filter(User.subscription_flag == True).count()
         
-        # Users eligible for draw (answered all questions correctly)
-        eligible_users = db.query(User).filter(User.daily_eligibility_flag == True).count()
+        # Users eligible for draw (answered at least 1 question correctly on draw_date)
+        # This should match the logic in get_eligible_participants()
+        eligible_users = db.query(
+            func.count(func.distinct(User.account_id))
+        ).join(
+            TriviaUserDaily,
+            and_(
+                TriviaUserDaily.account_id == User.account_id,
+                TriviaUserDaily.date == draw_date,
+                TriviaUserDaily.status == 'answered_correct'
+            )
+        ).filter(
+            User.subscription_flag == True
+        ).scalar() or 0
         
-        # Users who attempted questions today
-        attempted_users = db.query(User).join(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(draw_date, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(draw_date + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_attempted == True
-        ).distinct().count()
+        # Users who attempted questions on draw_date (using TriviaUserDaily)
+        # Count distinct users who attempted at least one question
+        attempted_users = db.query(
+            func.count(func.distinct(TriviaUserDaily.account_id))
+        ).filter(
+            TriviaUserDaily.date == draw_date,
+            TriviaUserDaily.status.in_(['answered_correct', 'answered_wrong', 'viewed'])
+        ).scalar() or 0
         
-        # Users who answered all 3 questions correctly
-        correct_all_questions = db.query(User).join(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(draw_date, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(draw_date + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_is_correct == True
-        ).group_by(User.account_id).having(func.count(TriviaQuestionsDaily.id) == 3).count()
+        # Users who answered all questions correctly (assumes max 4 questions per day)
+        # Count users who have exactly 4 correct answers (or check if all their questions are correct)
+        users_with_correct = db.query(
+            TriviaUserDaily.account_id,
+            func.count(TriviaUserDaily.account_id).label('correct_count'),
+            func.count(func.distinct(TriviaUserDaily.question_order)).label('total_attempted')
+        ).filter(
+            TriviaUserDaily.date == draw_date,
+            TriviaUserDaily.status == 'answered_correct'
+        ).group_by(TriviaUserDaily.account_id).all()
         
-        # Users who answered some questions correctly
-        correct_some_questions = db.query(User).join(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(draw_date, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(draw_date + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_is_correct == True
-        ).distinct().count()
+        correct_all_questions = sum(
+            1 for _, correct_count, total_attempted in users_with_correct
+            if correct_count >= 4  # Answered all 4 questions correctly
+        )
+        
+        # Users who answered some questions correctly (at least 1)
+        correct_some_questions = db.query(
+            func.count(func.distinct(TriviaUserDaily.account_id))
+        ).filter(
+            TriviaUserDaily.date == draw_date,
+            TriviaUserDaily.status == 'answered_correct'
+        ).scalar() or 0
         
         # Users who answered all questions incorrectly
-        incorrect_all_questions = db.query(User).join(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(draw_date, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(draw_date + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_is_correct == False
-        ).group_by(User.account_id).having(func.count(TriviaQuestionsDaily.id) == 3).count()
+        # Count users who attempted questions but got 0 correct answers on draw_date
+        # Approach: Get all users who attempted, then subtract users who got at least one correct
+        all_users_who_attempted = set(
+            row[0] for row in db.query(
+                func.distinct(TriviaUserDaily.account_id)
+            ).filter(
+                TriviaUserDaily.date == draw_date,
+                TriviaUserDaily.status.in_(['answered_correct', 'answered_wrong'])
+            ).all()
+        )
         
-        # Combination metrics
-        eligible_and_subscribed = db.query(User).filter(
-            User.daily_eligibility_flag == True,
+        users_who_got_correct = set(
+            row[0] for row in db.query(
+                func.distinct(TriviaUserDaily.account_id)
+            ).filter(
+                TriviaUserDaily.date == draw_date,
+                TriviaUserDaily.status == 'answered_correct'
+            ).all()
+        )
+        
+        # Users who attempted but got no correct answers
+        incorrect_all_questions = len(all_users_who_attempted - users_who_got_correct)
+        
+        # Combination metrics (based on actual draw_date data)
+        # Eligible AND subscribed (this is what get_eligible_participants returns)
+        eligible_and_subscribed = db.query(
+            func.count(func.distinct(User.account_id))
+        ).join(
+            TriviaUserDaily,
+            and_(
+                TriviaUserDaily.account_id == User.account_id,
+                TriviaUserDaily.date == draw_date,
+                TriviaUserDaily.status == 'answered_correct'
+            )
+        ).filter(
             User.subscription_flag == True
-        ).count()
+        ).scalar() or 0
         
-        eligible_not_subscribed = db.query(User).filter(
-            User.daily_eligibility_flag == True,
+        # Eligible but NOT subscribed (answered correctly but not subscribed)
+        eligible_not_subscribed = db.query(
+            func.count(func.distinct(User.account_id))
+        ).join(
+            TriviaUserDaily,
+            and_(
+                TriviaUserDaily.account_id == User.account_id,
+                TriviaUserDaily.date == draw_date,
+                TriviaUserDaily.status == 'answered_correct'
+            )
+        ).filter(
             User.subscription_flag == False
+        ).scalar() or 0
+        
+        # Question attempt metrics (using TriviaUserDaily)
+        total_question_attempts = db.query(TriviaUserDaily).filter(
+            TriviaUserDaily.date == draw_date,
+            TriviaUserDaily.status.in_(['answered_correct', 'answered_wrong'])
         ).count()
         
-        # Question attempt metrics
-        total_question_attempts = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(draw_date, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(draw_date + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_attempted == True
+        correct_attempts = db.query(TriviaUserDaily).filter(
+            TriviaUserDaily.date == draw_date,
+            TriviaUserDaily.status == 'answered_correct'
         ).count()
         
-        correct_attempts = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(draw_date, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(draw_date + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_is_correct == True
-        ).count()
-        
-        incorrect_attempts = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(draw_date, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(draw_date + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_is_correct == False
+        incorrect_attempts = db.query(TriviaUserDaily).filter(
+            TriviaUserDaily.date == draw_date,
+            TriviaUserDaily.status == 'answered_wrong'
         ).count()
         
         # Calculate accuracy rate
@@ -133,25 +189,22 @@ def get_detailed_reset_metrics(db: Session) -> dict:
             TriviaQuestionsDaily.date < datetime.combine(today + timedelta(days=1), datetime.min.time())
         ).count()
         
-        # Count questions attempted today
-        questions_attempted_today = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(today, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(today + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_attempted == True
+        # Count questions attempted today (using TriviaUserDaily)
+        questions_attempted_today = db.query(TriviaUserDaily).filter(
+            TriviaUserDaily.date == today,
+            TriviaUserDaily.status.in_(['answered_correct', 'answered_wrong', 'viewed'])
         ).count()
         
         # Count questions answered correctly today
-        questions_correct_today = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(today, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(today + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_is_correct == True
+        questions_correct_today = db.query(TriviaUserDaily).filter(
+            TriviaUserDaily.date == today,
+            TriviaUserDaily.status == 'answered_correct'
         ).count()
         
         # Count questions answered incorrectly today
-        questions_incorrect_today = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(today, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(today + timedelta(days=1), datetime.min.time()),
-            TriviaQuestionsDaily.user_is_correct == False
+        questions_incorrect_today = db.query(TriviaUserDaily).filter(
+            TriviaUserDaily.date == today,
+            TriviaUserDaily.status == 'answered_wrong'
         ).count()
         
         # Count unused questions (allocated but not attempted)

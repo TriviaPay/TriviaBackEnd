@@ -14,7 +14,16 @@ async def internal_daily_draw(
     secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
     db: Session = Depends(get_db)
 ):
-    """Internal endpoint for daily draw triggered by external cron"""
+    """
+    Internal endpoint for daily draw triggered by external cron (cron-job.org).
+    
+    This endpoint:
+    1. Gets detailed metrics for yesterday's draw date
+    2. Performs the draw using get_eligible_participants() which queries TriviaUserDaily directly
+    3. Returns comprehensive results including diagnostics
+    
+    The eligibility check uses TriviaUserDaily to ensure date-specific accuracy.
+    """
     if secret != os.getenv("INTERNAL_SECRET"):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
@@ -22,14 +31,34 @@ async def internal_daily_draw(
         # Run daily draw for yesterday
         yesterday = date.today() - timedelta(days=1)
         
+        logging.info(f"🎯 Starting daily draw for {yesterday} via external cron")
+        
         # Get detailed metrics before performing draw
+        # This uses the updated get_detailed_draw_metrics() which queries TriviaUserDaily
         logging.info("📊 Collecting detailed draw metrics...")
-        metrics = get_detailed_draw_metrics(db, yesterday)
+        try:
+            metrics = get_detailed_draw_metrics(db, yesterday)
+            logging.info(f"✅ Metrics collected: {metrics.get('eligible_and_subscribed', 0)} eligible participants")
+            
+            # Check if there's an error in metrics collection
+            if "error" in metrics:
+                logging.error(f"❌ Error in metrics collection: {metrics['error']}")
+                # Continue anyway - metrics error shouldn't block the draw
+        except Exception as metrics_error:
+            logging.error(f"❌ Failed to collect metrics: {str(metrics_error)}", exc_info=True)
+            metrics = {"error": str(metrics_error)}
         
         # Perform the draw
-        result = perform_draw(db, yesterday)
+        # This uses get_eligible_participants() which queries TriviaUserDaily directly
+        logging.info("🎲 Performing draw...")
+        try:
+            result = perform_draw(db, yesterday)
+            logging.info(f"✅ Draw completed: {result.get('status', 'unknown')} - {result.get('total_participants', 0)} participants, {result.get('total_winners', 0)} winners")
+        except Exception as draw_error:
+            logging.error(f"❌ Failed to perform draw: {str(draw_error)}", exc_info=True)
+            # Re-raise so the error is returned to cron-job.org
+            raise
         
-        logging.info(f"Daily draw completed via external cron: {result}")
         return {
             "status": "success",
             "triggered_by": "external_cron",
@@ -39,8 +68,12 @@ async def internal_daily_draw(
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        logging.error(f"Error in daily draw: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"💥 Fatal error in daily draw: {str(e)}", exc_info=True)
+        # Return error details in response so cron-job.org logs show the issue
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error in daily draw: {str(e)}"
+        )
 
 @router.post("/question-reset")
 async def internal_question_reset(
