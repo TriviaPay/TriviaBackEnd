@@ -434,6 +434,97 @@ async def reveal_winners(
             detail=f"Error retrieving participant profile pictures: {str(e)}"
         )
 
+@router.get("/today-winners-reveal")
+async def today_winners_reveal(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Reveal today's winners with complete profile information.
+    Returns username, profile pic, profile frame, avatar, prize amount, and badge for each winner.
+    """
+    try:
+        # Get today's date
+        today = date.today()
+        
+        # Get winners for today
+        winners = db.query(TriviaQuestionsWinners, User).join(
+            User, TriviaQuestionsWinners.account_id == User.account_id
+        ).filter(
+            TriviaQuestionsWinners.draw_date == today
+        ).order_by(TriviaQuestionsWinners.position).all()
+        
+        if not winners:
+            return {
+                "draw_date": today.isoformat(),
+                "total_winners": 0,
+                "winners": []
+            }
+        
+        result = []
+        
+        for winner, user in winners:
+            # Get badge information (public URL, no presigning needed)
+            badge_info = None
+            if user.badge_id:
+                badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
+                if badge:
+                    badge_info = {
+                        "id": badge.id,
+                        "name": badge.name,
+                        "image_url": badge.image_url  # Public URL
+                    }
+            
+            # Get avatar URL (presigned)
+            avatar_url = None
+            if user.selected_avatar_id:
+                avatar_obj = db.query(Avatar).filter(Avatar.id == user.selected_avatar_id).first()
+                if avatar_obj:
+                    bucket = getattr(avatar_obj, "bucket", None)
+                    object_key = getattr(avatar_obj, "object_key", None)
+                    if bucket and object_key:
+                        try:
+                            avatar_url = presign_get(bucket, object_key, expires=900)
+                        except Exception as e:
+                            logging.warning(f"Failed to presign avatar {avatar_obj.id}: {e}")
+            
+            # Get frame URL (presigned)
+            frame_url = None
+            if user.selected_frame_id:
+                frame_obj = db.query(Frame).filter(Frame.id == user.selected_frame_id).first()
+                if frame_obj:
+                    bucket = getattr(frame_obj, "bucket", None)
+                    object_key = getattr(frame_obj, "object_key", None)
+                    if bucket and object_key:
+                        try:
+                            frame_url = presign_get(bucket, object_key, expires=900)
+                        except Exception as e:
+                            logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
+            
+            result.append({
+                "username": user.username or f"User{user.account_id}",
+                "profile_pic": user.profile_pic_url,
+                "profile_frame": frame_url,  # Frame URL (presigned)
+                "avatar": avatar_url,  # Avatar URL (presigned)
+                "prize_amount": float(winner.prize_amount),
+                "badge": badge_info  # Badge info (id, name, image_url) or None
+            })
+        
+        return {
+            "draw_date": today.isoformat(),
+            "total_winners": len(result),
+            "winners": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error revealing today's winners: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving today's winners: {str(e)}"
+        )
+
 # ======== Admin Endpoints ========
 
 @router.post("/admin/trigger-draw", response_model=DrawResponse)
