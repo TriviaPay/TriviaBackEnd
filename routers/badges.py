@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc
 import uuid
+import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
@@ -12,6 +13,8 @@ from models import Badge, User
 from routers.dependencies import get_current_user
 
 router = APIRouter(prefix="/badges", tags=["Badges"])
+
+logger = logging.getLogger(__name__)
 
 # ======== Helper Functions ========
 
@@ -43,13 +46,56 @@ def verify_admin(user: User) -> None:
             detail="Admin access required for this endpoint"
         )
 
+# ======== Helper Functions ========
+
+def validate_badge_url_is_public(image_url: str) -> bool:
+    """
+    Validate that badge image_url is a public S3 URL (not a presigned URL).
+    
+    Badges should use public URLs since they're shared assets that all users can access.
+    Presigned URLs are not needed and would expire unnecessarily.
+    
+    Args:
+        image_url: The image URL to validate
+        
+    Returns:
+        bool: True if URL appears to be a public URL (doesn't contain presigned query params)
+    """
+    # Presigned URLs contain query parameters like ?X-Amz-Algorithm=...
+    # Public URLs should be clean S3 URLs or CDN URLs
+    if not image_url:
+        return False
+    
+    # Check if it looks like a presigned URL (has AWS signature params)
+    presigned_indicators = ['X-Amz-Algorithm', 'X-Amz-Credential', 'X-Amz-Signature', 'X-Amz-Date']
+    if any(indicator in image_url for indicator in presigned_indicators):
+        logger.warning(f"Badge URL appears to be presigned (should be public): {image_url[:100]}...")
+        return False
+    
+    # Check if it's an S3 URL or CDN URL
+    public_url_patterns = ['s3.amazonaws.com', 's3.', 'amazonaws.com', 'cdn.', '.com/', '.org/']
+    if any(pattern in image_url for pattern in public_url_patterns):
+        return True
+    
+    # Allow other public URL formats (CDN, etc.)
+    if image_url.startswith('http://') or image_url.startswith('https://'):
+        return True
+    
+    return False
+
 # ======== Pydantic Models for Request/Response Validation ========
 
 class BadgeBase(BaseModel):
-    """Base model for Badge data"""
+    """
+    Base model for Badge data.
+    
+    Note: image_url should be a public S3 URL or CDN URL, not a presigned URL.
+    Badges are shared assets (only 4 total), so they should be publicly accessible
+    to avoid unnecessary presigned URL generation and expiration.
+    """
     name: str
     description: Optional[str] = None
-    image_url: str
+    image_url: str  # Should be a public S3 URL (e.g., https://bucket.s3.region.amazonaws.com/badges/badge.png)
     level: int
 
 class BadgeCreate(BadgeBase):
@@ -78,9 +124,21 @@ async def get_all_badges(
     limit: int = 100
 ):
     """
-    Get all available badges, ordered by level
+    Get all available badges, ordered by level.
+    
+    Returns public image URLs directly (badges are stored with public S3 URLs,
+    no presigning needed since they're shared assets).
     """
     badges = db.query(Badge).order_by(Badge.level).offset(skip).limit(limit).all()
+    
+    # Validate all badge URLs are public (log warnings if not)
+    for badge in badges:
+        if not validate_badge_url_is_public(badge.image_url):
+            logger.warning(
+                f"Badge {badge.id} ({badge.name}) has a non-public URL format. "
+                f"Badges should use public S3 URLs for optimal performance."
+            )
+    
     return badges
 
 @router.get("/{badge_id}", response_model=BadgeResponse)
@@ -106,10 +164,20 @@ async def create_badge(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Admin endpoint to create a new badge
+    Admin endpoint to create a new badge.
+    
+    Note: image_url should be a public S3 URL (not presigned).
+    Example: https://triviapay-assets.s3.us-east-2.amazonaws.com/badges/bronze.png
     """
     # Check admin access
     verify_admin(current_user)
+    
+    # Validate that the URL is public (warn if not, but allow)
+    if not validate_badge_url_is_public(badge.image_url):
+        logger.warning(
+            f"Creating badge with URL that appears non-public: {badge.image_url[:100]}. "
+            f"Badges should use public S3 URLs for optimal performance."
+        )
     
     # Use provided ID or generate a new one
     badge_id = badge.id if badge.id else str(uuid.uuid4())
@@ -137,6 +205,7 @@ async def create_badge(
     db.commit()
     db.refresh(new_badge)
     
+    logger.info(f"Created badge {badge_id} ({badge.name}) with public URL: {badge.image_url[:80]}...")
     return new_badge
 
 @router.put("/admin/{badge_id}", response_model=BadgeResponse)
@@ -147,7 +216,10 @@ async def update_badge(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Admin endpoint to update an existing badge
+    Admin endpoint to update an existing badge.
+    
+    Note: image_url should be a public S3 URL (not presigned).
+    Updating a badge's image_url will also update all users who have this badge.
     """
     # Check admin access
     verify_admin(current_user)
@@ -157,20 +229,33 @@ async def update_badge(
     if not badge:
         raise HTTPException(status_code=404, detail=f"Badge with ID {badge_id} not found")
     
+    # Validate that the new URL is public (warn if not, but allow)
+    if not validate_badge_url_is_public(badge_update.image_url):
+        logger.warning(
+            f"Updating badge {badge_id} with URL that appears non-public: {badge_update.image_url[:100]}. "
+            f"Badges should use public S3 URLs for optimal performance."
+        )
+    
     # Update badge fields
     badge.name = badge_update.name
     badge.description = badge_update.description
+    old_image_url = badge.image_url
     badge.image_url = badge_update.image_url
     badge.level = badge_update.level
     
     # Now update all users who have this badge to use the new image URL
-    db.query(User).filter(User.badge_id == badge_id).update(
+    users_updated = db.query(User).filter(User.badge_id == badge_id).update(
         {"badge_image_url": badge_update.image_url},
         synchronize_session=False
     )
     
     db.commit()
     db.refresh(badge)
+    
+    logger.info(
+        f"Updated badge {badge_id} ({badge.name}). "
+        f"Image URL changed, {users_updated} users updated with new badge image URL."
+    )
     
     return badge
 

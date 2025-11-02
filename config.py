@@ -48,5 +48,8 @@ LIVE_CHAT_MAX_MESSAGE_LENGTH = int(os.getenv("LIVE_CHAT_MAX_MESSAGE_LENGTH", "10
 # Redis settings
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# AWS Default Profile Picture Settings
+AWS_DEFAULT_PROFILE_PIC_BASE_URL = os.getenv("AWS_DEFAULT_PROFILE_PIC_BASE_URL", "")
+
 # SSE settings
 SSE_HEARTBEAT_SECONDS = int(os.getenv("SSE_HEARTBEAT_SECONDS", "25"))
