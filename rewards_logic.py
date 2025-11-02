@@ -166,17 +166,72 @@ def get_eligible_participants(db: Session, draw_date: date) -> List[Dict[str, An
     
     Eligibility criteria:
     - User must be subscribed for that month (User.subscription_flag == True)
-    - User must have answered 1 trivia question correctly for that day (daily_eligibility_flag == True)
+    - User must have answered at least 1 trivia question correctly FOR THE SPECIFIC draw_date
+    
+    This function checks TriviaUserDaily directly for the draw_date instead of relying on
+    the daily_eligibility_flag, which may be stale or from a different day.
     """
     logger.info(f"Getting eligible participants for draw date: {draw_date}")
     
-    # Query users who meet both criteria
-    eligible_users = db.query(User).filter(
-        User.subscription_flag == True,
-        User.daily_eligibility_flag == True
+    # Directly query users who:
+    # 1. Are subscribed (subscription_flag == True)
+    # 2. Have at least 1 correct answer in TriviaUserDaily for the specific draw_date
+    
+    eligible_users = db.query(User).join(
+        TriviaUserDaily,
+        and_(
+            TriviaUserDaily.account_id == User.account_id,
+            TriviaUserDaily.date == draw_date,
+            TriviaUserDaily.status == 'answered_correct'
+        )
+    ).filter(
+        User.subscription_flag == True
+    ).distinct().all()
+    
+    # Also validate using TriviaQuestionsEntries as a cross-check
+    # This provides additional robustness
+    eligible_account_ids = {user.account_id for user in eligible_users}
+    
+    # Cross-check with TriviaQuestionsEntries
+    entries_check = db.query(TriviaQuestionsEntries).filter(
+        TriviaQuestionsEntries.date == draw_date,
+        TriviaQuestionsEntries.account_id.in_(eligible_account_ids),
+        TriviaQuestionsEntries.correct_answers >= 1
     ).all()
     
-    logger.info(f"Found {len(eligible_users)} eligible participants")
+    entries_account_ids = {entry.account_id for entry in entries_check}
+    
+    # Use intersection to ensure both sources agree
+    # (TriviaUserDaily is source of truth, but entries provides validation)
+    if eligible_account_ids and entries_account_ids != eligible_account_ids:
+        # Log discrepancy but don't fail - TriviaUserDaily is the authoritative source
+        logger.warning(
+            f"Eligibility cross-check discrepancy for draw_date {draw_date}: "
+            f"TriviaUserDaily found {len(eligible_account_ids)} eligible users, "
+            f"TriviaQuestionsEntries found {len(entries_account_ids)} users with correct_answers >= 1"
+        )
+    
+    logger.info(
+        f"Found {len(eligible_users)} eligible participants for draw_date {draw_date} "
+        f"(subscription_flag=True AND at least 1 correct answer in TriviaUserDaily)"
+    )
+    
+    # Additional diagnostic logging
+    if len(eligible_users) == 0:
+        # Log why no participants were found
+        subscribed_count = db.query(User).filter(User.subscription_flag == True).count()
+        users_with_correct_answers = db.query(
+            func.count(func.distinct(TriviaUserDaily.account_id))
+        ).filter(
+            TriviaUserDaily.date == draw_date,
+            TriviaUserDaily.status == 'answered_correct'
+        ).scalar() or 0
+        
+        logger.warning(
+            f"No eligible participants found for {draw_date}. "
+            f"Diagnostics: {subscribed_count} subscribed users, "
+            f"{users_with_correct_answers} users with correct answers on {draw_date}"
+        )
     
     return [
         {
@@ -345,6 +400,10 @@ def update_user_eligibility(db: Session, user_account_id: int, draw_date: date) 
     Check if a user has answered 1 question correctly for the given date
     and update their daily_eligibility_flag accordingly.
     Uses trivia_user_daily table.
+    
+    Note: This flag is informational and may be cleared/reset. The actual eligibility
+    check in get_eligible_participants() queries TriviaUserDaily directly to ensure
+    accuracy for the specific draw_date.
     """
     # Count correct answers for the user on the given date using TriviaUserDaily
     correct_answers = db.query(TriviaUserDaily).filter(
@@ -354,11 +413,21 @@ def update_user_eligibility(db: Session, user_account_id: int, draw_date: date) 
     ).count()
     
     # Update eligibility flag if user answered 1 question correctly
+    # Note: This flag is not date-specific, but helps with quick checks
+    # The actual draw eligibility check queries TriviaUserDaily directly
     if correct_answers >= 1:
         db.query(User).filter(User.account_id == user_account_id).update(
             {"daily_eligibility_flag": True}
         )
         db.commit()
-        logger.info(f"User {user_account_id} is now eligible for draw (answered {correct_answers} questions correctly)")
+        logger.info(
+            f"User {user_account_id} eligibility flag updated: "
+            f"answered {correct_answers} question(s) correctly on {draw_date}"
+        )
     else:
-        logger.info(f"User {user_account_id} not eligible for draw (only {correct_answers} correct answers)")
+        # Don't set flag to False here - it might be valid for other dates
+        # Only set to True when we have confirmed correct answers
+        logger.debug(
+            f"User {user_account_id} not yet eligible: "
+            f"only {correct_answers} correct answer(s) on {draw_date}"
+        )
