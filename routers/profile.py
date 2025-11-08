@@ -571,6 +571,7 @@ async def upload_profile_picture(
         # Generate unique S3 key for the profile picture
         # Format: profile_pic/{account_id}.{extension} or profile_pic/{email_safe}.{extension}
         # Use account_id as primary identifier, fallback to email if needed
+        # Always use the same extension (jpg) to ensure override behavior
         if current_user.account_id:
             # Use account_id for uniqueness
             identifier = str(current_user.account_id)
@@ -581,7 +582,9 @@ async def upload_profile_picture(
             # Last resort: use UUID
             identifier = str(uuid.uuid4())
         
-        s3_key = f"profile_pic/{identifier}.{extension}"
+        # Always use .jpg extension to ensure uploads override previous files
+        # This prevents multiple files per user (e.g., user.jpg and user.png)
+        s3_key = f"profile_pic/{identifier}.jpg"
         
         # Upload to S3
         upload_success = upload_file(
