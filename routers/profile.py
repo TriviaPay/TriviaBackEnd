@@ -10,7 +10,7 @@ import uuid
 import os
 from db import get_db
 from models import User, Badge, Avatar, Frame
-from utils.storage import presign_get, upload_file
+from utils.storage import presign_get, upload_file, delete_file
 from routers.dependencies import get_current_user
 import logging
 from utils import get_letter_profile_pic
@@ -585,6 +585,14 @@ async def upload_profile_picture(
         # Always use .jpg extension to ensure uploads override previous files
         # This prevents multiple files per user (e.g., user.jpg and user.png)
         s3_key = f"profile_pic/{identifier}.jpg"
+        
+        # Delete any old profile picture files with different extensions
+        # This ensures we don't have orphaned files (e.g., user.png when user.jpg exists)
+        old_extensions = ["png", "jpeg", "gif", "webp"]
+        for ext in old_extensions:
+            old_key = f"profile_pic/{identifier}.{ext}"
+            if old_key != s3_key:  # Don't delete the file we're about to upload
+                delete_file(bucket=AWS_PROFILE_PIC_BUCKET, key=old_key)
         
         # Upload to S3
         upload_success = upload_file(

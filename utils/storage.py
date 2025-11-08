@@ -694,3 +694,60 @@ def upload_file(bucket: str, key: str, file_content: bytes, content_type: str = 
     except Exception as e:
         logging.error(f"Error uploading file to bucket={bucket}, key={key}: {e}", exc_info=True)
         return False
+
+def delete_file(bucket: str, key: str) -> bool:
+    """
+    Delete a file from S3.
+    Auto-detects the bucket region to avoid PermanentRedirect errors.
+    
+    Args:
+        bucket: S3 bucket name
+        key: S3 object key (path)
+    
+    Returns:
+        True if deletion succeeded or file doesn't exist, False on error
+    """
+    if not bucket or not key:
+        logging.error("Bucket and key are required for deletion")
+        return False
+    if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
+        logging.error("AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set - cannot delete from S3")
+        return False
+    
+    # Normalize key: strip leading slash to avoid // in URLs
+    if key.startswith('/'):
+        key = key[1:]
+        logging.debug(f"Normalized key by removing leading slash: {key}")
+    
+    try:
+        # Auto-detect bucket region to avoid PermanentRedirect errors
+        bucket_region = _get_bucket_region(bucket)
+        
+        # Determine addressing style: use cached style or preferred style for this bucket
+        addressing_style = _bucket_addressing_styles.get(bucket, _preferred_addressing_for_bucket(bucket))
+        
+        s3 = _get_s3_client_for_region(bucket_region, addressing_style)
+        
+        # Verify endpoint before deleting
+        _assert_client_endpoint(s3, bucket_region)
+        
+        # Delete file
+        s3.delete_object(Bucket=bucket, Key=key)
+        
+        logging.info(f"Successfully deleted file from S3: bucket={bucket}, key={key}, region={bucket_region}")
+        return True
+        
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        error_message = e.response.get("Error", {}).get("Message", "")
+        
+        # NoSuchKey is not an error - file doesn't exist, which is fine
+        if error_code == "NoSuchKey":
+            logging.debug(f"File does not exist in S3: bucket={bucket}, key={key}")
+            return True
+        
+        logging.error(f"ClientError deleting file from bucket={bucket}, key={key}: {error_code} - {error_message}")
+        return False
+    except Exception as e:
+        logging.error(f"Error deleting file from bucket={bucket}, key={key}: {e}", exc_info=True)
+        return False
