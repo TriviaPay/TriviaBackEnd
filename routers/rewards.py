@@ -20,6 +20,13 @@ import logging
 
 router = APIRouter(tags=["Rewards"])
 
+# ======== Helper Functions ========
+
+def round_down(value: float, decimals: int = 2) -> float:
+    """Round down to specified number of decimal places (lower limit)."""
+    multiplier = 10 ** decimals
+    return math.floor(value * multiplier) / multiplier
+
 # ======== Models ========
 
 class WinnerResponse(BaseModel):
@@ -32,6 +39,7 @@ class WinnerResponse(BaseModel):
     avatar_url: Optional[str] = None
     frame_url: Optional[str] = None
     position: int
+    date_won: Optional[str] = None  # Date when the win occurred (ISO format)
 
 class DrawConfigResponse(BaseModel):
     is_custom: bool
@@ -195,13 +203,14 @@ async def get_daily_winners(
             
             result.append(WinnerResponse(
                 username=profile_data["username"],
-                amount_won=winner.prize_amount,
-                total_amount_won=float(total_won),
+                amount_won=round_down(float(winner.prize_amount), 2),
+                total_amount_won=round_down(float(total_won), 2),
                 profile_pic=profile_data["profile_pic"],
                 badge_image_url=profile_data["badge"]["image_url"] if profile_data["badge"] else None,
                 avatar_url=profile_data["avatar"],
                 frame_url=profile_data["profile_frame"],
-                position=winner.position
+                position=winner.position,
+                date_won=None
             ))
         
         return result
@@ -272,13 +281,14 @@ async def get_weekly_winners(
             
             result.append(WinnerResponse(
                 username=profile_data["username"],
-                amount_won=float(weekly_amount),
-                total_amount_won=float(total_won),
+                amount_won=round_down(float(weekly_amount), 2),
+                total_amount_won=round_down(float(total_won), 2),
                 profile_pic=profile_data["profile_pic"],
                 badge_image_url=profile_data["badge"]["image_url"] if profile_data["badge"] else None,
                 avatar_url=profile_data["avatar"],
                 frame_url=profile_data["profile_frame"],
-                position=position
+                position=position,
+                date_won=None
             ))
             
             position += 1
@@ -332,13 +342,14 @@ async def get_all_time_winners(
             
             result.append(WinnerResponse(
                 username=profile_data["username"],
-                amount_won=float(total_amount),
-                total_amount_won=float(total_amount),  # Same value for all-time
+                amount_won=round_down(float(total_amount), 2),
+                total_amount_won=round_down(float(total_amount), 2),  # Same value for all-time
                 profile_pic=profile_data["profile_pic"],
                 badge_image_url=profile_data["badge"]["image_url"] if profile_data["badge"] else None,
                 avatar_url=profile_data["avatar"],
                 frame_url=profile_data["profile_frame"],
-                position=position
+                position=position,
+                date_won=None
             ))
             
             position += 1
@@ -349,6 +360,57 @@ async def get_all_time_winners(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving all-time winners: {str(e)}"
+        )
+
+@router.get("/all-winners")
+async def get_all_winners(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get all winners with all their wins.
+    Shows every win separately (users can appear multiple times if they won multiple times).
+    Sorted by date (newest first), then by amount_won (highest first).
+    """
+    try:
+        # Get all winners with their win details
+        winners = db.query(TriviaQuestionsWinners, User).join(
+            User, TriviaQuestionsWinners.account_id == User.account_id
+        ).order_by(
+            desc(TriviaQuestionsWinners.draw_date),  # Sort by date (newest first)
+            desc(TriviaQuestionsWinners.prize_amount)  # Then by amount (highest first)
+        ).all()
+        
+        result = []
+        
+        for winner, user in winners:
+            # Calculate total amount won by user all-time
+            total_won = db.query(func.sum(TriviaQuestionsWinners.prize_amount)).filter(
+                TriviaQuestionsWinners.account_id == user.account_id
+            ).scalar() or 0
+            
+            # Get complete profile data (badge, avatar, frame)
+            profile_data = get_winner_profile_data(user, db)
+            
+            result.append(WinnerResponse(
+                username=profile_data["username"],
+                amount_won=round_down(float(winner.prize_amount), 2),
+                total_amount_won=round_down(float(total_won), 2),
+                profile_pic=profile_data["profile_pic"],
+                badge_image_url=profile_data["badge"]["image_url"] if profile_data["badge"] else None,
+                avatar_url=profile_data["avatar"],
+                frame_url=profile_data["profile_frame"],
+                position=winner.position,
+                date_won=winner.draw_date.isoformat() if winner.draw_date else None
+            ))
+        
+        return result
+        
+    except Exception as e:
+        logging.error(f"Error retrieving all winners: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving all winners: {str(e)}"
         )
 
 @router.get("/monthly-winners")
@@ -426,9 +488,9 @@ async def get_monthly_winners(
                 "profile_pic": profile_data["profile_pic"],
                 "profile_frame": profile_data["profile_frame"],
                 "avatar": profile_data["avatar"],
-                "prize_amount": float(monthly_amount),
+                "prize_amount": round_down(float(monthly_amount), 2),
                 "badge": profile_data["badge"],
-                "total_amount_won": float(total_won),
+                "total_amount_won": round_down(float(total_won), 2),
                 "position": position
             })
             
@@ -564,9 +626,9 @@ async def today_winners_reveal(
                 "profile_pic": profile_data["profile_pic"],
                 "profile_frame": profile_data["profile_frame"],
                 "avatar": profile_data["avatar"],
-                "prize_amount": float(winner.prize_amount),
+                "prize_amount": round_down(float(winner.prize_amount), 2),
                 "badge": profile_data["badge"],
-                "total_amount_won": float(total_won),
+                "total_amount_won": round_down(float(total_won), 2),
                 "position": winner.position
             })
         
