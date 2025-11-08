@@ -52,7 +52,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 AWS_DEFAULT_PROFILE_PIC_BASE_URL = os.getenv("AWS_DEFAULT_PROFILE_PIC_BASE_URL", "")
 
 # AWS Profile Picture Upload Settings
-AWS_PROFILE_PIC_BUCKET = os.getenv("AWS_PROFILE_PIC_BUCKET", "")  # S3 bucket for custom profile pictures
+AWS_PROFILE_PIC_BUCKET = os.getenv("AWS_PROFILE_PIC_BUCKET", "triviapics")  # S3 bucket for custom profile pictures
 
 # SSE settings
 SSE_HEARTBEAT_SECONDS = int(os.getenv("SSE_HEARTBEAT_SECONDS", "25"))
