@@ -362,13 +362,13 @@ async def get_all_time_winners(
             detail=f"Error retrieving all-time winners: {str(e)}"
         )
 
-@router.get("/all-winners")
+@router.get("/view-all-winners")
 async def get_all_winners(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get all winners with all their wins.
+    View all winners with all their wins.
     Shows every win separately (users can appear multiple times if they won multiple times).
     Sorted by date (newest first), then by amount_won (highest first).
     """
