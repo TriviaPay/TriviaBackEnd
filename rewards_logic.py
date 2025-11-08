@@ -92,6 +92,8 @@ def calculate_winner_count(participant_count: int) -> int:
 
 def calculate_prize_distribution(total_prize: float, winner_count: int) -> List[float]:
     """Calculate prize distribution using harmonic sum."""
+    import math
+    
     if winner_count <= 0 or total_prize <= 0:
         return []
     
@@ -101,8 +103,12 @@ def calculate_prize_distribution(total_prize: float, winner_count: int) -> List[
     # Calculate individual prizes
     prizes = [(1/(i+1))/harmonic_sum * total_prize for i in range(winner_count)]
     
-    # Round to 2 decimal places
-    return [round(prize, 2) for prize in prizes]
+    # Round down to 2 decimal places (lower limit)
+    def round_down(value: float, decimals: int = 2) -> float:
+        multiplier = 10 ** decimals
+        return math.floor(value * multiplier) / multiplier
+    
+    return [round_down(prize, 2) for prize in prizes]
 
 def calculate_prize_pool(db: Session, draw_date: date) -> float:
     """
