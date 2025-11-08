@@ -5,7 +5,7 @@ from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, Integer, cast, select
 from db import SessionLocal
-from rewards_logic import perform_draw, reset_daily_eligibility_flags
+from rewards_logic import perform_draw, reset_daily_eligibility_flags, reset_weekly_daily_rewards
 from cleanup_unused_questions import cleanup_unused_questions
 from models import User, TriviaQuestionsDaily, TriviaQuestionsWinners, UserSubscription, TriviaUserDaily, TriviaQuestionsEntries
 
@@ -318,6 +318,15 @@ def schedule_draws():
         replace_existing=True,
         misfire_grace_time=3600
     )
+    
+    # Schedule weekly daily rewards reset job (Monday at 00:00)
+    scheduler.add_job(
+        run_weekly_rewards_reset,
+        CronTrigger(day_of_week="mon", hour=0, minute=0, timezone=timezone),
+        id="weekly_rewards_reset",
+        replace_existing=True,
+        misfire_grace_time=3600
+    )
 
 async def run_daily_draw():
     """
@@ -469,6 +478,29 @@ async def run_monthly_subscription_reset():
         
     except Exception as e:
         logger.error(f"💥 Error running monthly subscription reset: {str(e)}")
+
+async def run_weekly_rewards_reset():
+    """
+    Reset weekly daily rewards at Monday 00:00 (midnight) in the configured timezone.
+    """
+    try:
+        logger.info(f"📅 Starting weekly daily rewards reset at {datetime.now()}")
+        db: Session = SessionLocal()
+        
+        try:
+            # Reset weekly daily rewards
+            logger.info("🔄 Resetting weekly daily rewards...")
+            reset_weekly_daily_rewards(db)
+            
+            logger.info("✅ Successfully completed weekly daily rewards reset!")
+            
+        except Exception as e:
+            logger.error(f"💥 Error during weekly rewards reset: {e}")
+        finally:
+            db.close()
+        
+    except Exception as e:
+        logger.error(f"💥 Error resetting weekly daily rewards: {str(e)}")
 
 def start_scheduler():
     """
