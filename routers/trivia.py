@@ -7,7 +7,7 @@ import random
 import json
 
 from db import get_db
-from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, TriviaUserDaily
+from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, TriviaUserDaily, UserDailyRewards
 from routers.dependencies import get_current_user
 from pathlib import Path as FilePath
 
@@ -342,6 +342,7 @@ async def unlock_next_question(
             "difficulty": q.difficulty_level,
             "picture_url": q.picture_url,
             "hint": q.hint,
+            "correct_answer": q.correct_answer,
             "order": next_daily.question_order,
             "is_common": next_daily.is_common
         }
@@ -626,45 +627,156 @@ def get_categories(db: Session = Depends(get_db)):
     categories = db.query(Trivia.category).distinct().all()
     return {"categories": [c[0] for c in categories if c[0] is not None]}
 
+@router.get("/daily-login")
+async def get_daily_login_status(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get current week's daily login status"""
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    today = date.today()
+    # Calculate week start (Monday)
+    week_start = today - timedelta(days=today.weekday())
+    
+    # Get or create user's weekly rewards record
+    user_rewards = db.query(UserDailyRewards).filter(
+        UserDailyRewards.account_id == user.account_id,
+        UserDailyRewards.week_start_date == week_start
+    ).first()
+    
+    if not user_rewards:
+        # No record means no days claimed yet this week
+        days_claimed = []
+        total_gems_earned = 0
+    else:
+        # Build list of claimed days (1-7 for Mon-Sun)
+        days_claimed = []
+        if user_rewards.day1_status: days_claimed.append(1)
+        if user_rewards.day2_status: days_claimed.append(2)
+        if user_rewards.day3_status: days_claimed.append(3)
+        if user_rewards.day4_status: days_claimed.append(4)
+        if user_rewards.day5_status: days_claimed.append(5)
+        if user_rewards.day6_status: days_claimed.append(6)
+        if user_rewards.day7_status: days_claimed.append(7)
+        
+        # Calculate total gems earned (10 per day, 30 for Sunday)
+        total_gems_earned = len([d for d in days_claimed if d != 7]) * 10
+        if 7 in days_claimed:
+            total_gems_earned += 30
+    
+    # Current day of week (0=Monday, 6=Sunday, convert to 1-7)
+    current_day = today.weekday() + 1
+    
+    # Days remaining in week
+    days_remaining = 7 - len(days_claimed)
+    
+    return {
+        "week_start_date": week_start.isoformat(),
+        "current_day": current_day,
+        "days_claimed": days_claimed,
+        "days_remaining": days_remaining,
+        "total_gems_earned_this_week": total_gems_earned,
+        "day_status": {
+            "monday": user_rewards.day1_status if user_rewards else False,
+            "tuesday": user_rewards.day2_status if user_rewards else False,
+            "wednesday": user_rewards.day3_status if user_rewards else False,
+            "thursday": user_rewards.day4_status if user_rewards else False,
+            "friday": user_rewards.day5_status if user_rewards else False,
+            "saturday": user_rewards.day6_status if user_rewards else False,
+            "sunday": user_rewards.day7_status if user_rewards else False,
+        }
+    }
+
 @router.post("/daily-login")
 async def process_daily_login(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Process daily login rewards and streak bonuses"""
+    """Process daily login rewards - weekly calendar system"""
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    today = datetime.utcnow().date()
+    today = date.today()
+    # Calculate week start (Monday)
+    week_start = today - timedelta(days=today.weekday())
+    
+    # Get or create user's weekly rewards record
+    user_rewards = db.query(UserDailyRewards).filter(
+        UserDailyRewards.account_id == user.account_id,
+        UserDailyRewards.week_start_date == week_start
+    ).first()
+    
+    if not user_rewards:
+        user_rewards = UserDailyRewards(
+            account_id=user.account_id,
+            week_start_date=week_start
+        )
+        db.add(user_rewards)
+    
+    # Determine which day of week (1=Monday, 7=Sunday)
+    day_of_week = today.weekday() + 1
     
     # Check if already claimed today
-    if user.last_streak_date and user.last_streak_date.date() == today:
-        raise HTTPException(status_code=400, detail="Daily reward already claimed today")
-
-    # Calculate streak
-    if user.last_streak_date and user.last_streak_date.date() == (today - timedelta(days=1)):
-        # Consecutive day
-        user.streaks += 1
-    else:
-        # Streak broken or first login
-        user.streaks = 1
-
-    # Add daily login bonus (10 gems)
-    user.gems += 10
-
-    # Check for weekly streak bonus (30 gems)
-    if user.streaks % 7 == 0:  # Every 7 days
-        user.gems += 30
-
-    # Update last streak date
-    user.last_streak_date = datetime.utcnow()
+    day_status_map = {
+        1: user_rewards.day1_status,
+        2: user_rewards.day2_status,
+        3: user_rewards.day3_status,
+        4: user_rewards.day4_status,
+        5: user_rewards.day5_status,
+        6: user_rewards.day6_status,
+        7: user_rewards.day7_status,
+    }
+    
+    if day_status_map[day_of_week]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Daily reward already claimed today"
+        )
+    
+    # Award gems: 10 for Mon-Sat, 30 for Sunday
+    gems_earned = 30 if day_of_week == 7 else 10
+    user.gems += gems_earned
+    
+    # Mark the day as claimed
+    if day_of_week == 1:
+        user_rewards.day1_status = True
+    elif day_of_week == 2:
+        user_rewards.day2_status = True
+    elif day_of_week == 3:
+        user_rewards.day3_status = True
+    elif day_of_week == 4:
+        user_rewards.day4_status = True
+    elif day_of_week == 5:
+        user_rewards.day5_status = True
+    elif day_of_week == 6:
+        user_rewards.day6_status = True
+    elif day_of_week == 7:
+        user_rewards.day7_status = True
+    
+    user_rewards.updated_at = datetime.utcnow()
     db.commit()
-
+    db.refresh(user_rewards)
+    
+    # Calculate days claimed for response
+    days_claimed = []
+    if user_rewards.day1_status: days_claimed.append(1)
+    if user_rewards.day2_status: days_claimed.append(2)
+    if user_rewards.day3_status: days_claimed.append(3)
+    if user_rewards.day4_status: days_claimed.append(4)
+    if user_rewards.day5_status: days_claimed.append(5)
+    if user_rewards.day6_status: days_claimed.append(6)
+    if user_rewards.day7_status: days_claimed.append(7)
+    
     return {
-        "gems_earned": 10 + (30 if user.streaks % 7 == 0 else 0),
+        "success": True,
+        "gems_earned": gems_earned,
         "total_gems": user.gems,
-        "current_streak": user.streaks,
-        "days_until_weekly_bonus": 7 - (user.streaks % 7)
+        "week_start_date": week_start.isoformat(),
+        "current_day": day_of_week,
+        "days_claimed": days_claimed,
+        "days_remaining": 7 - len(days_claimed)
     }
 
 @router.get("/question-status/{question_number}")

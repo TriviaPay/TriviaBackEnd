@@ -329,6 +329,32 @@ class TriviaUserDaily(Base):
     )
 
 # =================================
+#  Daily Login Rewards Table
+# =================================
+class UserDailyRewards(Base):
+    """Per-user weekly daily login rewards tracking (Monday-Sunday)"""
+    __tablename__ = "user_daily_rewards"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    week_start_date = Column(Date, nullable=False)  # Monday of the week
+    day1_status = Column(Boolean, default=False, nullable=False)  # Monday
+    day2_status = Column(Boolean, default=False, nullable=False)  # Tuesday
+    day3_status = Column(Boolean, default=False, nullable=False)  # Wednesday
+    day4_status = Column(Boolean, default=False, nullable=False)  # Thursday
+    day5_status = Column(Boolean, default=False, nullable=False)  # Friday
+    day6_status = Column(Boolean, default=False, nullable=False)  # Saturday
+    day7_status = Column(Boolean, default=False, nullable=False)  # Sunday
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="daily_rewards")
+    __table_args__ = (
+        UniqueConstraint('account_id', 'week_start_date', name='uq_user_week_rewards'),
+    )
+
+# =================================
 #  Cosmetics - Avatars Table
 # =================================
 class Avatar(Base):

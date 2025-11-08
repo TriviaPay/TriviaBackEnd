@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, and_, or_
 import pytz
 
-from models import User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsEntries, Badge, Avatar, Frame, TriviaUserDaily
+from models import User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsEntries, Badge, Avatar, Frame, TriviaUserDaily, UserDailyRewards
 from db import get_db
 
 # Configure logging
@@ -419,6 +419,20 @@ def reset_monthly_subscriptions(db: Session) -> None:
     db.commit()
     
     logger.info("Monthly subscription flags reset successfully")
+
+def reset_weekly_daily_rewards(db: Session) -> None:
+    """
+    Reset weekly daily rewards for all users.
+    Deletes all UserDailyRewards records from previous weeks.
+    This should be called Monday at 00:00 (midnight) in the configured timezone.
+    """
+    logger.info("Resetting weekly daily rewards for all users")
+    
+    # Delete all UserDailyRewards records (new week will create fresh records)
+    deleted_count = db.query(UserDailyRewards).delete()
+    db.commit()
+    
+    logger.info(f"Weekly daily rewards reset successfully. Deleted {deleted_count} records.")
 
 def update_user_eligibility(db: Session, user_account_id: int, draw_date: date) -> None:
     """

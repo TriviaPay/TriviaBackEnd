@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from datetime import date, timedelta, datetime
 import os
 from db import get_db
-from rewards_logic import perform_draw, reset_monthly_subscriptions
+from rewards_logic import perform_draw, reset_monthly_subscriptions, reset_weekly_daily_rewards
 import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
 
@@ -138,6 +138,31 @@ async def internal_monthly_reset(
         }
     except Exception as e:
         logging.error(f"Error in monthly reset: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/weekly-rewards-reset")
+async def internal_weekly_rewards_reset(
+    secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
+    db: Session = Depends(get_db)
+):
+    """Internal endpoint for weekly daily rewards reset triggered by external cron"""
+    if secret != os.getenv("INTERNAL_SECRET"):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    try:
+        # Reset weekly daily rewards
+        logging.info("🔄 Resetting weekly daily rewards...")
+        reset_weekly_daily_rewards(db)
+        
+        logging.info("Weekly daily rewards reset completed via external cron")
+        return {
+            "status": "success",
+            "message": "All weekly daily rewards reset",
+            "triggered_by": "external_cron",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Error in weekly rewards reset: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/health")
