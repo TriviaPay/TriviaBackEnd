@@ -629,3 +629,68 @@ def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
     except Exception as e:
         logging.error(f"Error generating presigned URL for bucket={bucket}, key={key}: {e}", exc_info=True)
         return None
+
+def upload_file(bucket: str, key: str, file_content: bytes, content_type: str = None) -> bool:
+    """
+    Upload a file to S3.
+    Auto-detects the bucket region to avoid PermanentRedirect errors.
+    
+    Args:
+        bucket: S3 bucket name
+        key: S3 object key (path)
+        file_content: File content as bytes
+        content_type: MIME type of the file (e.g., 'image/png', 'image/jpeg')
+    
+    Returns:
+        True if upload succeeded, False otherwise
+    """
+    if not bucket or not key:
+        logging.error("Bucket and key are required for upload")
+        return False
+    if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
+        logging.error("AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set - cannot upload to S3")
+        return False
+    
+    # Normalize key: strip leading slash to avoid // in URLs
+    if key.startswith('/'):
+        key = key[1:]
+        logging.debug(f"Normalized key by removing leading slash: {key}")
+    
+    try:
+        # Auto-detect bucket region to avoid PermanentRedirect errors
+        bucket_region = _get_bucket_region(bucket)
+        
+        # Determine addressing style: use cached style or preferred style for this bucket
+        addressing_style = _bucket_addressing_styles.get(bucket, _preferred_addressing_for_bucket(bucket))
+        
+        s3 = _get_s3_client_for_region(bucket_region, addressing_style)
+        
+        # Verify endpoint before uploading
+        _assert_client_endpoint(s3, bucket_region)
+        
+        # Prepare upload parameters
+        upload_params = {
+            "Bucket": bucket,
+            "Key": key,
+            "Body": file_content,
+        }
+        
+        # Add content type if provided
+        if content_type:
+            upload_params["ContentType"] = content_type
+        
+        # Upload file
+        s3.put_object(**upload_params)
+        
+        logging.info(f"Successfully uploaded file to S3: bucket={bucket}, key={key}, region={bucket_region}")
+        return True
+        
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        error_message = e.response.get("Error", {}).get("Message", "")
+        
+        logging.error(f"ClientError uploading file to bucket={bucket}, key={key}: {error_code} - {error_message}")
+        return False
+    except Exception as e:
+        logging.error(f"Error uploading file to bucket={bucket}, key={key}: {e}", exc_info=True)
+        return False

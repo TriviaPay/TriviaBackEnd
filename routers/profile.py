@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Body, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Body, Path, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import Optional, List, Dict, Any
@@ -6,14 +6,16 @@ from pydantic import BaseModel, Field
 from datetime import datetime, date
 import random
 import string
+import uuid
+import os
 from db import get_db
 from models import User, Badge, Avatar, Frame
-from utils.storage import presign_get
+from utils.storage import presign_get, upload_file
 from routers.dependencies import get_current_user
 import logging
 from utils import get_letter_profile_pic
 from descope import DescopeClient
-from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY
+from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, AWS_PROFILE_PIC_BUCKET
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
@@ -477,6 +479,15 @@ async def get_profile_summary(
 
         # Get badge information
         badge_info = get_badge_info(user, db)
+        
+        # Determine which profile picture type is active
+        profile_pic_type = None
+        if user.profile_pic_url:
+            profile_pic_type = "custom"  # Custom uploaded profile picture
+        elif user.selected_avatar_id:
+            profile_pic_type = "avatar"  # Purchased avatar selected
+        else:
+            profile_pic_type = "default"  # Default letter-based profile picture
 
         return {
             "status": "success",
@@ -494,6 +505,7 @@ async def get_profile_summary(
                 "country": user.country,
                 "zip": user.zip,
                 "profile_pic_url": user.profile_pic_url,
+                "profile_pic_type": profile_pic_type,  # "custom", "avatar", or "default"
                 "avatar": avatar_payload,
                 "frame": frame_payload,
                 "badge": badge_info,
@@ -508,4 +520,132 @@ async def get_profile_summary(
             "message": f"An unexpected error occurred: {str(e)}",
             "code": "UNEXPECTED_ERROR",
         }
+
+@router.post("/upload-profile-pic", status_code=200)
+async def upload_profile_picture(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Upload a custom profile picture to S3.
+    This will clear any selected avatar (only one can be active at a time).
+    
+    Accepts image files (PNG, JPEG, JPG, GIF, WebP).
+    """
+    try:
+        # Check if bucket is configured
+        if not AWS_PROFILE_PIC_BUCKET:
+            raise HTTPException(
+                status_code=500,
+                detail="Profile picture upload is not configured. Please contact support."
+            )
+        
+        # Validate file type
+        allowed_types = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"]
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type. Allowed types: {', '.join(allowed_types)}"
+            )
+        
+        # Validate file size (max 5MB)
+        file_content = await file.read()
+        max_size = 5 * 1024 * 1024  # 5MB
+        if len(file_content) > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail="File size exceeds maximum allowed size of 5MB"
+            )
+        
+        # Determine file extension from content type
+        extension_map = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/jpg": "jpg",
+            "image/gif": "gif",
+            "image/webp": "webp"
+        }
+        extension = extension_map.get(file.content_type, "jpg")
+        
+        # Generate unique S3 key for the profile picture
+        # Format: profile_pic/{account_id}.{extension} or profile_pic/{email_safe}.{extension}
+        # Use account_id as primary identifier, fallback to email if needed
+        if current_user.account_id:
+            # Use account_id for uniqueness
+            identifier = str(current_user.account_id)
+        elif current_user.email:
+            # Fallback to email (sanitize for S3 key)
+            identifier = current_user.email.replace("@", "_at_").replace(".", "_")
+        else:
+            # Last resort: use UUID
+            identifier = str(uuid.uuid4())
+        
+        s3_key = f"profile_pic/{identifier}.{extension}"
+        
+        # Upload to S3
+        upload_success = upload_file(
+            bucket=AWS_PROFILE_PIC_BUCKET,
+            key=s3_key,
+            file_content=file_content,
+            content_type=file.content_type
+        )
+        
+        if not upload_success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to upload profile picture. Please try again."
+            )
+        
+        # Generate presigned URL for the uploaded image (valid for 1 year)
+        profile_pic_url = presign_get(
+            bucket=AWS_PROFILE_PIC_BUCKET,
+            key=s3_key,
+            expires=31536000  # 1 year in seconds
+        )
+        
+        if not profile_pic_url:
+            # Fallback: construct public URL if presigning fails
+            # This assumes the bucket allows public reads (or use CloudFront)
+            bucket_region = os.getenv("AWS_REGION", "us-east-2")
+            profile_pic_url = f"https://{AWS_PROFILE_PIC_BUCKET}.s3.{bucket_region}.amazonaws.com/{s3_key}"
+        
+        # Get the user from database
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Clear selected avatar (only one can be active at a time)
+        user.selected_avatar_id = None
+        
+        # Update profile picture URL
+        user.profile_pic_url = profile_pic_url
+        
+        # Commit changes
+        db.commit()
+        
+        # Get badge information
+        badge_info = get_badge_info(user, db)
+        
+        logging.info(f"Profile picture uploaded successfully for user {user.account_id}")
+        
+        return {
+            "status": "success",
+            "message": "Profile picture uploaded successfully",
+            "data": {
+                "profile_pic_url": profile_pic_url,
+                "profile_pic_type": "custom",  # Indicates this is a custom upload, not an avatar
+                "badge": badge_info
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error uploading profile picture: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while uploading profile picture: {str(e)}"
+        )
 

@@ -315,7 +315,8 @@ async def select_avatar(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Select an avatar as the current profile avatar
+    Select an avatar as the current profile avatar.
+    This will clear any custom profile picture (only one can be active at a time).
     """
     user = current_user
     
@@ -334,6 +335,9 @@ async def select_avatar(
             status_code=403,
             detail=f"You don't own the avatar with ID {avatar_id}"
         )
+    
+    # Clear custom profile picture (only one can be active at a time)
+    user.profile_pic_url = None
     
     # Update the user's selected avatar
     user.selected_avatar_id = avatar_id
