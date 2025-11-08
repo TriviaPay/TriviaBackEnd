@@ -4,25 +4,48 @@ Redis pub/sub utilities for live chat events.
 import json
 import logging
 import asyncio
+import time
 from typing import AsyncIterator, Optional
 import redis.asyncio as redis
 
 logger = logging.getLogger(__name__)
 
 _redis: Optional[redis.Redis] = None
+_redis_initialized = False
+_redis_unavailable = False
+_redis_last_retry = 0
+_redis_retry_interval = 60  # Retry every 60 seconds if unavailable
 
 
-def get_redis() -> redis.Redis:
-    """Get or create Redis connection singleton."""
-    global _redis
-    if _redis is None:
+def get_redis() -> Optional[redis.Redis]:
+    """Get or create Redis connection singleton. Returns None if Redis is unavailable."""
+    global _redis, _redis_initialized, _redis_unavailable, _redis_last_retry
+    
+    # If Redis was unavailable, allow retry after interval
+    if _redis_unavailable:
+        current_time = time.time()
+        if current_time - _redis_last_retry < _redis_retry_interval:
+            return None
+        # Reset flag to allow retry
+        _redis_unavailable = False
+        _redis_initialized = False
+        _redis = None
+        logger.debug("Retrying Redis connection after unavailability period")
+    
+    if _redis is None and not _redis_initialized:
         from config import REDIS_URL
         try:
             _redis = redis.from_url(REDIS_URL, decode_responses=True)
             logger.info(f"Redis connection initialized: {REDIS_URL}")
+            _redis_initialized = True
+            _redis_unavailable = False
         except Exception as e:
-            logger.error(f"Failed to initialize Redis connection: {e}")
-            raise
+            logger.warning(f"Redis unavailable: {e}. Real-time updates will be disabled.")
+            _redis_unavailable = True
+            _redis_initialized = True
+            _redis_last_retry = time.time()
+            return None
+    
     return _redis
 
 
@@ -34,6 +57,7 @@ def channel_for_session(session_id: int) -> str:
 async def publish_event(session_id: int, event: dict) -> None:
     """
     Publish an event to the Redis channel for a session.
+    Silently fails if Redis is unavailable - core functionality continues.
     
     Args:
         session_id: Session ID (integer)
@@ -41,18 +65,25 @@ async def publish_event(session_id: int, event: dict) -> None:
     """
     try:
         r = get_redis()
+        if r is None:
+            # Redis unavailable - log and continue
+            logger.debug(f"Redis unavailable, skipping publish for session {session_id}")
+            return
+            
         channel = channel_for_session(session_id)
         await r.publish(channel, json.dumps(event))
         logger.debug(f"Published event to {channel}: {event.get('type', 'unknown')}")
     except Exception as e:
         logger.error(f"Failed to publish event to session {session_id}: {e}")
-        raise
+        # Don't raise - allow endpoints to continue working without Redis
+        # Real-time updates will be unavailable, but core functionality remains
+        pass
 
 
 async def subscribe(session_id: int) -> AsyncIterator[str]:
     """
     Subscribe to Redis channel for a session and yield messages.
-    Auto-reconnects on connection drops.
+    Auto-reconnects on connection drops. Waits if Redis is unavailable.
     
     Args:
         session_id: Session ID (integer)
@@ -66,6 +97,12 @@ async def subscribe(session_id: int) -> AsyncIterator[str]:
     while True:
         try:
             r = get_redis()
+            if r is None:
+                # Redis unavailable - wait and retry
+                logger.debug(f"Redis unavailable, waiting before retry for session {session_id}")
+                await asyncio.sleep(5)
+                continue
+                
             psub = r.pubsub()
             await psub.subscribe(channel)
             logger.debug(f"Subscribed to Redis channel: {channel}")
