@@ -132,7 +132,7 @@ class BankAccountResponse(BaseModel):
     created_at: datetime = Field(..., description="When the account was added to the system")
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Endpoint to get the Stripe publishable key
 @router.get("/public-key")
@@ -1685,7 +1685,7 @@ class SubscriptionResponse(BaseModel):
     cancel_at_period_end: bool = Field(..., description="Whether the subscription will cancel at the end of the current period")
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 @router.get("/subscriptions/plans", response_model=List[dict])
 async def list_subscription_plans(

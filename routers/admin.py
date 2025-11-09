@@ -45,7 +45,7 @@ class UserAdminStatus(BaseModel):
     is_admin: bool
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class UpdateAdminStatusRequest(BaseModel):
     is_admin: bool = Field(..., description="Admin status to set for the user")

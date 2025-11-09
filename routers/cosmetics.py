@@ -49,7 +49,7 @@ class AvatarResponse(CosmeticBase):
     mime_type: Optional[str] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class FrameCreate(CosmeticBase):
     """Schema for creating a new frame"""
@@ -63,7 +63,7 @@ class FrameResponse(CosmeticBase):
     mime_type: Optional[str] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class UserCosmeticResponse(BaseModel):
     """Schema for user-owned cosmetics response"""
@@ -76,7 +76,7 @@ class UserCosmeticResponse(BaseModel):
     mime_type: Optional[str] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class PurchaseResponse(BaseModel):
     status: str
