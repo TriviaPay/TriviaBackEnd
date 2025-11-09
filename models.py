@@ -892,3 +892,175 @@ class DeviceRevocation(Base):
     device_id = Column(UUID(as_uuid=True), nullable=False, primary_key=True)
     revoked_at = Column(DateTime, default=datetime.utcnow)
     reason = Column(String, nullable=True)
+
+# =================================
+#  Groups Tables
+# =================================
+
+class Group(Base):
+    __tablename__ = "groups"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title = Column(String, nullable=False)
+    about = Column(String, nullable=True)
+    photo_url = Column(String, nullable=True)
+    created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    max_participants = Column(Integer, nullable=False, default=100)
+    group_epoch = Column(Integer, nullable=False, default=0, index=True)
+    is_closed = Column(Boolean, nullable=False, default=False)
+    
+    # Relationships
+    creator = relationship("User", foreign_keys=[created_by], backref="groups_created")
+    participants = relationship("GroupParticipant", back_populates="group")
+    messages = relationship("GroupMessage", back_populates="group")
+
+
+class GroupParticipant(Base):
+    __tablename__ = "group_participants"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    role = Column(SQLEnum('owner', 'admin', 'member', name='grouprole'), nullable=False, default='member')
+    joined_at = Column(DateTime, default=datetime.utcnow)
+    mute_until = Column(DateTime, nullable=True)
+    is_banned = Column(Boolean, nullable=False, default=False)
+    
+    # Relationships
+    group = relationship("Group", back_populates="participants")
+    user = relationship("User", backref="group_participants")
+    
+    __table_args__ = (
+        UniqueConstraint('group_id', 'user_id', name='uq_group_participants_group_user'),
+    )
+
+
+class GroupMessage(Base):
+    __tablename__ = "group_messages"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, index=True)
+    sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False)
+    ciphertext = Column(LargeBinary, nullable=False)
+    proto = Column(Integer, nullable=False)  # 10=sender-key msg, 11=sender-key distribution
+    group_epoch = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    client_message_id = Column(String, unique=True, nullable=True)
+    
+    # Relationships
+    group = relationship("Group", back_populates="messages")
+    sender = relationship("User", foreign_keys=[sender_user_id], backref="group_messages_sent")
+    sender_device = relationship("E2EEDevice", foreign_keys=[sender_device_id])
+    delivery_records = relationship("GroupDelivery", back_populates="message")
+
+
+class GroupDelivery(Base):
+    __tablename__ = "group_delivery"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(UUID(as_uuid=True), ForeignKey("group_messages.id"), nullable=False)
+    recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    delivered_at = Column(DateTime, nullable=True)
+    read_at = Column(DateTime, nullable=True, index=True)
+    
+    # Relationships
+    message = relationship("GroupMessage", back_populates="delivery_records")
+    recipient_user = relationship("User", foreign_keys=[recipient_user_id], backref="group_messages_received")
+    
+    __table_args__ = (
+        UniqueConstraint('message_id', 'recipient_user_id', name='uq_group_delivery_message_recipient'),
+    )
+
+
+class GroupSenderKey(Base):
+    __tablename__ = "group_sender_keys"
+    
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, primary_key=True)
+    sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
+    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False, primary_key=True)
+    group_epoch = Column(Integer, nullable=False, primary_key=True)
+    sender_key_id = Column(UUID(as_uuid=True), nullable=False)
+    current_chain_index = Column(Integer, nullable=False, default=0)
+    rotated_at = Column(DateTime, nullable=True)
+
+
+class GroupInvite(Base):
+    __tablename__ = "group_invites"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, index=True)
+    created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    type = Column(SQLEnum('link', 'direct', name='invitetype'), nullable=False)
+    code = Column(String, unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=True)
+    max_uses = Column(Integer, nullable=True)
+    uses = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GroupBan(Base):
+    __tablename__ = "group_bans"
+    
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True, index=True)
+    banned_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    reason = Column(String, nullable=True)
+    banned_at = Column(DateTime, default=datetime.utcnow)
+
+# =================================
+#  Status Tables
+# =================================
+
+class StatusPost(Base):
+    __tablename__ = "status_posts"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True, index=True)
+    media_meta = Column(JSONB, nullable=True)
+    audience_mode = Column(SQLEnum('contacts', 'custom', name='audiencemode'), nullable=False, default='contacts')
+    post_epoch = Column(Integer, nullable=False, default=0)
+    
+    # Relationships
+    owner = relationship("User", foreign_keys=[owner_user_id], backref="status_posts")
+    audience = relationship("StatusAudience", back_populates="post")
+    views = relationship("StatusView", back_populates="post")
+
+
+class StatusAudience(Base):
+    __tablename__ = "status_audience"
+    
+    post_id = Column(UUID(as_uuid=True), ForeignKey("status_posts.id"), nullable=False, primary_key=True)
+    viewer_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True, index=True)
+    
+    # Relationships
+    post = relationship("StatusPost", back_populates="audience")
+    viewer = relationship("User", foreign_keys=[viewer_user_id])
+
+
+class StatusView(Base):
+    __tablename__ = "status_views"
+    
+    post_id = Column(UUID(as_uuid=True), ForeignKey("status_posts.id"), nullable=False, primary_key=True)
+    viewer_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True, index=True)
+    viewed_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    post = relationship("StatusPost", back_populates="views")
+    viewer = relationship("User", foreign_keys=[viewer_user_id])
+
+
+class UserPresence(Base):
+    __tablename__ = "user_presence"
+    
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
+    last_seen_at = Column(DateTime, nullable=True)
+    device_online = Column(Boolean, nullable=False, default=False)
+    privacy_settings = Column(JSONB, nullable=True)  # {share_last_seen, share_online, read_receipts}
+    
+    # Relationships
+    user = relationship("User", backref="presence", uselist=False)

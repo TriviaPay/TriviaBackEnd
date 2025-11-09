@@ -305,3 +305,93 @@ async def subscribe_dm_conversation(conversation_id: str) -> AsyncIterator[str]:
             except Exception:
                 pass
 
+
+# =================================
+# Group-specific pub/sub functions
+# =================================
+
+def channel_for_group(group_id: str) -> str:
+    """Generate Redis channel name for a group."""
+    return f"grp:{group_id}"
+
+
+async def publish_group_message(group_id: str, event: dict) -> None:
+    """
+    Publish a group message event to Redis channel.
+    Silently fails if Redis is unavailable.
+    
+    Args:
+        group_id: Group UUID (string)
+        event: Event dictionary to publish (will be JSON-encoded)
+    """
+    try:
+        r = get_redis()
+        if r is None:
+            logger.debug(f"Redis unavailable, skipping group publish for group {group_id}")
+            return
+        
+        channel = channel_for_group(group_id)
+        await r.publish(channel, json.dumps(event))
+        logger.debug(f"Published group event to {channel}: {event.get('type', 'unknown')}")
+    except Exception as e:
+        logger.error(f"Failed to publish group event: {e}")
+        pass
+
+
+async def subscribe_group(group_id: str) -> AsyncIterator[str]:
+    """
+    Subscribe to Redis channel for a group.
+    Auto-reconnects on connection drops. Waits if Redis is unavailable.
+    
+    Args:
+        group_id: Group UUID (string)
+        
+    Yields:
+        JSON strings from Redis pub/sub
+    """
+    channel = channel_for_group(group_id)
+    psub = None
+    
+    while True:
+        try:
+            r = get_redis()
+            if r is None:
+                logger.debug(f"Redis unavailable, waiting before retry for group {group_id}")
+                await asyncio.sleep(5)
+                continue
+            
+            psub = r.pubsub()
+            await psub.subscribe(channel)
+            logger.debug(f"Subscribed to group channel: {channel}")
+            
+            async for msg in psub.listen():
+                if msg is None:
+                    continue
+                if msg.get("type") != "message":
+                    continue
+                yield msg["data"]
+                
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in group subscription for {group_id}: {e}")
+            await asyncio.sleep(1)
+            continue
+        finally:
+            if psub:
+                try:
+                    await psub.unsubscribe(channel)
+                    await psub.close()
+                    logger.debug(f"Unsubscribed from group channel: {channel}")
+                except Exception:
+                    pass
+                psub = None
+            
+            try:
+                import sys
+                exc_type = sys.exc_info()[0]
+                if exc_type == asyncio.CancelledError:
+                    break
+            except Exception:
+                pass
+
