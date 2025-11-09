@@ -9,10 +9,11 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 from datetime import datetime
+from alembic import context
 
 # revision identifiers, used by Alembic.
 revision = 'f7g8h9i0j1k2'
-down_revision = 'a1b2c3d4e5f6'
+down_revision = 'b7c8d9e0f1a2'  # Current database state
 branch_labels = None
 depends_on = None
 
@@ -55,7 +56,13 @@ def upgrade() -> None:
     op.create_index('ix_group_participants_user_group', 'group_participants', ['user_id', 'group_id'], unique=False)
 
     # Group Messages table
-    op.create_table('group_messages',
+    # Check if e2ee_devices table exists before creating foreign key
+    from alembic import context
+    conn = context.get_bind()
+    inspector = sa.inspect(conn)
+    e2ee_devices_exists = 'e2ee_devices' in inspector.get_table_names()
+    
+    group_messages_table = op.create_table('group_messages',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('group_id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('sender_user_id', sa.BigInteger(), nullable=False),
@@ -67,9 +74,18 @@ def upgrade() -> None:
         sa.Column('client_message_id', sa.String(), nullable=True),
         sa.ForeignKeyConstraint(['group_id'], ['groups.id'], ),
         sa.ForeignKeyConstraint(['sender_user_id'], ['users.account_id'], ),
-        sa.ForeignKeyConstraint(['sender_device_id'], ['e2ee_devices.device_id'], ),
         sa.PrimaryKeyConstraint('id')
     )
+    
+    # Add foreign key to e2ee_devices only if table exists
+    if e2ee_devices_exists:
+        op.create_foreign_key(
+            'fk_group_messages_sender_device',
+            'group_messages',
+            'e2ee_devices',
+            ['sender_device_id'],
+            ['device_id']
+        )
     op.create_index('ix_group_messages_group_created', 'group_messages', ['group_id', 'created_at', 'id'], unique=False)
     op.create_index('ix_group_messages_created_at', 'group_messages', ['created_at'], unique=False)
     op.create_index('ix_group_messages_client_id', 'group_messages', ['client_message_id'], unique=True)
@@ -89,7 +105,7 @@ def upgrade() -> None:
     op.create_index('ix_group_delivery_recipient_read', 'group_delivery', ['recipient_user_id', 'read_at'], unique=False)
 
     # Group Sender Keys table (metadata only)
-    op.create_table('group_sender_keys',
+    group_sender_keys_table = op.create_table('group_sender_keys',
         sa.Column('group_id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('sender_user_id', sa.BigInteger(), nullable=False),
         sa.Column('sender_device_id', postgresql.UUID(as_uuid=True), nullable=False),
@@ -99,9 +115,18 @@ def upgrade() -> None:
         sa.Column('rotated_at', sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(['group_id'], ['groups.id'], ),
         sa.ForeignKeyConstraint(['sender_user_id'], ['users.account_id'], ),
-        sa.ForeignKeyConstraint(['sender_device_id'], ['e2ee_devices.device_id'], ),
         sa.PrimaryKeyConstraint('group_id', 'sender_user_id', 'sender_device_id', 'group_epoch')
     )
+    
+    # Add foreign key to e2ee_devices only if table exists
+    if e2ee_devices_exists:
+        op.create_foreign_key(
+            'fk_group_sender_keys_device',
+            'group_sender_keys',
+            'e2ee_devices',
+            ['sender_device_id'],
+            ['device_id']
+        )
     op.create_index('ix_group_sender_keys_lookup', 'group_sender_keys', ['group_id', 'sender_user_id', 'sender_device_id', 'group_epoch'], unique=False)
 
     # Group Invites table
