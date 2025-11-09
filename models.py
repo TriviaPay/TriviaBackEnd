@@ -1,6 +1,8 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint, Text, Enum as SQLEnum
+    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint, Text, Enum as SQLEnum, LargeBinary
 )
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+import uuid
 from enum import Enum as PyEnum
 from sqlalchemy.orm import relationship
 from db import Base
@@ -735,3 +737,158 @@ class LiveChatViewer(Base):
     # Relationships - using backref to match existing pattern
     session = relationship("LiveChatSession", backref="session_viewers")
     user = relationship("User", backref="live_chat_viewers")
+
+# =================================
+#  E2EE Devices Table
+# =================================
+class E2EEDevice(Base):
+    __tablename__ = "e2ee_devices"
+    
+    device_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    device_name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_seen_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, nullable=False, default="active")  # 'active', 'revoked'
+    
+    # Relationships
+    user = relationship("User", backref="e2ee_devices")
+    key_bundle = relationship("E2EEKeyBundle", back_populates="device", uselist=False)
+    one_time_prekeys = relationship("E2EEOneTimePrekey", back_populates="device")
+
+# =================================
+#  E2EE Key Bundles Table
+# =================================
+class E2EEKeyBundle(Base):
+    __tablename__ = "e2ee_key_bundles"
+    
+    device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), primary_key=True, unique=True)
+    identity_key_pub = Column(String, nullable=False)  # Base64 encoded
+    signed_prekey_pub = Column(String, nullable=False)  # Base64 encoded
+    signed_prekey_sig = Column(String, nullable=False)  # Base64 encoded signature
+    prekeys_remaining = Column(Integer, nullable=False, default=0)
+    bundle_version = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    device = relationship("E2EEDevice", back_populates="key_bundle")
+
+# =================================
+#  E2EE One-Time Prekeys Table
+# =================================
+class E2EEOneTimePrekey(Base):
+    __tablename__ = "e2ee_one_time_prekeys"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False)
+    prekey_pub = Column(String, nullable=False)  # Base64 encoded
+    claimed = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    device = relationship("E2EEDevice", back_populates="one_time_prekeys")
+
+# =================================
+#  DM Conversations Table
+# =================================
+class DMConversation(Base):
+    __tablename__ = "dm_conversations"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    last_message_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sealed_sender_enabled = Column(Boolean, nullable=False, default=False)
+    
+    # Relationships
+    participants = relationship("DMParticipant", back_populates="conversation")
+    messages = relationship("DMMessage", back_populates="conversation")
+
+# =================================
+#  DM Participants Table
+# =================================
+class DMParticipant(Base):
+    __tablename__ = "dm_participants"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    device_ids = Column(JSONB, nullable=True)  # Array of device UUIDs
+    
+    # Relationships
+    conversation = relationship("DMConversation", back_populates="participants")
+    user = relationship("User", backref="dm_participants")
+    
+    __table_args__ = (
+        UniqueConstraint('conversation_id', 'user_id', name='uq_dm_participants_conversation_user'),
+    )
+
+# =================================
+#  DM Messages Table
+# =================================
+class DMMessage(Base):
+    __tablename__ = "dm_messages"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False, index=True)
+    sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False)
+    ciphertext = Column(LargeBinary, nullable=False)  # Binary encrypted payload
+    proto = Column(Integer, nullable=False)  # 1=DR message, 2=PreKey message
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    client_message_id = Column(String, unique=True, nullable=True)  # For idempotency
+    
+    # Relationships
+    conversation = relationship("DMConversation", back_populates="messages")
+    sender_user = relationship("User", foreign_keys=[sender_user_id], backref="dm_messages_sent")
+    sender_device = relationship("E2EEDevice", foreign_keys=[sender_device_id])
+    delivery_records = relationship("DMDelivery", back_populates="message")
+
+# =================================
+#  DM Delivery Table
+# =================================
+class DMDelivery(Base):
+    __tablename__ = "dm_delivery"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(UUID(as_uuid=True), ForeignKey("dm_messages.id"), nullable=False)
+    recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    delivered_at = Column(DateTime, nullable=True)
+    read_at = Column(DateTime, nullable=True, index=True)
+    
+    # Relationships
+    message = relationship("DMMessage", back_populates="delivery_records")
+    recipient_user = relationship("User", foreign_keys=[recipient_user_id], backref="dm_messages_received")
+    
+    __table_args__ = (
+        UniqueConstraint('message_id', 'recipient_user_id', name='uq_dm_delivery_message_recipient'),
+    )
+
+# =================================
+#  Blocks Table
+# =================================
+class Block(Base):
+    __tablename__ = "blocks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    blocker_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    blocked_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    blocker = relationship("User", foreign_keys=[blocker_id], backref="blocked_users")
+    blocked = relationship("User", foreign_keys=[blocked_id], backref="blocked_by_users")
+    
+    __table_args__ = (
+        UniqueConstraint('blocker_id', 'blocked_id', name='uq_blocks_blocker_blocked'),
+    )
+
+# =================================
+#  Device Revocations Table
+# =================================
+class DeviceRevocation(Base):
+    __tablename__ = "device_revocations"
+    
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
+    device_id = Column(UUID(as_uuid=True), nullable=False, primary_key=True)
+    revoked_at = Column(DateTime, default=datetime.utcnow)
+    reason = Column(String, nullable=True)

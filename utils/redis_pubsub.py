@@ -144,3 +144,164 @@ async def subscribe(session_id: int) -> AsyncIterator[str]:
             except Exception:
                 pass
 
+
+# =================================
+# DM-specific pub/sub functions
+# =================================
+
+def channel_for_dm_user(user_id: int) -> str:
+    """Generate Redis channel name for a user's DM stream."""
+    return f"dm:user:{user_id}"
+
+
+def channel_for_dm_conversation(conversation_id: str) -> str:
+    """Generate Redis channel name for a conversation."""
+    return f"dm:conversation:{conversation_id}"
+
+
+async def publish_dm_message(conversation_id: str, user_id: int, event: dict) -> None:
+    """
+    Publish a DM message event to Redis channels.
+    Publishes to both per-user and per-conversation channels.
+    Silently fails if Redis is unavailable.
+    
+    Args:
+        conversation_id: Conversation UUID (string)
+        user_id: Recipient user ID (integer)
+        event: Event dictionary to publish (will be JSON-encoded)
+    """
+    try:
+        r = get_redis()
+        if r is None:
+            logger.debug(f"Redis unavailable, skipping DM publish for conversation {conversation_id}")
+            return
+        
+        # Publish to per-user channel
+        user_channel = channel_for_dm_user(user_id)
+        await r.publish(user_channel, json.dumps(event))
+        logger.debug(f"Published DM event to {user_channel}: {event.get('type', 'unknown')}")
+        
+        # Publish to per-conversation channel
+        conv_channel = channel_for_dm_conversation(conversation_id)
+        await r.publish(conv_channel, json.dumps(event))
+        logger.debug(f"Published DM event to {conv_channel}: {event.get('type', 'unknown')}")
+    except Exception as e:
+        logger.error(f"Failed to publish DM event: {e}")
+        pass
+
+
+async def subscribe_dm_user(user_id: int) -> AsyncIterator[str]:
+    """
+    Subscribe to Redis channel for a user's DM stream.
+    Auto-reconnects on connection drops. Waits if Redis is unavailable.
+    
+    Args:
+        user_id: User ID (integer)
+        
+    Yields:
+        JSON strings from Redis pub/sub
+    """
+    channel = channel_for_dm_user(user_id)
+    psub = None
+    
+    while True:
+        try:
+            r = get_redis()
+            if r is None:
+                logger.debug(f"Redis unavailable, waiting before retry for user {user_id}")
+                await asyncio.sleep(5)
+                continue
+            
+            psub = r.pubsub()
+            await psub.subscribe(channel)
+            logger.debug(f"Subscribed to DM user channel: {channel}")
+            
+            async for msg in psub.listen():
+                if msg is None:
+                    continue
+                if msg.get("type") != "message":
+                    continue
+                yield msg["data"]
+                
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in DM user subscription for user {user_id}: {e}")
+            await asyncio.sleep(1)
+            continue
+        finally:
+            if psub:
+                try:
+                    await psub.unsubscribe(channel)
+                    await psub.close()
+                    logger.debug(f"Unsubscribed from DM user channel: {channel}")
+                except Exception:
+                    pass
+                psub = None
+            
+            try:
+                import sys
+                exc_type = sys.exc_info()[0]
+                if exc_type == asyncio.CancelledError:
+                    break
+            except Exception:
+                pass
+
+
+async def subscribe_dm_conversation(conversation_id: str) -> AsyncIterator[str]:
+    """
+    Subscribe to Redis channel for a conversation.
+    Auto-reconnects on connection drops. Waits if Redis is unavailable.
+    
+    Args:
+        conversation_id: Conversation UUID (string)
+        
+    Yields:
+        JSON strings from Redis pub/sub
+    """
+    channel = channel_for_dm_conversation(conversation_id)
+    psub = None
+    
+    while True:
+        try:
+            r = get_redis()
+            if r is None:
+                logger.debug(f"Redis unavailable, waiting before retry for conversation {conversation_id}")
+                await asyncio.sleep(5)
+                continue
+            
+            psub = r.pubsub()
+            await psub.subscribe(channel)
+            logger.debug(f"Subscribed to DM conversation channel: {channel}")
+            
+            async for msg in psub.listen():
+                if msg is None:
+                    continue
+                if msg.get("type") != "message":
+                    continue
+                yield msg["data"]
+                
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in DM conversation subscription for {conversation_id}: {e}")
+            await asyncio.sleep(1)
+            continue
+        finally:
+            if psub:
+                try:
+                    await psub.unsubscribe(channel)
+                    await psub.close()
+                    logger.debug(f"Unsubscribed from DM conversation channel: {channel}")
+                except Exception:
+                    pass
+                psub = None
+            
+            try:
+                import sys
+                exc_type = sys.exc_info()[0]
+                if exc_type == asyncio.CancelledError:
+                    break
+            except Exception:
+                pass
+

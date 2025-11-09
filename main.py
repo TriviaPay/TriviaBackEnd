@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal, live_chat
+from config import E2EE_DM_ENABLED
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -127,6 +128,19 @@ app.include_router(updates.router)   # Live updates
 app.include_router(entries.router)   # Entries management
 app.include_router(internal.router)  # Internal endpoints for external cron
 app.include_router(live_chat.router) # Live chat endpoints
+
+# E2EE DM routers (gated behind feature flag)
+if E2EE_DM_ENABLED:
+    from routers import e2ee_keys, dm_conversations, dm_messages, dm_sse, dm_privacy, dm_metrics
+    app.include_router(e2ee_keys.router)        # E2EE key management
+    app.include_router(dm_conversations.router) # DM conversation management
+    app.include_router(dm_messages.router)      # DM message sending/receiving
+    app.include_router(dm_sse.router)            # DM SSE real-time delivery
+    app.include_router(dm_privacy.router)        # DM blocking/privacy
+    app.include_router(dm_metrics.router)       # DM metrics (admin only)
+    logger.info("E2EE DM feature enabled - routers registered")
+else:
+    logger.info("E2EE DM feature disabled")
 
 @app.on_event("startup")
 async def startup_event():
