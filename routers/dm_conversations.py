@@ -158,63 +158,73 @@ async def list_conversations(
     """
     List user's conversations with last message timestamp and unread count.
     """
-    if not E2EE_DM_ENABLED:
-        raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
-    
-    # Get conversations where user is a participant
-    # Use coalesce to handle null last_message_at values
-    conversations = db.query(DMConversation).join(
-        DMParticipant, DMConversation.id == DMParticipant.conversation_id
-    ).filter(
-        DMParticipant.user_id == current_user.account_id
-    ).order_by(
-        func.coalesce(DMConversation.last_message_at, DMConversation.created_at).desc(),
-        DMConversation.created_at.desc()
-    ).offset(offset).limit(limit).all()
-    
-    result = []
-    for conv in conversations:
-        # Get peer user (the other participant)
-        participants = db.query(DMParticipant).filter(
-            DMParticipant.conversation_id == conv.id,
-            DMParticipant.user_id != current_user.account_id
-        ).first()
+    try:
+        if not E2EE_DM_ENABLED:
+            raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
         
-        if not participants:
-            continue
-        
-        peer_user = db.query(User).filter(User.account_id == participants.user_id).first()
-        if not peer_user:
-            continue
-        
-        # Count unread messages (messages not read by current user)
-        from models import DMDelivery
-        unread_count = db.query(DMMessage).outerjoin(
-            DMDelivery,
-            and_(
-                DMDelivery.message_id == DMMessage.id,
-                DMDelivery.recipient_user_id == current_user.account_id
-            )
+        # Get conversations where user is a participant
+        # Use coalesce to handle null last_message_at values
+        conversations = db.query(DMConversation).join(
+            DMParticipant, DMConversation.id == DMParticipant.conversation_id
         ).filter(
-            DMMessage.conversation_id == conv.id,
-            DMMessage.sender_user_id != current_user.account_id,
-            or_(
-                DMDelivery.read_at.is_(None),
-                DMDelivery.id.is_(None)
-            )
-        ).count()
+            DMParticipant.user_id == current_user.account_id
+        ).order_by(
+            func.coalesce(DMConversation.last_message_at, DMConversation.created_at).desc(),
+            DMConversation.created_at.desc()
+        ).offset(offset).limit(limit).all()
         
-        result.append({
-            "conversation_id": str(conv.id),
-            "peer_user_id": participants.user_id,
-            "peer_username": peer_user.username,
-            "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
-            "unread_count": unread_count
-        })
-    
-    return {
-        "conversations": result
-    }
+        result = []
+        for conv in conversations:
+            try:
+                # Get peer user (the other participant)
+                participants = db.query(DMParticipant).filter(
+                    DMParticipant.conversation_id == conv.id,
+                    DMParticipant.user_id != current_user.account_id
+                ).first()
+                
+                if not participants:
+                    continue
+                
+                peer_user = db.query(User).filter(User.account_id == participants.user_id).first()
+                if not peer_user:
+                    continue
+                
+                # Count unread messages (messages not read by current user)
+                from models import DMDelivery
+                unread_count = db.query(DMMessage).outerjoin(
+                    DMDelivery,
+                    and_(
+                        DMDelivery.message_id == DMMessage.id,
+                        DMDelivery.recipient_user_id == current_user.account_id
+                    )
+                ).filter(
+                    DMMessage.conversation_id == conv.id,
+                    DMMessage.sender_user_id != current_user.account_id,
+                    or_(
+                        DMDelivery.read_at.is_(None),
+                        DMDelivery.id.is_(None)
+                    )
+                ).count()
+                
+                result.append({
+                    "conversation_id": str(conv.id),
+                    "peer_user_id": participants.user_id,
+                    "peer_username": peer_user.username if peer_user.username else None,
+                    "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
+                    "unread_count": unread_count
+                })
+            except Exception as e:
+                logger.error(f"Error processing conversation {conv.id}: {str(e)}", exc_info=True)
+                continue
+        
+        return {
+            "conversations": result
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing conversations: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @router.get("/{conversation_id}")
