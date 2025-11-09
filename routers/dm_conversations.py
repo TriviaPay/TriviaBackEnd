@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, func
 from datetime import datetime
 from typing import Optional, List
 import uuid
@@ -162,12 +162,13 @@ async def list_conversations(
         raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
     
     # Get conversations where user is a participant
+    # Use coalesce to handle null last_message_at values
     conversations = db.query(DMConversation).join(
         DMParticipant, DMConversation.id == DMParticipant.conversation_id
     ).filter(
         DMParticipant.user_id == current_user.account_id
     ).order_by(
-        DMConversation.last_message_at.desc().nulls_last(),
+        func.coalesce(DMConversation.last_message_at, DMConversation.created_at).desc(),
         DMConversation.created_at.desc()
     ).offset(offset).limit(limit).all()
     
