@@ -17,9 +17,11 @@ from config import (
     E2EE_DM_ENABLED, 
     SSE_HEARTBEAT_SECONDS,
     E2EE_DM_MAX_CONCURRENT_STREAMS_PER_USER,
-    SSE_MAX_MISSED_HEARTBEATS
+    SSE_MAX_MISSED_HEARTBEATS,
+    GROUPS_ENABLED,
+    PRESENCE_ENABLED
 )
-from utils.redis_pubsub import subscribe_dm_user
+from utils.redis_pubsub import subscribe_dm_user, subscribe_group
 
 logger = logging.getLogger(__name__)
 
@@ -153,9 +155,42 @@ async def dm_sse(
             # Store token for expiry checks during heartbeats
             current_token = token
             
-            # Redis subscription to per-user channel
+            # Redis subscription to per-user channel (for DM and status notifications)
             redis_msgs = subscribe_dm_user(user.account_id)
             redis_iter = redis_msgs.__aiter__()
+            
+            # Load user's group memberships and subscribe to group channels
+            group_subscriptions = {}
+            if GROUPS_ENABLED:
+                from models import GroupParticipant
+                user_groups = db.query(GroupParticipant).filter(
+                    GroupParticipant.user_id == user.account_id,
+                    GroupParticipant.is_banned == False
+                ).all()
+                
+                for participant in user_groups:
+                    group_id_str = str(participant.group_id)
+                    group_msgs = subscribe_group(group_id_str)
+                    group_subscriptions[group_id_str] = group_msgs.__aiter__()
+            
+            # Update presence last_seen_at on connect
+            if PRESENCE_ENABLED:
+                from models import UserPresence
+                presence = db.query(UserPresence).filter(
+                    UserPresence.user_id == user.account_id
+                ).first()
+                if presence:
+                    presence.last_seen_at = datetime.utcnow()
+                    presence.device_online = True
+                    db.commit()
+                else:
+                    presence = UserPresence(
+                        user_id=user.account_id,
+                        last_seen_at=datetime.utcnow(),
+                        device_online=True
+                    )
+                    db.add(presence)
+                    db.commit()
             
             # Heartbeat task
             heartbeat = asyncio.create_task(asyncio.sleep(SSE_HEARTBEAT_SECONDS))
@@ -176,11 +211,16 @@ async def dm_sse(
                         logger.warning(f"Too many missed heartbeats for user {user_id_hash}, closing connection")
                         break
                     
-                    # Race heartbeat vs redis message
-                    redis_next_task = asyncio.create_task(redis_iter.__anext__())
-                    pending = {heartbeat, redis_next_task}
+                    # Race heartbeat vs redis messages (DM + groups)
+                    tasks = {heartbeat}
+                    tasks.add(asyncio.create_task(redis_iter.__anext__()))
+                    
+                    # Add group subscriptions
+                    for group_id, group_iter in group_subscriptions.items():
+                        tasks.add(asyncio.create_task(group_iter.__anext__()))
+                    
                     done, pending = await asyncio.wait(
-                        pending,
+                        tasks,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     
@@ -193,6 +233,16 @@ async def dm_sse(
                         
                         # Update last heartbeat time
                         last_heartbeat_time = datetime.utcnow()
+                        
+                        # Update presence last_seen_at on heartbeat
+                        if PRESENCE_ENABLED:
+                            from models import UserPresence
+                            presence = db.query(UserPresence).filter(
+                                UserPresence.user_id == user.account_id
+                            ).first()
+                            if presence:
+                                presence.last_seen_at = datetime.utcnow()
+                                db.commit()
                         
                         # Check Redis status and include in heartbeat
                         from utils.redis_pubsub import get_redis
@@ -211,10 +261,13 @@ async def dm_sse(
                     for task in list(done):
                         if task is heartbeat:
                             continue
-                        # A redis message arrived
+                        # A redis message arrived (DM or group)
                         try:
                             raw = await task  # JSON string published by server
                             event_data = json.loads(raw)
+                            # Ensure event has type field
+                            if "type" not in event_data:
+                                event_data["type"] = "dm"  # Default to DM if not specified
                             yield sse_format(event_data)
                         except StopAsyncIteration:
                             logger.debug(f"Redis subscription ended: user={user_id_hash}")
@@ -272,4 +325,14 @@ async def dm_sse(
         _active_dm_sse_connections[user.account_id].discard(connection_id)
         if not _active_dm_sse_connections[user.account_id]:
             del _active_dm_sse_connections[user.account_id]
+        
+        # Update presence device_online on disconnect
+        if PRESENCE_ENABLED:
+            from models import UserPresence
+            presence = db.query(UserPresence).filter(
+                UserPresence.user_id == user.account_id
+            ).first()
+            if presence:
+                presence.device_online = False
+                db.commit()
 

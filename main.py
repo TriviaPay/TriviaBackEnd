@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal, live_chat
-from config import E2EE_DM_ENABLED
+from config import E2EE_DM_ENABLED, GROUPS_ENABLED, STATUS_ENABLED, PRESENCE_ENABLED
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -141,6 +141,35 @@ if E2EE_DM_ENABLED:
     logger.info("E2EE DM feature enabled - routers registered")
 else:
     logger.info("E2EE DM feature disabled")
+
+# Groups routers (gated behind feature flag)
+if GROUPS_ENABLED:
+    from routers import groups, group_members, group_invites, group_messages, group_metrics
+    app.include_router(groups.router)            # Group management
+    app.include_router(group_members.router)     # Group membership
+    app.include_router(group_invites.router)     # Group invites
+    app.include_router(group_messages.router)    # Group messages
+    app.include_router(group_metrics.router)         # Group metrics (admin only)
+    logger.info("Groups feature enabled - routers registered")
+else:
+    logger.info("Groups feature disabled")
+
+# Status routers (gated behind feature flag)
+if STATUS_ENABLED:
+    from routers import status, status_metrics
+    app.include_router(status.router)             # Status posts
+    app.include_router(status_metrics.router)    # Status metrics (admin only)
+    logger.info("Status feature enabled - routers registered")
+else:
+    logger.info("Status feature disabled")
+
+# Presence router (gated behind feature flag)
+if PRESENCE_ENABLED:
+    from routers import presence
+    app.include_router(presence.router)          # Presence/privacy settings
+    logger.info("Presence feature enabled - routers registered")
+else:
+    logger.info("Presence feature disabled")
 
 @app.on_event("startup")
 async def startup_event():

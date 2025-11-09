@@ -1,0 +1,295 @@
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+from sqlalchemy import func, desc
+from datetime import datetime, timedelta
+from typing import Optional, List
+import uuid
+import logging
+
+from db import get_db
+from models import User, Group, GroupParticipant
+from routers.dependencies import get_current_user
+from config import GROUPS_ENABLED, GROUP_MAX_PARTICIPANTS
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/groups", tags=["Groups"])
+
+
+class CreateGroupRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=100)
+    about: Optional[str] = Field(None, max_length=500)
+    photo_url: Optional[str] = None
+
+
+class UpdateGroupRequest(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=100)
+    about: Optional[str] = Field(None, max_length=500)
+    photo_url: Optional[str] = None
+
+
+@router.post("")
+async def create_group(
+    request: CreateGroupRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Create a new group. Creator becomes owner.
+    """
+    if not GROUPS_ENABLED:
+        raise HTTPException(status_code=403, detail="Groups feature is not enabled")
+    
+    # Create group
+    new_group = Group(
+        id=uuid.uuid4(),
+        title=request.title,
+        about=request.about,
+        photo_url=request.photo_url,
+        created_by=current_user.account_id,
+        max_participants=GROUP_MAX_PARTICIPANTS,
+        group_epoch=0,
+        is_closed=False
+    )
+    db.add(new_group)
+    
+    # Add creator as owner
+    owner_participant = GroupParticipant(
+        group_id=new_group.id,
+        user_id=current_user.account_id,
+        role='owner',
+        joined_at=datetime.utcnow()
+    )
+    db.add(owner_participant)
+    
+    try:
+        db.commit()
+        db.refresh(new_group)
+        
+        return {
+            "id": str(new_group.id),
+            "title": new_group.title,
+            "about": new_group.about,
+            "photo_url": new_group.photo_url,
+            "created_by": new_group.created_by,
+            "created_at": new_group.created_at.isoformat(),
+            "max_participants": new_group.max_participants,
+            "group_epoch": new_group.group_epoch,
+            "is_closed": new_group.is_closed
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating group: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create group")
+
+
+@router.get("")
+async def list_groups(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    List groups the user is a member of, ordered by last message time.
+    """
+    if not GROUPS_ENABLED:
+        raise HTTPException(status_code=403, detail="Groups feature is not enabled")
+    
+    # Get groups user is a participant in
+    groups = db.query(Group).join(
+        GroupParticipant, Group.id == GroupParticipant.group_id
+    ).filter(
+        GroupParticipant.user_id == current_user.account_id,
+        GroupParticipant.is_banned == False
+    ).order_by(
+        desc(Group.updated_at)
+    ).offset(offset).limit(limit).all()
+    
+    result = []
+    for group in groups:
+        # Get participant count
+        participant_count = db.query(GroupParticipant).filter(
+            GroupParticipant.group_id == group.id,
+            GroupParticipant.is_banned == False
+        ).count()
+        
+        # Get user's role
+        participant = db.query(GroupParticipant).filter(
+            GroupParticipant.group_id == group.id,
+            GroupParticipant.user_id == current_user.account_id
+        ).first()
+        
+        result.append({
+            "id": str(group.id),
+            "title": group.title,
+            "about": group.about,
+            "photo_url": group.photo_url,
+            "created_at": group.created_at.isoformat(),
+            "updated_at": group.updated_at.isoformat() if group.updated_at else None,
+            "participant_count": participant_count,
+            "max_participants": group.max_participants,
+            "group_epoch": group.group_epoch,
+            "is_closed": group.is_closed,
+            "my_role": participant.role if participant else None
+        })
+    
+    return {"groups": result, "total": len(result)}
+
+
+@router.get("/{group_id}")
+async def get_group(
+    group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get group details including participant count and user's role.
+    """
+    if not GROUPS_ENABLED:
+        raise HTTPException(status_code=403, detail="Groups feature is not enabled")
+    
+    try:
+        group_uuid = uuid.UUID(group_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid group ID format")
+    
+    group = db.query(Group).filter(Group.id == group_uuid).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    
+    # Check if user is a participant
+    participant = db.query(GroupParticipant).filter(
+        GroupParticipant.group_id == group_uuid,
+        GroupParticipant.user_id == current_user.account_id
+    ).first()
+    
+    if not participant or participant.is_banned:
+        raise HTTPException(status_code=403, detail="Not a member of this group")
+    
+    # Get participant count
+    participant_count = db.query(GroupParticipant).filter(
+        GroupParticipant.group_id == group_uuid,
+        GroupParticipant.is_banned == False
+    ).count()
+    
+    return {
+        "id": str(group.id),
+        "title": group.title,
+        "about": group.about,
+        "photo_url": group.photo_url,
+        "created_by": group.created_by,
+        "created_at": group.created_at.isoformat(),
+        "updated_at": group.updated_at.isoformat() if group.updated_at else None,
+        "participant_count": participant_count,
+        "max_participants": group.max_participants,
+        "group_epoch": group.group_epoch,
+        "is_closed": group.is_closed,
+        "my_role": participant.role
+    }
+
+
+@router.patch("/{group_id}")
+async def update_group(
+    group_id: str,
+    request: UpdateGroupRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update group title, about, or photo. Owner/admin only.
+    """
+    if not GROUPS_ENABLED:
+        raise HTTPException(status_code=403, detail="Groups feature is not enabled")
+    
+    try:
+        group_uuid = uuid.UUID(group_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid group ID format")
+    
+    group = db.query(Group).filter(Group.id == group_uuid).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    
+    # Check if user is owner or admin
+    participant = db.query(GroupParticipant).filter(
+        GroupParticipant.group_id == group_uuid,
+        GroupParticipant.user_id == current_user.account_id
+    ).first()
+    
+    if not participant or participant.is_banned:
+        raise HTTPException(status_code=403, detail="Not a member of this group")
+    
+    if participant.role not in ['owner', 'admin']:
+        raise HTTPException(status_code=403, detail="Insufficient permissions. Owner or admin required.")
+    
+    # Update fields
+    if request.title is not None:
+        group.title = request.title
+    if request.about is not None:
+        group.about = request.about
+    if request.photo_url is not None:
+        group.photo_url = request.photo_url
+    
+    group.updated_at = datetime.utcnow()
+    
+    try:
+        db.commit()
+        db.refresh(group)
+        
+        return {
+            "id": str(group.id),
+            "title": group.title,
+            "about": group.about,
+            "photo_url": group.photo_url,
+            "updated_at": group.updated_at.isoformat()
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating group: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update group")
+
+
+@router.delete("/{group_id}")
+async def delete_group(
+    group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Close/archive a group. Owner only.
+    """
+    if not GROUPS_ENABLED:
+        raise HTTPException(status_code=403, detail="Groups feature is not enabled")
+    
+    try:
+        group_uuid = uuid.UUID(group_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid group ID format")
+    
+    group = db.query(Group).filter(Group.id == group_uuid).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    
+    # Check if user is owner
+    participant = db.query(GroupParticipant).filter(
+        GroupParticipant.group_id == group_uuid,
+        GroupParticipant.user_id == current_user.account_id
+    ).first()
+    
+    if not participant or participant.role != 'owner':
+        raise HTTPException(status_code=403, detail="Only owner can close the group")
+    
+    # Soft delete (mark as closed)
+    group.is_closed = True
+    group.updated_at = datetime.utcnow()
+    
+    try:
+        db.commit()
+        return {"message": "Group closed successfully"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error closing group: {e}")
+        raise HTTPException(status_code=500, detail="Failed to close group")
+
