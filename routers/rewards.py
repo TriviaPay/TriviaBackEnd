@@ -31,6 +31,7 @@ def round_down(value: float, decimals: int = 2) -> float:
 
 class WinnerResponse(BaseModel):
     username: str
+    userid: int  # User account_id
     amount_won: float
     total_amount_won: float = 0
     
@@ -203,6 +204,7 @@ async def get_daily_winners(
             
             result.append(WinnerResponse(
                 username=profile_data["username"],
+                userid=user.account_id,
                 amount_won=round_down(float(winner.prize_amount), 2),
                 total_amount_won=round_down(float(total_won), 2),
                 profile_pic=profile_data["profile_pic"],
@@ -281,6 +283,7 @@ async def get_weekly_winners(
             
             result.append(WinnerResponse(
                 username=profile_data["username"],
+                userid=user.account_id,
                 amount_won=round_down(float(weekly_amount), 2),
                 total_amount_won=round_down(float(total_won), 2),
                 profile_pic=profile_data["profile_pic"],
@@ -342,6 +345,7 @@ async def get_all_time_winners(
             
             result.append(WinnerResponse(
                 username=profile_data["username"],
+                userid=user.account_id,
                 amount_won=round_down(float(total_amount), 2),
                 total_amount_won=round_down(float(total_amount), 2),  # Same value for all-time
                 profile_pic=profile_data["profile_pic"],
@@ -394,6 +398,7 @@ async def get_all_winners(
             
             result.append(WinnerResponse(
                 username=profile_data["username"],
+                userid=user.account_id,
                 amount_won=round_down(float(winner.prize_amount), 2),
                 total_amount_won=round_down(float(total_won), 2),
                 profile_pic=profile_data["profile_pic"],
@@ -485,6 +490,7 @@ async def get_monthly_winners(
             
             result.append({
                 "username": profile_data["username"],
+                "userid": user.account_id,
                 "profile_pic": profile_data["profile_pic"],
                 "profile_frame": profile_data["profile_frame"],
                 "avatar": profile_data["avatar"],
@@ -623,6 +629,7 @@ async def today_winners_reveal(
             
             result.append({
                 "username": profile_data["username"],
+                "userid": user.account_id,
                 "profile_pic": profile_data["profile_pic"],
                 "profile_frame": profile_data["profile_frame"],
                 "avatar": profile_data["avatar"],
@@ -718,10 +725,34 @@ async def trigger_draw(
         # Convert result to response format
         winner_responses = []
         for winner_data in result["winners"]:
+            # Get user to calculate total_amount_won and get profile data
+            account_id = winner_data.get("account_id")
+            user = None
+            total_won = 0
+            profile_data = {"username": winner_data.get("username") or "Unknown"}
+            
+            if account_id:
+                user = db.query(User).filter(User.account_id == account_id).first()
+                if user:
+                    # Calculate total amount won by user all-time
+                    total_won = db.query(func.sum(TriviaQuestionsWinners.prize_amount)).filter(
+                        TriviaQuestionsWinners.account_id == user.account_id
+                    ).scalar() or 0
+                    
+                    # Get complete profile data (badge, avatar, frame)
+                    profile_data = get_winner_profile_data(user, db)
+            
             winner_responses.append(WinnerResponse(
-                username=winner_data["username"] or "Unknown",
-                amount_won=winner_data["prize_amount"],
-                position=winner_data["position"]
+                username=profile_data["username"],
+                userid=account_id or 0,
+                amount_won=round_down(float(winner_data.get("prize_amount", 0)), 2),
+                total_amount_won=round_down(float(total_won), 2),
+                profile_pic=profile_data.get("profile_pic"),
+                badge_image_url=profile_data.get("badge", {}).get("image_url") if profile_data.get("badge") else None,
+                avatar_url=profile_data.get("avatar"),
+                frame_url=profile_data.get("profile_frame"),
+                position=winner_data.get("position", 0),
+                date_won=None
             ))
         
         return DrawResponse(

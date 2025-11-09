@@ -12,11 +12,19 @@ import os
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, date, timedelta
+import pytz
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from db import SessionLocal
 from models import TriviaQuestionsDaily, Trivia
+
+def get_today_in_app_timezone() -> date:
+    """Get today's date in the app's timezone (EST/US Eastern)."""
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    return now.date()
 
 def cleanup_unused_questions():
     """
@@ -26,7 +34,7 @@ def cleanup_unused_questions():
     db: Session = SessionLocal()
     
     try:
-        today = date.today()
+        today = get_today_in_app_timezone()
         yesterday = today - timedelta(days=1)
         
         # Step 1: Delete unused questions from yesterday

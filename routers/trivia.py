@@ -5,6 +5,8 @@ from typing import List, Optional
 from datetime import datetime, timedelta, date
 import random
 import json
+import pytz
+import os
 
 from db import get_db
 from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, TriviaUserDaily, UserDailyRewards
@@ -12,6 +14,14 @@ from routers.dependencies import get_current_user
 from pathlib import Path as FilePath
 
 router = APIRouter(prefix="/trivia", tags=["Trivia"])
+
+# Helper function to get today's date in the app timezone (EST/US Eastern)
+def get_today_in_app_timezone() -> date:
+    """Get today's date in the app's timezone (EST/US Eastern)."""
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    return now.date()
 
 # Load store configuration for boost costs
 STORE_CONFIG_PATH = FilePath("config/store_items.json")
@@ -32,7 +42,7 @@ async def get_daily_questions(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    today = date.today()
+    today = get_today_in_app_timezone()
     
     # Get today's shared pool (0-4 questions)
     daily_pool = db.query(TriviaQuestionsDaily).filter(
@@ -94,7 +104,7 @@ async def get_current_question(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    today = date.today()
+    today = get_today_in_app_timezone()
     
     # Get today's shared pool
     daily_pool = db.query(TriviaQuestionsDaily).filter(
@@ -239,7 +249,7 @@ async def unlock_next_question(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    today = date.today()
+    today = get_today_in_app_timezone()
     
     # Check if user has answered correctly today
     user_correct = db.query(TriviaUserDaily).filter(
@@ -361,7 +371,7 @@ async def retry_question(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    today = date.today()
+    today = get_today_in_app_timezone()
     
     # Check if user has answered correctly today
     user_correct = db.query(TriviaUserDaily).filter(
@@ -465,7 +475,7 @@ async def submit_answer(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    today = date.today()
+    today = get_today_in_app_timezone()
     
     # Check if user has already answered correctly today
     user_correct = db.query(TriviaUserDaily).filter(
@@ -636,7 +646,7 @@ async def get_daily_login_status(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    today = date.today()
+    today = get_today_in_app_timezone()
     # Calculate week start (Monday)
     week_start = today - timedelta(days=today.weekday())
     
@@ -698,7 +708,7 @@ async def process_daily_login(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    today = date.today()
+    today = get_today_in_app_timezone()
     # Calculate week start (Monday)
     week_start = today - timedelta(days=today.weekday())
     
@@ -789,7 +799,7 @@ async def get_question_status(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    today = date.today()
+    today = get_today_in_app_timezone()
     
     user_daily = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,

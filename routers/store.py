@@ -4,15 +4,25 @@ from typing import Optional, Literal, Dict, Any, List
 from pydantic import BaseModel, Field
 import json
 import random
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path as FilePath
 from sqlalchemy.sql import func
+import pytz
+import os
 
 from db import get_db
 from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, GemPackageConfig, BoostConfig, UserGemPurchase, TriviaUserDaily
 from routers.dependencies import get_current_user, get_admin_user
 
 router = APIRouter(prefix="/store", tags=["Store"])
+
+# Helper function to get today's date in the app timezone (EST/US Eastern)
+def get_today_in_app_timezone() -> date:
+    """Get today's date in the app's timezone (EST/US Eastern)."""
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    return now.date()
 
 # Load store configuration
 STORE_CONFIG_PATH = FilePath("config/store_items.json")
@@ -224,7 +234,7 @@ async def use_gameplay_boost(
         if not user.last_streak_date:
             raise HTTPException(status_code=400, detail="No active streak to save")
         
-        today = datetime.utcnow().date()
+        today = get_today_in_app_timezone()
         if user.last_streak_date.date() == today:
             raise HTTPException(status_code=400, detail="Already logged in today")
         
@@ -247,7 +257,7 @@ async def use_gameplay_boost(
         raise HTTPException(status_code=404, detail="Question not found")
 
     # Get user's daily question unlock/attempt
-    today = datetime.utcnow().date()
+    today = get_today_in_app_timezone()
     user_daily = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
         TriviaUserDaily.question_number == request.question_number,
