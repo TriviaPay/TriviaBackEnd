@@ -7,6 +7,7 @@ import random
 import json
 import pytz
 import os
+import logging
 
 from db import get_db
 from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, TriviaUserDaily, UserDailyRewards
@@ -485,6 +486,7 @@ async def submit_answer(
     ).first()
     
     if user_correct:
+        logging.warning(f"User {user.account_id} already answered correctly today")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You have already answered correctly today. Come back tomorrow for new questions!"
@@ -498,6 +500,7 @@ async def submit_answer(
     ).first()
     
     if not user_daily:
+        logging.warning(f"Question {question_number} not found or not unlocked for user {user.account_id} on {today}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Question not found or not unlocked"
@@ -505,6 +508,7 @@ async def submit_answer(
     
     # Validate question is unlocked
     if user_daily.unlock_method is None:
+        logging.warning(f"Question {question_number} is not unlocked for user {user.account_id} (unlock_method is None)")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Question is not unlocked"
@@ -523,6 +527,7 @@ async def submit_answer(
         # Check if there's a gap (unanswered question before this one)
         expected_next = max(answered_orders) + 1
         if user_daily.question_order > expected_next:
+            logging.warning(f"User {user.account_id} trying to answer question {question_number} (order {user_daily.question_order}) but should answer {expected_next} next")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Please answer questions in order. You should answer question {expected_next} next."
@@ -530,6 +535,7 @@ async def submit_answer(
     
     # Validate not already answered
     if user_daily.status in ['answered_correct', 'answered_wrong']:
+        logging.warning(f"User {user.account_id} trying to answer question {question_number} which already has status: {user_daily.status}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Question already answered"
