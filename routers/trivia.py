@@ -486,11 +486,14 @@ async def submit_answer(
     ).first()
     
     if user_correct:
+        warning_msg = "You have already answered correctly today. Come back tomorrow for new questions!"
         logging.warning(f"User {user.account_id} already answered correctly today")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You have already answered correctly today. Come back tomorrow for new questions!"
-        )
+        return {
+            "status": "error",
+            "message": warning_msg,
+            "is_correct": False,
+            "daily_completed": True
+        }
     
     # Find user's row for this question today
     user_daily = db.query(TriviaUserDaily).filter(
@@ -500,19 +503,25 @@ async def submit_answer(
     ).first()
     
     if not user_daily:
+        warning_msg = "Question not found or not unlocked"
         logging.warning(f"Question {question_number} not found or not unlocked for user {user.account_id} on {today}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Question not found or not unlocked"
-        )
+        return {
+            "status": "error",
+            "message": warning_msg,
+            "is_correct": False,
+            "daily_completed": False
+        }
     
     # Validate question is unlocked
     if user_daily.unlock_method is None:
+        warning_msg = "Question is not unlocked"
         logging.warning(f"Question {question_number} is not unlocked for user {user.account_id} (unlock_method is None)")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Question is not unlocked"
-        )
+        return {
+            "status": "error",
+            "message": warning_msg,
+            "is_correct": False,
+            "daily_completed": False
+        }
     
     # Validate sequential answering
     user_unlocks = db.query(TriviaUserDaily).filter(
@@ -527,19 +536,25 @@ async def submit_answer(
         # Check if there's a gap (unanswered question before this one)
         expected_next = max(answered_orders) + 1
         if user_daily.question_order > expected_next:
+            warning_msg = f"Please answer questions in order. You should answer question {expected_next} next."
             logging.warning(f"User {user.account_id} trying to answer question {question_number} (order {user_daily.question_order}) but should answer {expected_next} next")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Please answer questions in order. You should answer question {expected_next} next."
-            )
+            return {
+                "status": "error",
+                "message": warning_msg,
+                "is_correct": False,
+                "daily_completed": False
+            }
     
     # Validate not already answered
     if user_daily.status in ['answered_correct', 'answered_wrong']:
+        warning_msg = "Question already answered"
         logging.warning(f"User {user.account_id} trying to answer question {question_number} which already has status: {user_daily.status}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Question already answered"
-        )
+        return {
+            "status": "error",
+            "message": warning_msg,
+            "is_correct": False,
+            "daily_completed": False
+        }
     
     # Get the question
     question = db.query(Trivia).filter(Trivia.question_number == question_number).first()
@@ -596,6 +611,7 @@ async def submit_answer(
     db.commit()
 
     return {
+        "status": "success",
         "is_correct": is_correct,
         "correct_answer": question.correct_answer,
         "explanation": question.explanation,
