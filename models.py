@@ -68,7 +68,7 @@ class User(Base):
 
     # Wallet fields
     wallet_balance = Column(Float, default=0.0)  # Deprecated: use wallet_balance_minor instead
-    wallet_balance_minor = Column(BigInteger, default=0)  # Wallet balance in minor units (cents)
+    wallet_balance_minor = Column(BigInteger, nullable=True)  # Wallet balance in minor units (cents) - nullable until migration
     wallet_currency = Column(String, default='usd')  # Currency of wallet balance
     total_spent = Column(Float, default=0.0)  # Total amount spent in the app
     last_wallet_update = Column(DateTime, nullable=True)  # Last time wallet was updated
