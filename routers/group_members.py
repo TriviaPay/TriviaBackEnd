@@ -18,20 +18,49 @@ router = APIRouter(prefix="/groups", tags=["Group Members"])
 
 
 class AddMembersRequest(BaseModel):
-    user_ids: List[int] = Field(..., min_items=1)
+    user_ids: List[int] = Field(..., min_items=1, example=[1142961859, 9876543210])
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "user_ids": [1142961859, 9876543210]
+            }
+        }
 
 
 class PromoteRequest(BaseModel):
-    user_id: int
+    user_id: int = Field(..., example=1142961859)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "user_id": 1142961859
+            }
+        }
 
 
 class BanRequest(BaseModel):
-    user_id: int
-    reason: Optional[str] = None
+    user_id: int = Field(..., example=1142961859)
+    reason: Optional[str] = Field(None, example="Violation of group rules")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "user_id": 1142961859,
+                "reason": "Violation of group rules"
+            }
+        }
 
 
 class MuteRequest(BaseModel):
-    mute_until: Optional[datetime] = None  # None = unmute
+    mute_until: Optional[datetime] = Field(None, example="2025-11-10T16:00:00Z")  # None = unmute
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "mute_until": "2025-11-10T16:00:00Z"
+            }
+        }
 
 
 def check_group_role(db: Session, group_id: uuid.UUID, user_id: int, required_roles: List[str]) -> GroupParticipant:

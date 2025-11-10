@@ -18,15 +18,33 @@ router = APIRouter(prefix="/groups", tags=["Groups"])
 
 
 class CreateGroupRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=100)
-    about: Optional[str] = Field(None, max_length=500)
-    photo_url: Optional[str] = None
+    title: str = Field(..., min_length=1, max_length=100, example="My Test Group")
+    about: Optional[str] = Field(None, max_length=500, example="This is a test group for E2EE messaging")
+    photo_url: Optional[str] = Field(None, example="https://example.com/group-photo.jpg")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "title": "My Test Group",
+                "about": "This is a test group for E2EE messaging",
+                "photo_url": "https://example.com/group-photo.jpg"
+            }
+        }
 
 
 class UpdateGroupRequest(BaseModel):
-    title: Optional[str] = Field(None, min_length=1, max_length=100)
-    about: Optional[str] = Field(None, max_length=500)
-    photo_url: Optional[str] = None
+    title: Optional[str] = Field(None, min_length=1, max_length=100, example="Updated Group Title")
+    about: Optional[str] = Field(None, max_length=500, example="Updated group description")
+    photo_url: Optional[str] = Field(None, example="https://example.com/new-group-photo.jpg")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "title": "Updated Group Title",
+                "about": "Updated group description",
+                "photo_url": "https://example.com/new-group-photo.jpg"
+            }
+        }
 
 
 @router.post("")

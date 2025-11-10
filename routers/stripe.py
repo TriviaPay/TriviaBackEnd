@@ -51,13 +51,17 @@ https://stripe.com/docs/api
 import stripe
 import logging
 import json
+import math
+from decimal import Decimal
 from fastapi import APIRouter, Depends, Request, HTTPException, BackgroundTasks, Header, Body, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
+from sqlalchemy import select, func
 from db import get_db
-from models import User, Payment, PaymentTransaction, UserBankAccount, SubscriptionPlan, UserSubscription
+from models import User, Payment, PaymentTransaction, UserBankAccount, SubscriptionPlan, UserSubscription, WalletLedger, StripeWebhookEvent, WithdrawalRequest, UserWalletBalance
+from utils.wallet_ledger import add_ledger_entry, get_balance, validate_currency
 from routers.dependencies import get_current_user
 import config
 from datetime import datetime, timedelta
@@ -319,7 +323,7 @@ async def create_stripe_customer(
 # Endpoint to add funds to the user's wallet
 @router.post("/add-funds-to-wallet")
 async def add_funds_to_wallet(
-    amount: int = Body(..., description="Amount in cents to add to wallet (e.g., 1000 for $10.00)"),
+    amount_minor: int = Body(..., description="Amount in minor units (cents) to add to wallet (e.g., 1000 for $10.00)"),
     currency: str = Body("usd", description="Three-letter currency code (e.g., 'usd', 'eur')"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
@@ -334,13 +338,13 @@ async def add_funds_to_wallet(
     - Process payments via Stripe that will be credited to the user's in-app wallet
     
     ### Request Body:
-    - `amount`: The amount in cents to add to the wallet (e.g., 1000 for $10.00)
+    - `amount_minor`: The amount in minor units (cents) to add to the wallet (e.g., 1000 for $10.00)
     - `currency`: Three-letter currency code (default: 'usd')
     
     ### Returns:
     - `clientSecret`: Stripe PaymentIntent client secret to complete payment on the client
     - `paymentIntentId`: ID of the created Stripe PaymentIntent
-    - `amount`: The amount in cents that will be charged
+    - `amount_minor`: The amount in minor units that will be charged
     - `currency`: The currency code being used
     
     ### Note:
@@ -355,6 +359,17 @@ async def add_funds_to_wallet(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
+        # Validate currency
+        if not validate_currency(currency):
+            raise HTTPException(status_code=400, detail=f"Invalid currency code: {currency}")
+        
+        # Validate amount
+        if amount_minor <= 0:
+            raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+        
+        # Generate idempotency key
+        idempotency_key = f"wallet_deposit_{user.account_id}_{int(datetime.utcnow().timestamp())}"
+        
         # Create payment intent with user metadata
         metadata = {
             "transaction_type": "wallet_deposit",
@@ -363,7 +378,7 @@ async def add_funds_to_wallet(
         }
         
         payment_intent = stripe.PaymentIntent.create(
-            amount=amount,
+            amount=amount_minor,
             currency=currency,
             metadata=metadata,
             automatic_payment_methods={"enabled": True}
@@ -373,10 +388,14 @@ async def add_funds_to_wallet(
         transaction = PaymentTransaction(
             user_id=user.account_id,
             payment_intent_id=payment_intent.id,
-            amount=amount / 100.0,  # Convert cents to dollars
+            amount=amount_minor / 100.0,  # Keep for backward compatibility
+            amount_minor=amount_minor,
             currency=currency,
             status="pending",
-            payment_metadata=json.dumps(metadata)
+            direction="inbound",
+            payment_metadata=json.dumps(metadata),
+            idempotency_key=idempotency_key,
+            livemode=payment_intent.livemode if hasattr(payment_intent, 'livemode') else False
         )
         
         db.add(transaction)
@@ -385,7 +404,7 @@ async def add_funds_to_wallet(
         return {
             "clientSecret": payment_intent.client_secret,
             "paymentIntentId": payment_intent.id,
-            "amount": amount,
+            "amount_minor": amount_minor,
             "currency": currency
         }
     except stripe.error.StripeError as e:
@@ -393,9 +412,11 @@ async def add_funds_to_wallet(
         logger.error(f"Stripe error: {str(e)}")
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         # Log and return error
-        logger.error(f"Error adding funds to wallet: {str(e)}")
+        logger.error(f"Error adding funds to wallet: {str(e)}", exc_info=True)
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -490,7 +511,7 @@ async def create_payment_intent(
         raise HTTPException(status_code=500, detail=str(e))
 
 # Function to handle successful payment
-async def handle_successful_payment(payment_intent):
+async def handle_successful_payment(payment_intent, event_id: Optional[str] = None):
     # Create a database session
     db = next(get_db())
     
@@ -500,92 +521,251 @@ async def handle_successful_payment(payment_intent):
             PaymentTransaction.payment_intent_id == payment_intent.id
         ).first()
         
+        metadata = payment_intent.metadata.to_dict() if hasattr(payment_intent.metadata, 'to_dict') else payment_intent.metadata
+        user_id = int(metadata.get("user_id")) if metadata.get("user_id") else None
+        currency = payment_intent.currency or 'usd'
+        amount_minor = payment_intent.amount  # Already in minor units from Stripe
+        livemode = payment_intent.livemode if hasattr(payment_intent, 'livemode') else False
+        
         if transaction:
             # Check if the transaction is already marked as succeeded (idempotency check)
             if transaction.status == "succeeded":
-                logging.info(f"Payment {payment_intent.id} already processed. Skipping to ensure idempotency.")
+                logger.info(f"Payment {payment_intent.id} already processed. Skipping to ensure idempotency.")
                 return
                 
             # Update transaction status
             transaction.status = "succeeded"
+            transaction.amount_minor = amount_minor
             transaction.payment_method = payment_intent.payment_method
             transaction.payment_method_type = payment_intent.payment_method_types[0] if payment_intent.payment_method_types else None
-            transaction.payment_metadata = json.dumps(payment_intent.metadata.to_dict())
+            transaction.payment_metadata = json.dumps(metadata)
+            transaction.event_id = event_id
+            transaction.livemode = livemode
+            transaction.stripe_customer_id = payment_intent.customer if hasattr(payment_intent, 'customer') else None
+            transaction.charge_id = payment_intent.latest_charge if hasattr(payment_intent, 'latest_charge') else None
             
             # Get user from transaction
             user = db.query(User).filter(User.account_id == transaction.user_id).first()
             
-            if user and payment_intent.metadata.get("transaction_type") == "wallet_deposit":
-                # Check if wallet was already updated for this payment (idempotency check)
-                previous_metadata = json.loads(transaction.payment_metadata) if transaction.payment_metadata else {}
-                if previous_metadata.get("wallet_credited"):
-                    logging.info(f"Wallet for user {user.account_id} already credited for payment {payment_intent.id}. Skipping.")
-                else:
-                    # Add funds to user's wallet
-                    current_balance = user.wallet_balance or 0
-                    user.wallet_balance = current_balance + (payment_intent.amount / 100.0)  # Convert cents to dollars
-                    user.last_wallet_update = datetime.utcnow()
-                    
-                    # Update metadata to record that wallet was credited
-                    metadata = payment_intent.metadata.to_dict()
-                    metadata["wallet_credited"] = True
-                    metadata["credited_at"] = datetime.utcnow().isoformat()
-                    transaction.payment_metadata = json.dumps(metadata)
-                    
-                    logging.info(f"Added ${payment_intent.amount / 100.0} to user {user.account_id}'s wallet. New balance: ${user.wallet_balance}")
+            if user and metadata.get("transaction_type") == "wallet_deposit":
+                # Check per-object idempotency: ensure only one deposit per payment_intent
+                existing_ledger = db.query(WalletLedger).filter(
+                    WalletLedger.external_ref_type == 'payment_intent',
+                    WalletLedger.external_ref_id == payment_intent.id,
+                    WalletLedger.kind == 'deposit'
+                ).first()
+                
+                if existing_ledger:
+                    logger.info(f"Deposit for payment_intent {payment_intent.id} already processed. Balance: {existing_ledger.balance_after_minor}")
+                    return
+                
+                # Use wallet ledger to add funds atomically
+                try:
+                    new_balance = add_ledger_entry(
+                        db=db,
+                        user_id=transaction.user_id,
+                        currency=currency,
+                        delta_minor=amount_minor,
+                        kind='deposit',
+                        external_ref_type='payment_intent',
+                        external_ref_id=payment_intent.id,
+                        event_id=event_id,
+                        idempotency_key=f"pi_{payment_intent.id}",
+                        livemode=livemode
+                    )
+                    logger.info(f"Added {amount_minor} {currency} to user {transaction.user_id}'s wallet. New balance: {new_balance}")
+                except ValueError as e:
+                    # Idempotency check - already processed
+                    logger.info(f"Wallet entry already exists for payment {payment_intent.id}: {str(e)}")
             
             db.commit()
-            logging.info(f"Payment successful for transaction {transaction.id}")
+            logger.info(f"Payment successful for transaction {transaction.id}")
         else:
             # Create a new transaction record if not found
-            metadata = payment_intent.metadata.to_dict()
-            user_id = int(metadata.get("user_id")) if metadata.get("user_id") else None
-            
             if user_id:
                 transaction = PaymentTransaction(
                     user_id=user_id,
                     payment_intent_id=payment_intent.id,
-                    amount=payment_intent.amount / 100.0,  # Convert cents to dollars
-                    currency=payment_intent.currency,
+                    amount=amount_minor / 100.0,  # Keep for backward compatibility
+                    amount_minor=amount_minor,
+                    currency=currency,
                     status="succeeded",
                     payment_method=payment_intent.payment_method,
                     payment_method_type=payment_intent.payment_method_types[0] if payment_intent.payment_method_types else None,
-                    payment_metadata=json.dumps(metadata)
+                    payment_metadata=json.dumps(metadata),
+                    event_id=event_id,
+                    livemode=livemode,
+                    stripe_customer_id=payment_intent.customer if hasattr(payment_intent, 'customer') else None,
+                    charge_id=payment_intent.latest_charge if hasattr(payment_intent, 'latest_charge') else None,
+                    direction='inbound'
                 )
                 
                 db.add(transaction)
                 
-                # If this is a wallet deposit, add funds to user's wallet
+                # If this is a wallet deposit, add funds to user's wallet using ledger
                 if metadata.get("transaction_type") == "wallet_deposit":
-                    user = db.query(User).filter(User.account_id == user_id).first()
-                    if user:
-                        # Check if there is another transaction for this payment (idempotency check)
-                        duplicate_tx = db.query(PaymentTransaction).filter(
-                            PaymentTransaction.payment_intent_id == payment_intent.id,
-                            PaymentTransaction.id != transaction.id
-                        ).first()
-                        
-                        if duplicate_tx:
-                            logging.warning(f"Duplicate transaction detected for payment {payment_intent.id}. Skipping wallet update.")
-                        else:
-                            current_balance = user.wallet_balance or 0
-                            user.wallet_balance = current_balance + (payment_intent.amount / 100.0)
-                            user.last_wallet_update = datetime.utcnow()
-                            
-                            # Update metadata to record that wallet was credited
-                            metadata["wallet_credited"] = True
-                            metadata["credited_at"] = datetime.utcnow().isoformat()
-                            transaction.payment_metadata = json.dumps(metadata)
-                            
-                            logging.info(f"Added ${payment_intent.amount / 100.0} to user {user.account_id}'s wallet. New balance: ${user.wallet_balance}")
+                    # Check per-object idempotency: ensure only one deposit per payment_intent
+                    existing_ledger = db.query(WalletLedger).filter(
+                        WalletLedger.external_ref_type == 'payment_intent',
+                        WalletLedger.external_ref_id == payment_intent.id,
+                        WalletLedger.kind == 'deposit'
+                    ).first()
+                    
+                    if existing_ledger:
+                        logger.info(f"Deposit for payment_intent {payment_intent.id} already processed. Balance: {existing_ledger.balance_after_minor}")
+                    else:
+                        try:
+                            new_balance = add_ledger_entry(
+                                db=db,
+                                user_id=user_id,
+                                currency=currency,
+                                delta_minor=amount_minor,
+                                kind='deposit',
+                                external_ref_type='payment_intent',
+                                external_ref_id=payment_intent.id,
+                                event_id=event_id,
+                                idempotency_key=f"pi_{payment_intent.id}",
+                                livemode=livemode
+                            )
+                            logger.info(f"Added {amount_minor} {currency} to user {user_id}'s wallet. New balance: {new_balance}")
+                        except ValueError as e:
+                            logger.warning(f"Could not add wallet entry: {str(e)}")
                 
                 db.commit()
-                logging.info(f"Created new transaction record for payment {payment_intent.id}")
+                logger.info(f"Created new transaction record for payment {payment_intent.id}")
     except Exception as e:
         db.rollback()
-        logging.error(f"Error processing successful payment: {str(e)}")
+        logger.error(f"Error processing successful payment: {str(e)}", exc_info=True)
     finally:
         db.close()
+
+# Function to handle refund
+async def handle_refund(charge, event_id: Optional[str] = None):
+    """Handle charge refund events."""
+    db = next(get_db())
+    try:
+        # Find transaction by charge ID
+        transaction = db.query(PaymentTransaction).filter(
+            PaymentTransaction.charge_id == charge.id
+        ).first()
+        
+        if not transaction:
+            logger.warning(f"Transaction not found for charge {charge.id}")
+            return
+        
+        # Check if already processed
+        if transaction.refund_id:
+            logger.info(f"Refund for charge {charge.id} already processed")
+            return
+        
+        refund_amount_minor = charge.amount_refunded if hasattr(charge, 'amount_refunded') else 0
+        currency = charge.currency or transaction.currency
+        livemode = charge.livemode if hasattr(charge, 'livemode') else False
+        
+        # Update transaction
+        if hasattr(charge, 'refunds') and charge.refunds and charge.refunds.data:
+            transaction.refund_id = charge.refunds.data[0].id
+        else:
+            transaction.refund_id = charge.id
+        
+        # If this was a wallet deposit, debit from wallet
+        metadata = json.loads(transaction.payment_metadata) if transaction.payment_metadata else {}
+        if metadata.get("transaction_type") == "wallet_deposit" and refund_amount_minor > 0:
+            try:
+                new_balance = add_ledger_entry(
+                    db=db,
+                    user_id=transaction.user_id,
+                    currency=currency,
+                    delta_minor=-refund_amount_minor,  # Negative for refund
+                    kind='refund',
+                    external_ref_type='charge',
+                    external_ref_id=charge.id,
+                    event_id=event_id,
+                    idempotency_key=f"refund_{charge.id}",
+                    livemode=livemode
+                )
+                logger.info(f"Refunded {refund_amount_minor} {currency} from user {transaction.user_id}'s wallet. New balance: {new_balance}")
+            except ValueError as e:
+                logger.warning(f"Could not process refund: {str(e)}")
+        
+        db.commit()
+        logger.info(f"Refund processed for charge {charge.id}")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error processing refund: {str(e)}", exc_info=True)
+    finally:
+        db.close()
+
+
+# Function to handle dispute
+async def handle_dispute(dispute, event_id: Optional[str] = None):
+    """Handle charge dispute events."""
+    db = next(get_db())
+    try:
+        charge_id = dispute.charge if isinstance(dispute.charge, str) else dispute.charge.id
+        transaction = db.query(PaymentTransaction).filter(
+            PaymentTransaction.charge_id == charge_id
+        ).first()
+        
+        if not transaction:
+            logger.warning(f"Transaction not found for charge {charge_id}")
+            return
+        
+        dispute_amount_minor = dispute.amount
+        currency = dispute.currency or transaction.currency
+        livemode = dispute.livemode if hasattr(dispute, 'livemode') else False
+        
+        metadata = json.loads(transaction.payment_metadata) if transaction.payment_metadata else {}
+        
+        if dispute.status == 'warning_needs_response' or dispute.status == 'needs_response':
+            # Hold funds
+            try:
+                new_balance = add_ledger_entry(
+                    db=db,
+                    user_id=transaction.user_id,
+                    currency=currency,
+                    delta_minor=-dispute_amount_minor,
+                    kind='dispute_hold',
+                    external_ref_type='dispute',
+                    external_ref_id=dispute.id,
+                    event_id=event_id,
+                    idempotency_key=f"dispute_hold_{dispute.id}",
+                    livemode=livemode
+                )
+                logger.info(f"Dispute hold: {dispute_amount_minor} {currency} from user {transaction.user_id}. New balance: {new_balance}")
+            except ValueError as e:
+                logger.warning(f"Could not process dispute hold: {str(e)}")
+        
+        elif dispute.status == 'won':
+            # Release hold
+            try:
+                new_balance = add_ledger_entry(
+                    db=db,
+                    user_id=transaction.user_id,
+                    currency=currency,
+                    delta_minor=dispute_amount_minor,
+                    kind='dispute_release',
+                    external_ref_type='dispute',
+                    external_ref_id=dispute.id,
+                    event_id=event_id,
+                    idempotency_key=f"dispute_release_{dispute.id}",
+                    livemode=livemode
+                )
+                logger.info(f"Dispute won: released {dispute_amount_minor} {currency} to user {transaction.user_id}. New balance: {new_balance}")
+            except ValueError as e:
+                logger.warning(f"Could not process dispute release: {str(e)}")
+        
+        elif dispute.status == 'lost':
+            # Funds are debited (already held, no additional action needed)
+            logger.info(f"Dispute lost for charge {charge_id}, funds already held")
+        
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error processing dispute: {str(e)}", exc_info=True)
+    finally:
+        db.close()
+
 
 # Function to handle failed payment
 async def handle_failed_payment(payment_intent_id: str, db: Session):
@@ -673,28 +853,85 @@ async def stripe_webhook(
     - Implement an audit_log table to track all payment-related events for compliance
     - Add notification system for critical events like failed payouts
     """
+    event_id = None  # Initialize event_id
     try:
-        # Get the payload from the request
+        # Get the raw payload BEFORE any JSON parsing (critical for signature verification)
         payload = await request.body()
         sig_header = stripe_signature
         
         logger.info("Received Stripe webhook")
         
+        # Check event idempotency first (before processing)
         try:
-            # Verify webhook signature
+            # Parse JSON only for event ID check, but keep raw payload for signature
+            payload_json = json.loads(payload)
+            event_id = payload_json.get('id')
+            
+            if event_id:
+                # Check if we've already processed this event
+                existing_event = db.query(StripeWebhookEvent).filter(
+                    StripeWebhookEvent.event_id == event_id
+                ).first()
+                
+                if existing_event:
+                    if existing_event.status == 'processed':
+                        logger.info(f"Event {event_id} already processed, skipping")
+                        return {"status": "success", "message": "Event already processed"}
+                    elif existing_event.status == 'failed':
+                        logger.warning(f"Event {event_id} previously failed, retrying")
+                    else:
+                        logger.info(f"Event {event_id} already received, processing")
+        except json.JSONDecodeError:
+            logger.warning("Could not parse payload for event ID check, continuing...")
+        
+        try:
+            # Verify webhook signature using RAW body with timestamp tolerance (5 minutes = 300 seconds)
             endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
             if endpoint_secret:
                 event = stripe.Webhook.construct_event(
-                    payload, sig_header, endpoint_secret
+                    payload, sig_header, endpoint_secret, tolerance=300
                 )
             else:
                 # For testing without a webhook secret
                 data = json.loads(payload)
                 event = stripe.Event.construct_from(data, stripe.api_key)
+            
+            # Get event_id from event object if not already set
+            if not event_id and hasattr(event, 'id'):
+                event_id = event.id
+            
+            # Store event in database for idempotency tracking
+            if event_id:
+                webhook_event = db.query(StripeWebhookEvent).filter(
+                    StripeWebhookEvent.event_id == event_id
+                ).first()
                 
-            logger.info(f"Validated webhook: {event.type}")
+                if not webhook_event:
+                    webhook_event = StripeWebhookEvent(
+                        event_id=event_id,
+                        type=event.type,
+                        livemode=event.livemode,
+                        status='received'
+                    )
+                    db.add(webhook_event)
+                    db.commit()
+                else:
+                    webhook_event.received_at = datetime.utcnow()
+                    db.add(webhook_event)
+                    db.commit()
+                
+            logger.info(f"Validated webhook: {event.type}, ID: {event_id}")
         except (ValueError, stripe.error.SignatureVerificationError) as e:
             logger.error(f"Webhook signature verification failed: {e}")
+            if event_id:
+                webhook_event = db.query(StripeWebhookEvent).filter(
+                    StripeWebhookEvent.event_id == event_id
+                ).first()
+                if webhook_event:
+                    webhook_event.status = 'failed'
+                    webhook_event.last_error = str(e)
+                    db.add(webhook_event)
+                    db.commit()
             raise HTTPException(status_code=400, detail=str(e))
         
         # Handle the event
@@ -708,7 +945,7 @@ async def stripe_webhook(
             
             if event_type == 'payment_intent.succeeded':
                 # Handle payment succeeded
-                background_tasks.add_task(handle_successful_payment, event_object)
+                background_tasks.add_task(handle_successful_payment, event_object, event.id)
                 
             elif event_type == 'payment_intent.payment_failed':
                 # Handle payment failed
@@ -733,6 +970,9 @@ async def stripe_webhook(
                     user_sub.status = event_object.status
                     user_sub.current_period_start = datetime.fromtimestamp(event_object.current_period_start)
                     user_sub.current_period_end = datetime.fromtimestamp(event_object.current_period_end)
+                    user_sub.stripe_customer_id = event_object.customer if hasattr(event_object, 'customer') else user_sub.stripe_customer_id
+                    user_sub.default_payment_method_id = event_object.default_payment_method if hasattr(event_object, 'default_payment_method') else user_sub.default_payment_method_id
+                    user_sub.livemode = event_object.livemode if hasattr(event_object, 'livemode') else user_sub.livemode
                     db.add(user_sub)
                     db.commit()
                 
@@ -741,11 +981,18 @@ async def stripe_webhook(
                     user_sub.current_period_start = datetime.fromtimestamp(event_object.current_period_start)
                     user_sub.current_period_end = datetime.fromtimestamp(event_object.current_period_end)
                     user_sub.cancel_at_period_end = event_object.cancel_at_period_end
+                    if hasattr(event_object, 'cancel_at') and event_object.cancel_at:
+                        user_sub.cancel_at = datetime.fromtimestamp(event_object.cancel_at)
+                    if hasattr(event_object, 'canceled_at') and event_object.canceled_at:
+                        user_sub.canceled_at = datetime.fromtimestamp(event_object.canceled_at)
+                    user_sub.default_payment_method_id = event_object.default_payment_method if hasattr(event_object, 'default_payment_method') else user_sub.default_payment_method_id
                     db.add(user_sub)
                     db.commit()
                 
                 elif event_type == 'customer.subscription.deleted':
                     user_sub.status = 'canceled'
+                    if hasattr(event_object, 'canceled_at') and event_object.canceled_at:
+                        user_sub.canceled_at = datetime.fromtimestamp(event_object.canceled_at)
                     db.add(user_sub)
                     db.commit()
         
@@ -773,14 +1020,20 @@ async def stripe_webhook(
                         logger.info(f"Invoice {invoice_id} already processed. Skipping to ensure idempotency.")
                     else:
                         # Create a payment transaction record
+                        amount_paid_minor = event_object.amount_paid  # Already in minor units from Stripe
                         transaction = PaymentTransaction(
                             user_id=user_sub.user_id,
                             payment_intent_id=event_object.payment_intent,
-                            amount=event_object.amount_paid / 100.0,  # Convert cents to dollars
+                            amount=amount_paid_minor / 100.0,  # Keep for backward compatibility
+                            amount_minor=amount_paid_minor,
                             currency=event_object.currency,
                             status='succeeded',
                             payment_method='card',
                             payment_method_type='subscription',
+                            direction='subscription',
+                            event_id=event_id,
+                            livemode=event_object.livemode if hasattr(event_object, 'livemode') else False,
+                            stripe_customer_id=customer_id,
                             payment_metadata=json.dumps({
                                 'transaction_type': 'subscription_renewal',
                                 'invoice_id': invoice_id,
@@ -790,8 +1043,13 @@ async def stripe_webhook(
                         )
                         db.add(transaction)
                         
-                        # Ensure subscription status is active
+                        # Update subscription fields
                         user_sub.status = 'active'
+                        user_sub.latest_invoice_id = invoice_id
+                        if hasattr(event_object, 'period_start'):
+                            user_sub.current_period_start = datetime.fromtimestamp(event_object.period_start)
+                        if hasattr(event_object, 'period_end'):
+                            user_sub.current_period_end = datetime.fromtimestamp(event_object.period_end)
                         db.add(user_sub)
                         db.commit()
             
@@ -825,14 +1083,20 @@ async def stripe_webhook(
                         action_url = event_object.hosted_invoice_url
                         
                         # Store the payment action required info
+                        amount_due_minor = event_object.amount_due  # Already in minor units
                         transaction = PaymentTransaction(
                             user_id=user_sub.user_id,
                             payment_intent_id=event_object.payment_intent,
-                            amount=event_object.amount_due / 100.0,  # Convert cents to dollars
+                            amount=amount_due_minor / 100.0,  # Keep for backward compatibility
+                            amount_minor=amount_due_minor,
                             currency=event_object.currency,
                             status='action_required',
                             payment_method='card',
                             payment_method_type='subscription',
+                            direction='subscription',
+                            event_id=event_id,
+                            livemode=event_object.livemode if hasattr(event_object, 'livemode') else False,
+                            stripe_customer_id=customer_id,
                             payment_metadata=json.dumps({
                                 'transaction_type': 'subscription_renewal',
                                 'invoice_id': invoice_id,
@@ -853,54 +1117,75 @@ async def stripe_webhook(
             payout_id = event_object.id
             logger.info(f"Processing payout event: {event_type}, ID: {payout_id}")
             
-            # Find transaction by payout ID
-            transaction = db.query(PaymentTransaction).filter(
-                PaymentTransaction.payment_intent_id == payout_id
+            # Find withdrawal request by payout ID
+            withdrawal_request = db.query(WithdrawalRequest).filter(
+                WithdrawalRequest.stripe_payout_id == payout_id
             ).first()
             
-            if transaction:
+            if withdrawal_request:
                 if event_type == 'payout.created':
-                    # Update transaction status
-                    transaction.status = 'processing'
-                    db.add(transaction)
+                    # Update withdrawal request status
+                    withdrawal_request.status = 'processing'
+                    withdrawal_request.stripe_balance_txn_id = event_object.balance_transaction if hasattr(event_object, 'balance_transaction') else withdrawal_request.stripe_balance_txn_id
+                    withdrawal_request.event_id = event_id
+                    db.add(withdrawal_request)
                     db.commit()
                 
                 elif event_type == 'payout.paid':
                     # Payout successfully deposited
-                    transaction.status = 'succeeded'
-                    db.add(transaction)
+                    withdrawal_request.status = 'paid'
+                    withdrawal_request.processed_at = datetime.utcnow()
+                    withdrawal_request.stripe_balance_txn_id = event_object.balance_transaction if hasattr(event_object, 'balance_transaction') else withdrawal_request.stripe_balance_txn_id
+                    withdrawal_request.event_id = event_id
+                    db.add(withdrawal_request)
                     db.commit()
                 
                 elif event_type == 'payout.failed':
-                    # Payout failed, refund the user
-                    transaction.status = 'failed'
-                    transaction.last_error = event_object.failure_message
+                    # Payout failed, refund the user via ledger
+                    withdrawal_request.status = 'failed'
+                    withdrawal_request.event_id = event_id
+                    failure_message = event_object.failure_message if hasattr(event_object, 'failure_message') else "Payout failed"
                     
-                    # Handle idempotency - check if we already refunded
-                    metadata = json.loads(transaction.payment_metadata) if transaction.payment_metadata else {}
-                    if metadata.get("refunded"):
-                        logger.info(f"Payout {payout_id} failure already processed. Skipping refund to ensure idempotency.")
-                    else:
-                        # Get the user and update the balance
-                        user = db.query(User).filter(User.account_id == transaction.user_id).first()
-                        if user:
-                            user.wallet_balance = user.wallet_balance + transaction.amount
-                            user.last_wallet_update = datetime.utcnow()
-                            db.add(user)
-                            
-                            # Update metadata to record refund
-                            metadata["refunded"] = True
-                            metadata["refund_date"] = datetime.utcnow().isoformat()
-                            metadata["refund_reason"] = event_object.failure_message
-                            transaction.payment_metadata = json.dumps(metadata)
-                            
-                            logger.info(f"Refunded ${transaction.amount} to user {user.account_id} due to failed payout")
-                        
-                            # TODO: Send email notification about the failed payout
-                            logger.warning(f"Payout failed for transaction {transaction.id}. Reason: {event_object.failure_message}")
+                    # Refund via ledger adjustment (amount + fee)
+                    refund_total_minor = withdrawal_request.amount_minor + withdrawal_request.fee_minor
+                    try:
+                        new_balance = add_ledger_entry(
+                            db=db,
+                            user_id=withdrawal_request.user_id,
+                            currency=withdrawal_request.currency,
+                            delta_minor=refund_total_minor,
+                            kind='adjustment',
+                            external_ref_type='withdrawal',
+                            external_ref_id=str(withdrawal_request.id),
+                            event_id=event_id,
+                            idempotency_key=f"payout_failed_refund_{withdrawal_request.id}",
+                            livemode=withdrawal_request.livemode
+                        )
+                        logger.info(
+                            f"Refunded {refund_total_minor} {withdrawal_request.currency} to user "
+                            f"{withdrawal_request.user_id} due to failed payout. New balance: {new_balance}"
+                        )
+                    except ValueError as e:
+                        logger.warning(f"Could not process payout refund: {str(e)}")
                     
-                    db.add(transaction)
+                    withdrawal_request.admin_notes = f"Payout failed: {failure_message}"
+                    db.add(withdrawal_request)
                     db.commit()
+                    
+                    # TODO: Send email notification about the failed payout
+                    logger.warning(f"Payout failed for withdrawal {withdrawal_request.id}. Reason: {failure_message}")
+        
+        # Refund events
+        elif event_type == 'charge.refunded':
+            charge_id = event_object.id
+            logger.info(f"Processing refund event: {event_type}, Charge ID: {charge_id}")
+            background_tasks.add_task(handle_refund, event_object, event.id)
+        
+        # Dispute events
+        elif event_type.startswith('charge.dispute.'):
+            dispute_id = event_object.id
+            logger.info(f"Processing dispute event: {event_type}, Dispute ID: {dispute_id}")
+            background_tasks.add_task(handle_dispute, event_object, event.id)
         
         # Bank account verification events
         elif event_type.startswith('bank_account.'):
@@ -923,10 +1208,32 @@ async def stripe_webhook(
                     db.add(bank_account)
                     db.commit()
         
+        # Mark event as processed
+        if event_id:
+            webhook_event = db.query(StripeWebhookEvent).filter(
+                StripeWebhookEvent.event_id == event_id
+            ).first()
+            if webhook_event:
+                webhook_event.status = 'processed'
+                webhook_event.processed_at = datetime.utcnow()
+                db.add(webhook_event)
+                db.commit()
+        
         return {"status": "success"}
     
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
+        logger.error(f"Error processing webhook: {e}", exc_info=True)
+        # Mark event as failed
+        if event_id:
+            webhook_event = db.query(StripeWebhookEvent).filter(
+                StripeWebhookEvent.event_id == event_id
+            ).first()
+            if webhook_event:
+                webhook_event.status = 'failed'
+                webhook_event.last_error = str(e)
+                webhook_event.processed_at = datetime.utcnow()
+                db.add(webhook_event)
+                db.commit()
         raise HTTPException(status_code=500, detail=str(e))
 
 # Endpoint to get user's wallet balance
@@ -968,6 +1275,10 @@ async def get_wallet_balance(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
+        # Get balance from wallet ledger (new system)
+        balance_minor = get_balance(db, user.account_id, 'usd')
+        balance_dollars = balance_minor / 100.0
+        
         # Get recent transactions
         recent_transactions = db.query(PaymentTransaction).filter(
             PaymentTransaction.user_id == user.account_id,
@@ -977,9 +1288,12 @@ async def get_wallet_balance(
         # Format transactions for response
         transactions = []
         for tx in recent_transactions:
+            # Use amount_minor if available, otherwise convert amount
+            amount_minor = tx.amount_minor if tx.amount_minor is not None else int(tx.amount * 100)
             transactions.append({
                 "id": tx.id,
-                "amount": tx.amount,
+                "amount": tx.amount,  # Keep for backward compatibility
+                "amount_minor": amount_minor,
                 "currency": tx.currency,
                 "created_at": tx.created_at.isoformat() if tx.created_at else None,
                 "payment_method_type": tx.payment_method_type,
@@ -987,8 +1301,9 @@ async def get_wallet_balance(
             })
         
         return {
-            "wallet_balance": user.wallet_balance or 0.0,
-            "currency": "USD",  # Default currency
+            "wallet_balance": balance_dollars,  # Keep for backward compatibility
+            "wallet_balance_minor": balance_minor,
+            "currency": user.wallet_currency or "usd",
             "last_updated": user.last_wallet_update.isoformat() if user.last_wallet_update else None,
             "recent_transactions": transactions
         }
@@ -999,8 +1314,9 @@ async def get_wallet_balance(
 # Endpoint to withdraw funds from wallet
 @router.post("/withdraw-from-wallet")
 async def withdraw_from_wallet(
-    amount: float = Body(..., description="Amount in dollars to withdraw from wallet"),
-    payout_method: str = Body(..., description="Method for withdrawal ('standard' or 'instant')"),
+    amount_minor: int = Body(..., description="Amount in minor units (cents) to withdraw from wallet (e.g., 2500 for $25.00)"),
+    currency: str = Body("usd", description="Three-letter currency code (e.g., 'usd', 'eur')"),
+    method: str = Body(..., description="Method for withdrawal ('standard' or 'instant')"),
     bank_account_id: Optional[int] = Body(None, description="ID of the saved bank account to use for withdrawal"),
     payout_details: Optional[Dict[str, Any]] = Body(None, description="Details needed for the payout if not using a saved bank account"),
     db: Session = Depends(get_db),
@@ -1016,8 +1332,9 @@ async def withdraw_from_wallet(
     - Process withdrawal requests using standard or instant methods
     
     ### Request Body:
-    - `amount`: Amount in dollars to withdraw (must be less than or equal to current wallet balance)
-    - `payout_method`: Method for withdrawal ('standard' or 'instant')
+    - `amount_minor`: Amount in minor units (cents) to withdraw (e.g., 2500 for $25.00)
+    - `currency`: Three-letter currency code (default: 'usd')
+    - `method`: Method for withdrawal ('standard' or 'instant')
       - 'standard': Free, processed within 1-3 business days, subject to admin review
       - 'instant': Instant transfer, 1.5% fee (minimum $0.50), no admin review required
     - `bank_account_id`: (Optional) ID of a saved bank account to use
@@ -1025,11 +1342,12 @@ async def withdraw_from_wallet(
     
     ### Returns:
     - `status`: Status of the withdrawal request
-    - `amount`: Amount being withdrawn
-    - `fee`: Any processing fee (for instant transfers)
-    - `net_amount`: Final amount after fees
+    - `amount_minor`: Amount being withdrawn in minor units
+    - `fee_minor`: Processing fee in minor units (for instant transfers)
+    - `net_amount_minor`: Final amount after fees in minor units
     - `currency`: Currency of the withdrawal
-    - `transaction_id`: ID of the created transaction record
+    - `withdrawal_request_id`: ID of the created withdrawal request
+    - `balance_after_minor`: New wallet balance after withdrawal
     - `message`: Informational message about the withdrawal process
     
     ### Note:
@@ -1045,36 +1363,72 @@ async def withdraw_from_wallet(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        # Validate withdrawal method
-        if payout_method not in ["standard", "instant"]:
-            raise HTTPException(status_code=400, detail="Invalid payout method. Must be 'standard' or 'instant'")
+        # Validate inputs
+        if amount_minor <= 0:
+            raise HTTPException(status_code=400, detail="Amount must be greater than 0")
         
-        # Set transaction metadata
-        metadata = {
-            "transaction_type": "wallet_withdrawal",
-            "user_email": user.email,
-            "withdraw_method": payout_method
-        }
+        if method not in ["standard", "instant"]:
+            raise HTTPException(status_code=400, detail="Invalid method. Must be 'standard' or 'instant'")
         
-        # Calculate processing fee for instant transfers
-        fee = 0
-        if payout_method == "instant":
-            # 1.5% fee with minimum of $0.50
-            fee = max(round(amount * 0.015, 2), 0.50)
-            
+        if not validate_currency(currency):
+            raise HTTPException(status_code=400, detail=f"Invalid currency code: {currency}")
+        
+        # Calculate processing fee for instant transfers (1.5% with minimum $0.50 = 50 cents)
+        fee_minor = 0
+        if method == "instant":
+            fee_minor = max(math.ceil(Decimal(amount_minor) * Decimal("0.015")), 50)
+        
         # Calculate total amount needed (withdrawal + fee)
-        total_amount = amount + fee
+        total_amount_minor = amount_minor + fee_minor
         
-        # Check if user has enough balance
-        current_balance = user.wallet_balance or 0
-        if current_balance < total_amount:
+        # Get or create balance row, then lock it to prevent concurrent withdrawals
+        # This ensures atomic balance checking and withdrawal creation
+        balance_row = db.query(UserWalletBalance).filter(
+            UserWalletBalance.user_id == user.account_id,
+            UserWalletBalance.currency == currency
+        ).first()
+        
+        if not balance_row:
+            # Create balance row if it doesn't exist (start at 0)
+            balance_row = UserWalletBalance(
+                user_id=user.account_id,
+                currency=currency,
+                balance_minor=0,
+                last_recalculated_at=datetime.utcnow()
+            )
+            db.add(balance_row)
+            db.flush()  # Flush to get the row in the database
+        
+        # Now lock the row (whether it existed or was just created)
+        locked_balance_row = db.query(UserWalletBalance).filter(
+            UserWalletBalance.user_id == user.account_id,
+            UserWalletBalance.currency == currency
+        ).with_for_update(nowait=True).first()
+        
+        if not locked_balance_row:
+            # This shouldn't happen, but handle it gracefully
+            raise HTTPException(status_code=500, detail="Failed to lock wallet balance")
+        
+        current_balance_minor = locked_balance_row.balance_minor
+        
+        # Check for pending withdrawals that would overdraw (while holding lock)
+        pending_withdrawals = db.query(func.sum(WithdrawalRequest.amount_minor + WithdrawalRequest.fee_minor)).filter(
+            WithdrawalRequest.user_id == user.account_id,
+            WithdrawalRequest.currency == currency,
+            WithdrawalRequest.status.in_(['pending', 'processing', 'approved'])
+        ).scalar() or 0
+        
+        available_balance = current_balance_minor - pending_withdrawals
+        
+        # Validate sufficient balance
+        if available_balance < total_amount_minor:
             raise HTTPException(
-                status_code=400, 
-                detail=f"Insufficient funds. Available balance: ${current_balance:.2f}, " +
-                       f"Required: ${amount:.2f} + ${fee:.2f} fee = ${total_amount:.2f}"
+                status_code=400,
+                detail=f"Insufficient funds. Available balance: {available_balance / 100.0:.2f} {currency.upper()}, "
+                       f"Required: {amount_minor / 100.0:.2f} + {fee_minor / 100.0:.2f} fee = {total_amount_minor / 100.0:.2f} {currency.upper()}"
             )
         
-        # If bank account ID is provided, validate and use that account
+        # Validate bank account
         bank_account = None
         if bank_account_id:
             bank_account = db.query(UserBankAccount).filter(
@@ -1087,105 +1441,120 @@ async def withdraw_from_wallet(
             
             if not bank_account.is_verified:
                 raise HTTPException(status_code=400, detail="Bank account is not verified")
-            
-            # Add bank account details to metadata
-            metadata["bank_account_id"] = bank_account_id
-            metadata["account_name"] = bank_account.account_name
-            metadata["bank_name"] = bank_account.bank_name
-            metadata["account_last4"] = bank_account.account_number_last4
-            
-            # For production, you would decrypt the account info here to use with Stripe
-        
-        # If no bank account ID but payout details provided, use those
-        elif payout_details:
-            # Validate payout details contain necessary info
-            required_fields = ["account_holder_name", "account_number", "routing_number", "bank_name"]
-            for field in required_fields:
-                if field not in payout_details:
-                    raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
-            
-            # Add details to metadata
-            metadata["account_name"] = payout_details["account_holder_name"]
-            metadata["bank_name"] = payout_details["bank_name"]
-            metadata["account_last4"] = get_last_four(payout_details["account_number"])
-            
-            # For production, you would encrypt this data before storing
-        else:
+        elif not payout_details:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="Either bank_account_id or payout_details must be provided"
             )
         
-        # Create a transaction record
-        transaction = PaymentTransaction(
+        # Create withdrawal request
+        withdrawal_request = WithdrawalRequest(
             user_id=user.account_id,
-            amount=amount,
-            currency="usd",
-            status="pending" if payout_method == "standard" else "processing",
-            payment_method="bank_account",
-            payment_method_type=payout_method,
-            payment_metadata=json.dumps({
-                **metadata,
-                "fee": fee,
-                "payout_details": payout_details if payout_details else "Using saved bank account"
-            })
+            amount_minor=amount_minor,
+            currency=currency,
+            method=method,
+            fee_minor=fee_minor,
+            status='pending' if method == 'standard' else 'processing',
+            requested_at=datetime.utcnow(),
+            livemode=False  # TODO: Get from config
         )
         
-        # Update user's wallet balance
-        user.wallet_balance = current_balance - total_amount
-        user.last_wallet_update = datetime.utcnow()
+        db.add(withdrawal_request)
+        db.flush()  # Get the ID
         
-        db.add(transaction)
-        db.commit()
-        db.refresh(transaction)
+        # Insert ledger entries atomically
+        # Note: add_ledger_entry will lock again, but since we're in the same transaction,
+        # PostgreSQL will allow it (same transaction can re-acquire the same lock)
+        new_balance = current_balance_minor
         
-        logger.info(f"{payout_method.capitalize()} withdrawal of ${amount} requested by user {user.account_id}")
-        
-        # For instant transfers, process immediately with Stripe
-        if payout_method == "instant":
+        # Fee entry (if instant)
+        if fee_minor > 0:
             try:
-                # In production, this would use the Stripe API to initiate an instant payout
-                # stripe_payout = stripe.Payout.create(
-                #     amount=int(amount * 100),  # Convert to cents
-                #     currency="usd",
-                #     method="instant",
-                #     source_type="card",
-                #     metadata={
-                #         "transaction_id": transaction.id,
-                #         "user_id": user.account_id
-                #     }
-                # )
-                
-                # For demo purposes, simulate a successful payout with a unique ID
-                payout_id = f"po_inst_{int(datetime.utcnow().timestamp())}"
-                
-                # Update transaction with payout ID
-                transaction.payment_intent_id = payout_id
-                transaction.status = "succeeded"  # Assume success for demo
-                db.add(transaction)
+                new_balance = add_ledger_entry(
+                    db=db,
+                    user_id=user.account_id,
+                    currency=currency,
+                    delta_minor=-fee_minor,
+                    kind='fee',
+                    external_ref_type='withdrawal',
+                    external_ref_id=str(withdrawal_request.id),
+                    idempotency_key=f"withdrawal_fee_{withdrawal_request.id}",
+                    livemode=False
+                )
+            except ValueError as e:
+                # Idempotency - already processed
+                logger.warning(f"Fee ledger entry already exists: {str(e)}")
+                # Get current balance
+                new_balance = get_balance(db, user.account_id, currency)
+        
+        # Withdrawal entry (principal)
+        try:
+            new_balance = add_ledger_entry(
+                db=db,
+                user_id=user.account_id,
+                currency=currency,
+                delta_minor=-amount_minor,
+                kind='withdraw',
+                external_ref_type='withdrawal',
+                external_ref_id=str(withdrawal_request.id),
+                idempotency_key=f"withdrawal_{withdrawal_request.id}",
+                livemode=False
+            )
+        except ValueError as e:
+            # Idempotency - already processed
+            logger.warning(f"Withdrawal ledger entry already exists: {str(e)}")
+            # Get current balance
+            new_balance = get_balance(db, user.account_id, currency)
+        
+        db.commit()
+        db.refresh(withdrawal_request)
+        
+        logger.info(
+            f"{method.capitalize()} withdrawal of {amount_minor} {currency} "
+            f"(fee: {fee_minor}) requested by user {user.account_id}. "
+            f"New balance: {new_balance}"
+        )
+        
+        # For instant transfers, attempt to process immediately
+        if method == "instant":
+            try:
+                # TODO: When Stripe Connect is implemented, create transfer/payout here
+                # For now, mark as processing (admin will complete via process_withdrawal)
+                withdrawal_request.status = 'processing'
+                db.add(withdrawal_request)
                 db.commit()
                 
                 return {
-                    "status": "succeeded",
-                    "amount": amount,
-                    "fee": fee,
-                    "net_amount": amount - fee,
-                    "currency": "usd",
-                    "transaction_id": transaction.id,
-                    "payment_intent_id": payout_id,
-                    "message": "Instant withdrawal processed successfully. Funds should arrive within minutes."
+                    "status": "processing",
+                    "amount_minor": amount_minor,
+                    "fee_minor": fee_minor,
+                    "net_amount_minor": amount_minor,  # User receives amount, fee is separate
+                    "currency": currency,
+                    "withdrawal_request_id": withdrawal_request.id,
+                    "balance_after_minor": new_balance,
+                    "message": "Instant withdrawal initiated. Funds will be transferred shortly."
                 }
-                
             except Exception as e:
-                # If instant payout fails, refund the user and log the error
-                logger.error(f"Error processing instant withdrawal: {str(e)}")
-                
-                user.wallet_balance = user.wallet_balance + total_amount
-                transaction.status = "failed"
-                transaction.last_error = str(e)
-                db.add(user)
-                db.add(transaction)
-                db.commit()
+                logger.error(f"Error processing instant withdrawal: {str(e)}", exc_info=True)
+                # Revert ledger entries via adjustment
+                try:
+                    add_ledger_entry(
+                        db=db,
+                        user_id=user.account_id,
+                        currency=currency,
+                        delta_minor=total_amount_minor,  # Refund total
+                        kind='adjustment',
+                        external_ref_type='withdrawal',
+                        external_ref_id=str(withdrawal_request.id),
+                        idempotency_key=f"withdrawal_reversal_{withdrawal_request.id}",
+                        livemode=False
+                    )
+                    withdrawal_request.status = 'failed'
+                    db.add(withdrawal_request)
+                    db.commit()
+                except Exception as revert_error:
+                    logger.error(f"Failed to revert withdrawal: {str(revert_error)}", exc_info=True)
+                    db.rollback()
                 
                 raise HTTPException(
                     status_code=500,
@@ -1195,29 +1564,31 @@ async def withdraw_from_wallet(
         # For standard transfers, return pending status
         return {
             "status": "pending",
-            "amount": amount,
-            "fee": fee,
-            "net_amount": amount,
-            "currency": "usd",
-            "transaction_id": transaction.id,
+            "amount_minor": amount_minor,
+            "fee_minor": fee_minor,
+            "net_amount_minor": amount_minor,
+            "currency": currency,
+            "withdrawal_request_id": withdrawal_request.id,
+            "balance_after_minor": new_balance,
             "message": "Withdrawal request submitted successfully. Funds will be transferred within 1-3 business days after admin approval."
         }
             
+    except HTTPException:
+        db.rollback()
+        raise
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error: {str(e)}")
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException as e:
-        # Re-raise HTTP exceptions
-        raise
     except Exception as e:
-        logger.error(f"Error processing withdrawal: {str(e)}")
+        logger.error(f"Error processing withdrawal: {str(e)}", exc_info=True)
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 # Endpoint to get withdrawal history
 @router.get("/withdrawal-history")
 async def get_withdrawal_history(
+    currency: Optional[str] = Query(None, description="Filter by currency code (e.g., 'usd')"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     limit: int = 10,
@@ -1234,19 +1605,20 @@ async def get_withdrawal_history(
     - View details of completed withdrawals
     
     ### Query Parameters:
+    - `currency`: (Optional) Filter by currency code
     - `limit`: Maximum number of records to return (default: 10)
     - `offset`: Number of records to skip for pagination (default: 0)
     
     ### Returns:
-    - `withdrawals`: List of withdrawal transactions with the following fields:
-        - `id`: Withdrawal transaction ID
-        - `amount`: Amount in dollars
+    - `withdrawals`: List of withdrawal requests with the following fields:
+        - `id`: Withdrawal request ID
+        - `amount_minor`: Amount in minor units
+        - `fee_minor`: Fee in minor units
         - `currency`: Currency code
-        - `status`: Status of the withdrawal ('pending', 'completed', 'failed')
-        - `created_at`: When the withdrawal was requested
-        - `updated_at`: When the withdrawal was last updated
-        - `payout_method`: Method used for withdrawal
-        - `payout_details`: Details of the withdrawal method
+        - `status`: Status of the withdrawal ('pending', 'processing', 'paid', 'failed', 'canceled')
+        - `method`: Method used for withdrawal ('standard' or 'instant')
+        - `requested_at`: When the withdrawal was requested
+        - `processed_at`: When the withdrawal was processed (if applicable)
     - `total_count`: Total number of withdrawal records for pagination
     """
     try:
@@ -1258,84 +1630,88 @@ async def get_withdrawal_history(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        # Get withdrawal transactions
-        withdrawals = db.query(PaymentTransaction).filter(
-            PaymentTransaction.user_id == user.account_id,
-            PaymentTransaction.payment_metadata.contains('"transaction_type": "wallet_withdrawal"')
-        ).order_by(PaymentTransaction.created_at.desc()).offset(offset).limit(limit).all()
+        # Build query
+        query = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.user_id == user.account_id
+        )
+        
+        # Filter by currency if provided
+        if currency:
+            if not validate_currency(currency):
+                raise HTTPException(status_code=400, detail=f"Invalid currency code: {currency}")
+            query = query.filter(WithdrawalRequest.currency == currency)
+        
+        # Get total count before pagination
+        total_count = query.count()
+        
+        # Get paginated results
+        withdrawals = query.order_by(WithdrawalRequest.requested_at.desc()).offset(offset).limit(limit).all()
         
         # Format the results
         withdrawal_history = []
         for withdrawal in withdrawals:
-            try:
-                metadata = json.loads(withdrawal.payment_metadata) if withdrawal.payment_metadata else {}
-                payout_details = metadata.get("payout_details", {})
-                
-                withdrawal_history.append({
-                    "id": withdrawal.id,
-                    "amount": withdrawal.amount,
-                    "currency": withdrawal.currency,
-                    "status": withdrawal.status,
-                    "created_at": withdrawal.created_at.isoformat() if withdrawal.created_at else None,
-                    "updated_at": withdrawal.updated_at.isoformat() if withdrawal.updated_at else None,
-                    "payout_method": withdrawal.payment_method_type,
-                    "payout_details": payout_details
-                })
-            except Exception as e:
-                logger.error(f"Error processing withdrawal record {withdrawal.id}: {str(e)}")
-                # Continue with the next record
+            withdrawal_history.append({
+                "id": withdrawal.id,
+                "amount_minor": withdrawal.amount_minor,
+                "fee_minor": withdrawal.fee_minor,
+                "currency": withdrawal.currency,
+                "status": withdrawal.status,
+                "method": withdrawal.method,
+                "requested_at": withdrawal.requested_at.isoformat() if withdrawal.requested_at else None,
+                "processed_at": withdrawal.processed_at.isoformat() if withdrawal.processed_at else None,
+                "admin_notes": withdrawal.admin_notes
+            })
         
         return {
             "withdrawals": withdrawal_history,
-            "total_count": db.query(PaymentTransaction).filter(
-                PaymentTransaction.user_id == user.account_id,
-                PaymentTransaction.payment_metadata.contains('"transaction_type": "wallet_withdrawal"')
-            ).count()
+            "total_count": total_count
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error retrieving withdrawal history: {str(e)}")
+        logger.error(f"Error retrieving withdrawal history: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Admin endpoint to process withdrawals
-@router.post("/admin/process-withdrawal/{transaction_id}")
+@router.post("/admin/process-withdrawal/{withdrawal_request_id}")
 async def process_withdrawal(
-    transaction_id: int,
-    status: str = Body(..., description="New status for the withdrawal ('completed' or 'failed')"),
-    notes: str = Body(None, description="Admin notes about the withdrawal process or reason for failure"),
+    withdrawal_request_id: int,
+    status: str = Body(..., description="New status for the withdrawal ('paid' or 'failed')"),
+    notes: Optional[str] = Body(None, description="Admin notes about the withdrawal process or reason for failure"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     """
     ## Process Withdrawal Request (Admin Only)
     
-    Allows administrators to approve or reject standard withdrawal requests.
+    Allows administrators to approve or reject withdrawal requests.
     
     ### Use this endpoint to:
-    - Mark standard withdrawals as completed after sending funds
+    - Mark standard withdrawals as paid after sending funds via Stripe
     - Reject withdrawals that cannot be processed
     - Add notes about the processing outcome
     - Review details of instant withdrawals (but cannot change their status if already processed)
     
     ### Path Parameters:
-    - `transaction_id`: ID of the withdrawal transaction to process
+    - `withdrawal_request_id`: ID of the withdrawal request to process
     
     ### Request Body:
     - `status`: New status for the withdrawal:
-        - 'completed': Mark the withdrawal as successfully processed
+        - 'paid': Mark the withdrawal as successfully processed (funds sent)
         - 'failed': Mark the withdrawal as failed, which will refund the amount to the user's wallet
     - `notes`: Optional admin notes about the withdrawal process or reason for failure
     
     ### Returns:
-    - `transaction_id`: ID of the processed transaction
+    - `withdrawal_request_id`: ID of the processed withdrawal request
     - `status`: Updated status
     - `notes`: Admin notes provided
-    - `withdrawal_type`: Type of withdrawal ('standard' or 'instant')
-    - `updated_at`: Timestamp of the update
+    - `method`: Type of withdrawal ('standard' or 'instant')
+    - `processed_at`: Timestamp of the processing
     - `message`: Additional information about the action taken
     
     ### Note:
     This endpoint requires admin privileges. If a withdrawal is marked as failed,
-    the amount will be automatically refunded to the user's wallet.
+    the amount (including fees) will be automatically refunded to the user's wallet via ledger.
     
     Instant withdrawals that have already been processed cannot have their status changed,
     but admins can still review them and add notes.
@@ -1345,119 +1721,117 @@ async def process_withdrawal(
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
-        user = db.query(User).filter(User.sub == sub).first()
-        if not user or not user.is_admin:
+        admin_user = db.query(User).filter(User.sub == sub).first()
+        if not admin_user or not admin_user.is_admin:
             raise HTTPException(status_code=403, detail="Admin access required")
         
-        # Get the transaction
-        transaction = db.query(PaymentTransaction).filter(
-            PaymentTransaction.id == transaction_id
+        # Get the withdrawal request
+        withdrawal_request = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.id == withdrawal_request_id
         ).first()
         
-        if not transaction:
-            raise HTTPException(status_code=404, detail=f"Transaction {transaction_id} not found")
-        
-        # Check if it's a withdrawal transaction
-        metadata = json.loads(transaction.payment_metadata) if transaction.payment_metadata else {}
-        if metadata.get("transaction_type") != "wallet_withdrawal":
-            raise HTTPException(status_code=400, detail="Not a withdrawal transaction")
-        
-        # Get withdrawal method
-        withdrawal_type = metadata.get("withdraw_method", "standard")
+        if not withdrawal_request:
+            raise HTTPException(status_code=404, detail=f"Withdrawal request {withdrawal_request_id} not found")
         
         # For instant withdrawals that are already processed, don't allow status changes
-        if withdrawal_type == "instant" and transaction.status in ["succeeded", "failed"]:
+        if withdrawal_request.method == "instant" and withdrawal_request.status in ["paid", "failed"]:
             # Just add admin notes without changing status
             if notes:
-                transaction.admin_notes = notes
-                db.add(transaction)
+                withdrawal_request.admin_notes = notes
+                db.add(withdrawal_request)
                 db.commit()
             
             return {
-                "transaction_id": transaction_id,
-                "status": transaction.status,
+                "withdrawal_request_id": withdrawal_request_id,
+                "status": withdrawal_request.status,
                 "notes": notes,
-                "withdrawal_type": withdrawal_type,
-                "updated_at": transaction.updated_at.isoformat() if transaction.updated_at else None,
+                "method": withdrawal_request.method,
+                "processed_at": withdrawal_request.processed_at.isoformat() if withdrawal_request.processed_at else None,
                 "message": "This instant withdrawal has already been processed and cannot be changed. Notes added for record keeping."
             }
         
-        # Validate status for standard withdrawals
-        if status not in ["completed", "failed"]:
-            raise HTTPException(status_code=400, detail="Status must be 'completed' or 'failed'")
+        # Validate status
+        if status not in ["paid", "failed"]:
+            raise HTTPException(status_code=400, detail="Status must be 'paid' or 'failed'")
         
-        old_status = transaction.status
-        transaction.status = status
-        transaction.last_error = notes if status == "failed" else None
-        transaction.admin_notes = notes
+        old_status = withdrawal_request.status
         
-        # Calculate refund amount (including any fees)
-        refund_amount = transaction.amount
-        fee = metadata.get("fee", 0)
-        if withdrawal_type == "instant" and fee > 0:
-            refund_amount += fee
-        
-        # If the withdrawal failed, refund the amount to the user's wallet
+        # If the withdrawal failed, refund the amount to the user's wallet via ledger
         if status == "failed" and old_status != "failed":
-            # Get the user
-            withdrawal_user = db.query(User).filter(User.account_id == transaction.user_id).first()
-            if withdrawal_user:
-                # Add the withdrawal amount back to the user's wallet
-                withdrawal_user.wallet_balance = (withdrawal_user.wallet_balance or 0) + refund_amount
-                withdrawal_user.last_wallet_update = datetime.utcnow()
-                
-                # Update metadata with refund information
-                metadata["refunded"] = True
-                metadata["refund_date"] = datetime.utcnow().isoformat()
-                metadata["refund_reason"] = notes or "Withdrawal failed"
-                metadata["refund_amount"] = refund_amount
-                transaction.payment_metadata = json.dumps(metadata)
-                
-                logger.info(f"Refunded ${refund_amount} to user {withdrawal_user.account_id} due to failed withdrawal")
+            # Calculate total refund (amount + fee)
+            refund_total_minor = withdrawal_request.amount_minor + withdrawal_request.fee_minor
+            
+            # Refund via ledger adjustment
+            try:
+                new_balance = add_ledger_entry(
+                    db=db,
+                    user_id=withdrawal_request.user_id,
+                    currency=withdrawal_request.currency,
+                    delta_minor=refund_total_minor,
+                    kind='adjustment',
+                    external_ref_type='withdrawal',
+                    external_ref_id=str(withdrawal_request.id),
+                    idempotency_key=f"withdrawal_refund_{withdrawal_request.id}",
+                    livemode=withdrawal_request.livemode
+                )
+                logger.info(
+                    f"Refunded {refund_total_minor} {withdrawal_request.currency} to user "
+                    f"{withdrawal_request.user_id} due to failed withdrawal. New balance: {new_balance}"
+                )
+            except ValueError as e:
+                logger.warning(f"Could not process refund: {str(e)}")
         
-        # For completed standard withdrawals, we would normally complete the payout here
-        if status == "completed" and withdrawal_type == "standard" and old_status != "completed":
-            # In production, this would initiate the actual Stripe payout
-            # stripe_payout = stripe.Payout.create(
-            #     amount=int(transaction.amount * 100),  # Convert to cents
-            #     currency="usd",
-            #     method="standard",
-            #     metadata={
-            #         "transaction_id": transaction.id,
-            #         "user_id": transaction.user_id
-            #     }
-            # )
-            
-            # For demo purposes, simulate a successful payout with a unique ID
-            payout_id = f"po_std_{int(datetime.utcnow().timestamp())}"
-            transaction.payment_intent_id = payout_id
-            
-            # Update metadata with payout information
-            metadata["payout_date"] = datetime.utcnow().isoformat()
-            metadata["payout_id"] = payout_id
-            transaction.payment_metadata = json.dumps(metadata)
-            
-            logger.info(f"Standard withdrawal {transaction_id} processed: ${transaction.amount} for user {transaction.user_id}")
+        # For paid standard withdrawals, create Stripe payout (when Connect is ready)
+        if status == "paid" and withdrawal_request.method == "standard" and old_status != "paid":
+            try:
+                # TODO: When Stripe Connect is implemented:
+                # 1. Get connected account for user
+                # 2. Create Transfer to connected account
+                # 3. Create Payout from connected account (or use auto-payout)
+                # 4. Store stripe_transfer_id and stripe_payout_id
+                
+                # For now, simulate a successful payout
+                payout_id = f"po_std_{int(datetime.utcnow().timestamp())}"
+                withdrawal_request.stripe_payout_id = payout_id
+                withdrawal_request.stripe_balance_txn_id = f"txn_{int(datetime.utcnow().timestamp())}"
+                
+                logger.info(
+                    f"Standard withdrawal {withdrawal_request_id} processed: "
+                    f"{withdrawal_request.amount_minor} {withdrawal_request.currency} for user {withdrawal_request.user_id}"
+                )
+            except Exception as e:
+                logger.error(f"Error creating Stripe payout: {str(e)}", exc_info=True)
+                # Don't fail the request, just log the error
         
+        # Update withdrawal request
+        withdrawal_request.status = status
+        withdrawal_request.admin_id = admin_user.account_id
+        withdrawal_request.admin_notes = notes
+        withdrawal_request.processed_at = datetime.utcnow()
+        
+        db.add(withdrawal_request)
         db.commit()
+        db.refresh(withdrawal_request)
         
-        logger.info(f"Withdrawal {transaction_id} marked as {status} by admin {user.account_id}")
+        logger.info(
+            f"Withdrawal {withdrawal_request_id} marked as {status} by admin {admin_user.account_id}"
+        )
         
         return {
-            "transaction_id": transaction_id,
+            "withdrawal_request_id": withdrawal_request_id,
             "status": status,
             "notes": notes,
-            "withdrawal_type": withdrawal_type,
-            "updated_at": transaction.updated_at.isoformat() if transaction.updated_at else None,
-            "message": f"{withdrawal_type.capitalize()} withdrawal successfully {status}."
+            "method": withdrawal_request.method,
+            "processed_at": withdrawal_request.processed_at.isoformat() if withdrawal_request.processed_at else None,
+            "message": f"{withdrawal_request.method.capitalize()} withdrawal successfully {status}."
         }
         
     except HTTPException:
-        # Re-raise HTTP exceptions
+        db.rollback()
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error processing withdrawal status update: {str(e)}")
+        logger.error(f"Error processing withdrawal status update: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Bank Account Management Endpoints
@@ -1993,39 +2367,37 @@ async def cancel_subscription(
 # Admin endpoint to view all withdrawal transactions
 @router.get("/admin/withdrawals")
 async def admin_get_withdrawals(
-    withdrawal_type: Optional[str] = Query(None, description="Filter by withdrawal type: 'standard' or 'instant'"),
-    status: Optional[str] = Query(None, description="Filter by status: 'pending', 'processing', 'succeeded', 'failed'"),
-    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    method: Optional[str] = Query(None, description="Filter by withdrawal method: 'standard' or 'instant'"),
+    status: Optional[str] = Query(None, description="Filter by status: 'pending', 'processing', 'paid', 'failed', 'canceled'"),
+    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    currency: Optional[str] = Query(None, description="Filter by currency code"),
     limit: int = Query(20, description="Maximum number of records to return"),
     offset: int = Query(0, description="Number of records to skip"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
     """
-    ## Get All Withdrawal Transactions (Admin Only)
+    ## Get All Withdrawal Requests (Admin Only)
     
-    Returns a paginated list of withdrawal transactions with filtering options.
+    Returns a paginated list of withdrawal requests with filtering options.
     
     ### Use this endpoint to:
     - View and manage all withdrawal requests
-    - Filter transactions by type, status, or user
+    - Filter requests by method, status, user, or currency
     - Monitor instant vs standard withdrawals
     
     ### Query Parameters:
-    - `withdrawal_type`: (Optional) Filter by 'standard' or 'instant'
-    - `status`: (Optional) Filter by transaction status ('pending', 'processing', 'succeeded', 'failed')
+    - `method`: (Optional) Filter by 'standard' or 'instant'
+    - `status`: (Optional) Filter by status ('pending', 'processing', 'paid', 'failed', 'canceled')
     - `user_id`: (Optional) Filter by specific user ID
+    - `currency`: (Optional) Filter by currency code
     - `limit`: Maximum number of records to return (default: 20)
     - `offset`: Number of records to skip for pagination (default: 0)
     
     ### Returns:
-    - `withdrawals`: List of withdrawal transactions with details
+    - `withdrawals`: List of withdrawal requests with details
     - `total_count`: Total number of withdrawals matching the filters
-    - `instant_count`: Number of instant withdrawals
-    - `standard_count`: Number of standard withdrawals
-    - `pending_count`: Number of pending withdrawals
-    - `succeeded_count`: Number of succeeded withdrawals
-    - `failed_count`: Number of failed withdrawals
+    - `summary`: Summary statistics by type and status
     
     ### Note:
     This endpoint requires admin privileges.
@@ -2035,139 +2407,134 @@ async def admin_get_withdrawals(
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid user token")
         
-        user = db.query(User).filter(User.sub == sub).first()
-        if not user or not user.is_admin:
+        admin_user = db.query(User).filter(User.sub == sub).first()
+        if not admin_user or not admin_user.is_admin:
             raise HTTPException(status_code=403, detail="Admin access required")
         
-        # Build the base query for withdrawal transactions
-        base_query = db.query(PaymentTransaction).filter(
-            PaymentTransaction.payment_metadata.contains('"transaction_type": "wallet_withdrawal"')
-        )
+        # Build the base query for withdrawal requests
+        base_query = db.query(WithdrawalRequest)
         
-        # Apply type filter if provided
-        if withdrawal_type:
-            if withdrawal_type not in ["standard", "instant"]:
-                raise HTTPException(status_code=400, detail="Withdrawal type must be 'standard' or 'instant'")
-            base_query = base_query.filter(
-                PaymentTransaction.payment_metadata.contains(f'"withdraw_method": "{withdrawal_type}"')
-            )
+        # Apply method filter if provided
+        if method:
+            if method not in ["standard", "instant"]:
+                raise HTTPException(status_code=400, detail="Method must be 'standard' or 'instant'")
+            base_query = base_query.filter(WithdrawalRequest.method == method)
         
         # Apply status filter if provided
         if status:
-            if status not in ["pending", "processing", "succeeded", "failed"]:
+            if status not in ["pending", "processing", "paid", "failed", "canceled"]:
                 raise HTTPException(
-                    status_code=400, 
-                    detail="Status must be one of: 'pending', 'processing', 'succeeded', 'failed'"
+                    status_code=400,
+                    detail="Status must be one of: 'pending', 'processing', 'paid', 'failed', 'canceled'"
                 )
-            base_query = base_query.filter(PaymentTransaction.status == status)
+            base_query = base_query.filter(WithdrawalRequest.status == status)
         
         # Apply user filter if provided
         if user_id:
-            base_query = base_query.filter(PaymentTransaction.user_id == user_id)
+            base_query = base_query.filter(WithdrawalRequest.user_id == user_id)
+        
+        # Apply currency filter if provided
+        if currency:
+            if not validate_currency(currency):
+                raise HTTPException(status_code=400, detail=f"Invalid currency code: {currency}")
+            base_query = base_query.filter(WithdrawalRequest.currency == currency)
         
         # Get total counts for summary stats
         total_count = base_query.count()
         
-        # Get counts by type
-        instant_count = db.query(PaymentTransaction).filter(
-            PaymentTransaction.payment_metadata.contains('"transaction_type": "wallet_withdrawal"'),
-            PaymentTransaction.payment_metadata.contains('"withdraw_method": "instant"')
+        # Get counts by method
+        instant_count = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.method == "instant"
         ).count()
         
-        standard_count = db.query(PaymentTransaction).filter(
-            PaymentTransaction.payment_metadata.contains('"transaction_type": "wallet_withdrawal"'),
-            PaymentTransaction.payment_metadata.contains('"withdraw_method": "standard"')
+        standard_count = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.method == "standard"
         ).count()
         
         # Get counts by status
-        pending_count = db.query(PaymentTransaction).filter(
-            PaymentTransaction.payment_metadata.contains('"transaction_type": "wallet_withdrawal"'),
-            PaymentTransaction.status == "pending"
+        pending_count = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.status == "pending"
         ).count()
         
-        processing_count = db.query(PaymentTransaction).filter(
-            PaymentTransaction.payment_metadata.contains('"transaction_type": "wallet_withdrawal"'),
-            PaymentTransaction.status == "processing"
+        processing_count = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.status == "processing"
         ).count()
         
-        succeeded_count = db.query(PaymentTransaction).filter(
-            PaymentTransaction.payment_metadata.contains('"transaction_type": "wallet_withdrawal"'),
-            PaymentTransaction.status == "succeeded"
+        paid_count = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.status == "paid"
         ).count()
         
-        failed_count = db.query(PaymentTransaction).filter(
-            PaymentTransaction.payment_metadata.contains('"transaction_type": "wallet_withdrawal"'),
-            PaymentTransaction.status == "failed"
+        failed_count = db.query(WithdrawalRequest).filter(
+            WithdrawalRequest.status == "failed"
         ).count()
         
         # Get paginated results
-        transactions = base_query.order_by(
-            PaymentTransaction.created_at.desc()
+        withdrawals = base_query.order_by(
+            WithdrawalRequest.requested_at.desc()
         ).offset(offset).limit(limit).all()
         
-        # Format each transaction with user details
+        # Format each withdrawal with user details
         formatted_withdrawals = []
-        for tx in transactions:
+        for withdrawal in withdrawals:
             try:
-                metadata = json.loads(tx.payment_metadata) if tx.payment_metadata else {}
-                
                 # Get user details
-                withdrawal_user = db.query(User).filter(User.account_id == tx.user_id).first()
-                user_email = withdrawal_user.email if withdrawal_user else metadata.get("user_email", "Unknown")
-                user_name = withdrawal_user.name if withdrawal_user else "Unknown"
+                withdrawal_user = db.query(User).filter(User.account_id == withdrawal.user_id).first()
+                user_email = withdrawal_user.email if withdrawal_user else "Unknown"
+                user_name = f"{withdrawal_user.first_name or ''} {withdrawal_user.last_name or ''}".strip() or withdrawal_user.username if withdrawal_user else "Unknown"
                 
-                # Extract withdrawal details
-                withdraw_method = metadata.get("withdraw_method", "standard")
-                fee = metadata.get("fee", 0)
+                # Get bank account details if available
+                bank_account = db.query(UserBankAccount).filter(
+                    UserBankAccount.user_id == withdrawal.user_id,
+                    UserBankAccount.is_default == True
+                ).first()
                 
-                # Format bank details
                 bank_details = {
-                    "account_name": metadata.get("account_name", "N/A"),
-                    "bank_name": metadata.get("bank_name", "N/A"),
-                    "account_last4": metadata.get("account_last4", "N/A")
+                    "account_name": bank_account.account_name if bank_account else "N/A",
+                    "bank_name": bank_account.bank_name if bank_account else "N/A",
+                    "account_last4": bank_account.account_number_last4 if bank_account else "N/A"
                 }
                 
                 formatted_withdrawals.append({
-                    "id": tx.id,
-                    "user_id": tx.user_id,
+                    "id": withdrawal.id,
+                    "user_id": withdrawal.user_id,
                     "user_email": user_email,
                     "user_name": user_name,
-                    "amount": tx.amount,
-                    "fee": fee,
-                    "net_amount": tx.amount - fee if withdraw_method == "instant" else tx.amount,
-                    "currency": tx.currency,
-                    "status": tx.status,
-                    "payment_intent_id": tx.payment_intent_id,
-                    "withdrawal_type": withdraw_method,
+                    "amount_minor": withdrawal.amount_minor,
+                    "fee_minor": withdrawal.fee_minor,
+                    "net_amount_minor": withdrawal.amount_minor,  # User receives amount, fee is separate
+                    "currency": withdrawal.currency,
+                    "status": withdrawal.status,
+                    "method": withdrawal.method,
+                    "stripe_payout_id": withdrawal.stripe_payout_id,
+                    "stripe_transfer_id": withdrawal.stripe_transfer_id,
+                    "stripe_balance_txn_id": withdrawal.stripe_balance_txn_id,
                     "bank_details": bank_details,
-                    "admin_notes": tx.admin_notes,
-                    "last_error": tx.last_error,
-                    "created_at": tx.created_at.isoformat() if tx.created_at else None,
-                    "updated_at": tx.updated_at.isoformat() if tx.updated_at else None,
+                    "admin_notes": withdrawal.admin_notes,
+                    "requested_at": withdrawal.requested_at.isoformat() if withdrawal.requested_at else None,
+                    "processed_at": withdrawal.processed_at.isoformat() if withdrawal.processed_at else None,
                 })
             except Exception as e:
-                logger.error(f"Error processing withdrawal record {tx.id}: {str(e)}")
+                logger.error(f"Error processing withdrawal record {withdrawal.id}: {str(e)}", exc_info=True)
                 # Continue with the next record
         
         return {
             "withdrawals": formatted_withdrawals,
             "total_count": total_count,
             "summary": {
-                "by_type": {
+                "by_method": {
                     "instant": instant_count,
                     "standard": standard_count
                 },
                 "by_status": {
                     "pending": pending_count,
                     "processing": processing_count,
-                    "succeeded": succeeded_count,
+                    "paid": paid_count,
                     "failed": failed_count
                 }
             }
         }
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.error(f"Error retrieving withdrawal transactions: {str(e)}")
+        logger.error(f"Error retrieving withdrawal requests: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) 

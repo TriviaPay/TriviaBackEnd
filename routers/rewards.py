@@ -656,7 +656,7 @@ async def today_winners_reveal(
 
 # ======== Admin Endpoints ========
 
-@router.post("/admin/trigger-draw", response_model=DrawResponse)
+@router.post("/admin/trigger-draw", response_model=DrawResponse, operation_id="rewards_admin_trigger_draw")
 async def trigger_draw(
     draw_date: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -925,7 +925,7 @@ async def get_draw_config(
             detail=f"Error getting draw configuration: {str(e)}"
         )
 
-@router.put("/admin/draw-config")
+@router.put("/admin/draw-config", operation_id="rewards_admin_update_draw_config")
 async def update_draw_config(
     config: DrawConfigUpdateRequest,
     claims: dict = Depends(get_admin_user),

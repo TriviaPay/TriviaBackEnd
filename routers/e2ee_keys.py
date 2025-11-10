@@ -27,26 +27,63 @@ router = APIRouter(prefix="/e2ee", tags=["E2EE Keys"])
 
 
 class OneTimePrekeyRequest(BaseModel):
-    prekey_pub: str = Field(..., description="Base64 encoded one-time prekey public key")
+    prekey_pub: str = Field(..., description="Base64 encoded one-time prekey public key", example="dGVzdF9wcmVrZXlfcHVibGljX2tleV8xMjM0NTY3ODkwYWJjZGVm")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "prekey_pub": "dGVzdF9wcmVrZXlfcHVibGljX2tleV8xMjM0NTY3ODkwYWJjZGVm"
+            }
+        }
 
 
 class UploadKeyBundleRequest(BaseModel):
-    device_id: Optional[str] = Field(None, description="Device UUID (optional, will be generated if not provided)")
-    device_name: str = Field(..., description="Device name/identifier")
-    identity_key_pub: str = Field(..., description="Base64 encoded identity public key")
-    signed_prekey_pub: str = Field(..., description="Base64 encoded signed prekey public key")
-    signed_prekey_sig: str = Field(..., description="Base64 encoded signature of signed prekey")
-    one_time_prekeys: List[OneTimePrekeyRequest] = Field(..., description="List of one-time prekeys")
+    device_id: Optional[str] = Field(None, description="Device UUID (optional, will be generated if not provided)", example="550e8400-e29b-41d4-a716-446655440000")
+    device_name: str = Field(..., description="Device name/identifier", example="iPhone 15 Pro")
+    identity_key_pub: str = Field(..., description="Base64 encoded identity public key", example="dGVzdF9pZGVudGl0eV9wdWJsaWNfa2V5XzEyMzQ1Njc4OTBhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5eg==")
+    signed_prekey_pub: str = Field(..., description="Base64 encoded signed prekey public key", example="dGVzdF9zaWduZWRfcHJla2V5X3B1YmxpY19rZXlfMTIzNDU2Nzg5MGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6")
+    signed_prekey_sig: str = Field(..., description="Base64 encoded signature of signed prekey", example="dGVzdF9zaWduYXR1cmVfb2Zfc2lnbmVkX3ByZWtleV8xMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=")
+    one_time_prekeys: List[OneTimePrekeyRequest] = Field(..., description="List of one-time prekeys", min_items=1)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "device_id": "550e8400-e29b-41d4-a716-446655440000",
+                "device_name": "iPhone 15 Pro",
+                "identity_key_pub": "dGVzdF9pZGVudGl0eV9wdWJsaWNfa2V5XzEyMzQ1Njc4OTBhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5eg==",
+                "signed_prekey_pub": "dGVzdF9zaWduZWRfcHJla2V5X3B1YmxpY19rZXlfMTIzNDU2Nzg5MGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6",
+                "signed_prekey_sig": "dGVzdF9zaWduYXR1cmVfb2Zfc2lnbmVkX3ByZWtleV8xMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=",
+                "one_time_prekeys": [
+                    {"prekey_pub": "dGVzdF9wcmVrZXlfcHVibGljX2tleV8xMjM0NTY3ODkwYWJjZGVm"}
+                ]
+            }
+        }
 
 
 class RevokeDeviceRequest(BaseModel):
-    device_id: str = Field(..., description="Device UUID to revoke")
-    reason: Optional[str] = Field(None, description="Reason for revocation")
+    device_id: str = Field(..., description="Device UUID to revoke", example="550e8400-e29b-41d4-a716-446655440000")
+    reason: Optional[str] = Field(None, description="Reason for revocation", example="Device lost or stolen")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "device_id": "550e8400-e29b-41d4-a716-446655440000",
+                "reason": "Device lost or stolen"
+            }
+        }
 
 
 class ClaimPrekeyRequest(BaseModel):
-    device_id: str = Field(..., description="Device UUID")
-    prekey_id: int = Field(..., description="One-time prekey ID to claim")
+    device_id: str = Field(..., description="Device UUID", example="550e8400-e29b-41d4-a716-446655440000")
+    prekey_id: int = Field(..., description="One-time prekey ID to claim", example=1)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "device_id": "550e8400-e29b-41d4-a716-446655440000",
+                "prekey_id": 1
+            }
+        }
 
 
 @router.post("/keys/upload")

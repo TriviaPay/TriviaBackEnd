@@ -26,10 +26,20 @@ router = APIRouter(prefix="/dm", tags=["DM Messages"])
 
 
 class SendMessageRequest(BaseModel):
-    client_message_id: Optional[str] = Field(None, description="Client-provided ID for idempotency")
-    ciphertext: str = Field(..., description="Base64 encoded ciphertext")
-    proto: int = Field(..., description="Protocol type: 1=DR message, 2=PreKey message")
-    recipient_device_ids: Optional[list] = Field(None, description="Optional list of recipient device IDs")
+    client_message_id: Optional[str] = Field(None, description="Client-provided ID for idempotency", example="msg_1234567890")
+    ciphertext: str = Field(..., description="Base64 encoded ciphertext", example="dGVzdF9jaXBoZXJ0ZXh0X2VuY29kZWRfaW5fYmFzZTY0X2Zvcm1hdF8xMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=")
+    proto: int = Field(..., description="Protocol type: 1=DR message, 2=PreKey message", example=1)
+    recipient_device_ids: Optional[list] = Field(None, description="Optional list of recipient device IDs", example=["550e8400-e29b-41d4-a716-446655440000"])
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "client_message_id": "msg_1234567890",
+                "ciphertext": "dGVzdF9jaXBoZXJ0ZXh0X2VuY29kZWRfaW5fYmFzZTY0X2Zvcm1hdF8xMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=",
+                "proto": 1,
+                "recipient_device_ids": ["550e8400-e29b-41d4-a716-446655440000"]
+            }
+        }
 
 
 def check_blocked(db: Session, user1_id: int, user2_id: int) -> bool:
@@ -255,8 +265,8 @@ async def send_message(
 @router.get("/conversations/{conversation_id}/messages")
 async def get_messages(
     conversation_id: str,
-    limit: int = Query(50, ge=1, le=100),
-    since: Optional[str] = Query(None, description="Message ID to fetch messages after"),
+    limit: int = Query(50, ge=1, le=100, example=50),
+    since: Optional[str] = Query(None, description="Message ID to fetch messages after", example="550e8400-e29b-41d4-a716-446655440000"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
