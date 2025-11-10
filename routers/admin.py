@@ -100,7 +100,7 @@ async def get_draw_config(
             detail=f"Error getting draw configuration: {str(e)}"
         )
 
-@router.put("/draw-config", response_model=DrawConfigResponse)
+@router.put("/draw-config", response_model=DrawConfigResponse, operation_id="admin_update_draw_config")
 async def update_draw_config(
     config: DrawConfigUpdateRequest,
     db: Session = Depends(get_db),
@@ -175,7 +175,7 @@ async def update_draw_config(
             detail=f"Error updating draw configuration: {str(e)}"
         )
 
-@router.post("/trigger-draw", response_model=DrawResponse)
+@router.post("/trigger-draw", response_model=DrawResponse, operation_id="admin_trigger_draw")
 async def trigger_draw(
     draw_date: date = Body(..., embed=True),
     db: Session = Depends(get_db),

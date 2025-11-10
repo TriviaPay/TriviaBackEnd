@@ -19,13 +19,34 @@ router = APIRouter(prefix="/status", tags=["Status"])
 
 
 class CreateStatusPostRequest(BaseModel):
-    media_meta: dict = Field(..., description="Encrypted media metadata (JSON)")
-    audience_mode: str = Field(..., pattern="^(contacts|custom)$")
-    custom_audience: Optional[List[int]] = Field(None, description="Custom user IDs if audience_mode='custom'")
+    media_meta: dict = Field(..., description="Encrypted media metadata (JSON)", example={"url": "https://example.com/media.jpg", "size": 1024000, "mime": "image/jpeg"})
+    audience_mode: str = Field(..., pattern="^(contacts|custom)$", example="contacts")
+    custom_audience: Optional[List[int]] = Field(None, description="Custom user IDs if audience_mode='custom'", example=[1142961859, 9876543210])
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "media_meta": {
+                    "url": "https://example.com/media.jpg",
+                    "size": 1024000,
+                    "mime": "image/jpeg",
+                    "sha256": "abc123def456..."
+                },
+                "audience_mode": "contacts",
+                "custom_audience": [1142961859, 9876543210]
+            }
+        }
 
 
 class MarkViewedRequest(BaseModel):
-    post_ids: List[str] = Field(..., min_items=1)
+    post_ids: List[str] = Field(..., min_items=1, example=["550e8400-e29b-41d4-a716-446655440000", "660e8400-e29b-41d4-a716-446655440001"])
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "post_ids": ["550e8400-e29b-41d4-a716-446655440000", "660e8400-e29b-41d4-a716-446655440001"]
+            }
+        }
 
 
 def get_user_contacts(db: Session, user_id: int) -> List[int]:
@@ -134,8 +155,8 @@ async def create_status_post(
 
 @router.get("/feed")
 async def get_status_feed(
-    limit: int = Query(default=20, ge=1, le=50),
-    cursor: Optional[str] = Query(None, description="Post ID cursor for pagination"),
+    limit: int = Query(default=20, ge=1, le=50, example=20),
+    cursor: Optional[str] = Query(None, description="Post ID cursor for pagination", example="550e8400-e29b-41d4-a716-446655440000"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -276,7 +297,7 @@ async def delete_status_post(
 
 @router.get("/presence")
 async def get_presence(
-    user_ids: List[int] = Query(..., description="User IDs to check presence for"),
+    user_ids: List[int] = Query(..., description="User IDs to check presence for", example=[1142961859, 9876543210]),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):

@@ -16,7 +16,14 @@ router = APIRouter(prefix="/dm", tags=["DM Privacy"])
 
 
 class BlockUserRequest(BaseModel):
-    blocked_user_id: int = Field(..., description="User ID to block")
+    blocked_user_id: int = Field(..., description="User ID to block", example=1142961859)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "blocked_user_id": 1142961859
+            }
+        }
 
 
 @router.post("/block")

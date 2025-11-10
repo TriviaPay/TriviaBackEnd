@@ -26,19 +26,30 @@ router = APIRouter(prefix="/groups", tags=["Group Messages"])
 
 
 class SendGroupMessageRequest(BaseModel):
-    client_message_id: Optional[str] = Field(None, description="Client-provided ID for idempotency")
-    ciphertext: str = Field(..., description="Base64 encoded ciphertext")
-    proto: int = Field(..., description="Protocol type: 10=sender-key msg, 11=sender-key distribution")
-    group_epoch: int = Field(..., description="Group epoch this message belongs to")
-    sender_key_id: Optional[str] = Field(None, description="Sender key ID for this message")
+    client_message_id: Optional[str] = Field(None, description="Client-provided ID for idempotency", example="group_msg_1234567890")
+    ciphertext: str = Field(..., description="Base64 encoded ciphertext", example="dGVzdF9ncm91cF9jaXBoZXJ0ZXh0X2VuY29kZWRfaW5fYmFzZTY0X2Zvcm1hdF8xMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=")
+    proto: int = Field(..., description="Protocol type: 10=sender-key msg, 11=sender-key distribution", example=10)
+    group_epoch: int = Field(..., description="Group epoch this message belongs to", example=0)
+    sender_key_id: Optional[str] = Field(None, description="Sender key ID for this message", example="550e8400-e29b-41d4-a716-446655440000")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "client_message_id": "group_msg_1234567890",
+                "ciphertext": "dGVzdF9ncm91cF9jaXBoZXJ0ZXh0X2VuY29kZWRfaW5fYmFzZTY0X2Zvcm1hdF8xMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=",
+                "proto": 10,
+                "group_epoch": 0,
+                "sender_key_id": "550e8400-e29b-41d4-a716-446655440000"
+            }
+        }
 
 
 @router.get("/{group_id}/messages")
 async def get_messages(
     group_id: str,
-    limit: int = Query(default=50, ge=1, le=100),
-    before: Optional[str] = Query(None, description="Message ID to fetch before"),
-    after: Optional[str] = Query(None, description="Message ID to fetch after"),
+    limit: int = Query(default=50, ge=1, le=100, example=50),
+    before: Optional[str] = Query(None, description="Message ID to fetch before", example="550e8400-e29b-41d4-a716-446655440000"),
+    after: Optional[str] = Query(None, description="Message ID to fetch after", example="550e8400-e29b-41d4-a716-446655440000"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):

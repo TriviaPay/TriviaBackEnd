@@ -18,7 +18,14 @@ router = APIRouter(prefix="/dm/conversations", tags=["DM Conversations"])
 
 
 class CreateConversationRequest(BaseModel):
-    peer_user_id: int = Field(..., description="User ID of the peer user")
+    peer_user_id: int = Field(..., description="User ID of the peer user", example=1142961859)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "peer_user_id": 1142961859
+            }
+        }
 
 
 def check_blocked(db: Session, user1_id: int, user2_id: int) -> bool:

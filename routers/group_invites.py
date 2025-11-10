@@ -19,13 +19,29 @@ router = APIRouter(prefix="/groups", tags=["Group Invites"])
 
 
 class CreateInviteRequest(BaseModel):
-    type: str = Field(..., pattern="^(link|direct)$")
-    expires_at: Optional[datetime] = None
-    max_uses: Optional[int] = Field(None, ge=1)
+    type: str = Field(..., pattern="^(link|direct)$", example="link")
+    expires_at: Optional[datetime] = Field(None, example="2025-11-12T16:00:00Z")
+    max_uses: Optional[int] = Field(None, ge=1, example=10)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "type": "link",
+                "expires_at": "2025-11-12T16:00:00Z",
+                "max_uses": 10
+            }
+        }
 
 
 class JoinGroupRequest(BaseModel):
-    code: str
+    code: str = Field(..., example="ABC123XYZ")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "code": "ABC123XYZ"
+            }
+        }
 
 
 def generate_invite_code() -> str:

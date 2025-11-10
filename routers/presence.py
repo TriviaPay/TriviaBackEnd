@@ -15,9 +15,18 @@ router = APIRouter(prefix="/presence", tags=["Presence"])
 
 
 class UpdatePresenceRequest(BaseModel):
-    share_last_seen: Optional[str] = Field(None, pattern="^(all|contacts|nobody)$")
-    share_online: Optional[bool] = None
-    read_receipts: Optional[bool] = None
+    share_last_seen: Optional[str] = Field(None, pattern="^(all|contacts|nobody)$", example="contacts")
+    share_online: Optional[bool] = Field(None, example=True)
+    read_receipts: Optional[bool] = Field(None, example=True)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "share_last_seen": "contacts",
+                "share_online": True,
+                "read_receipts": True
+            }
+        }
 
 
 @router.get("")
