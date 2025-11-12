@@ -230,22 +230,13 @@ async def use_gameplay_boost(
     user.gems -= cost
 
     # Handle streak saver separately as it doesn't need a question
+    # Note: Streak system has been replaced with weekly daily login system
+    # This boost is deprecated but kept for backward compatibility
     if request.boost_type == "streak_saver":
-        if not user.last_streak_date:
-            raise HTTPException(status_code=400, detail="No active streak to save")
-        
-        today = get_today_in_app_timezone()
-        if user.last_streak_date.date() == today:
-            raise HTTPException(status_code=400, detail="Already logged in today")
-        
-        # Save the streak by updating last_streak_date to yesterday
-        user.last_streak_date = datetime.utcnow().replace(day=today.day-1)
-        db.commit()
-        
-        return {
-            "message": "Streak saved successfully",
-            "remaining_gems": user.gems
-        }
+        raise HTTPException(
+            status_code=400, 
+            detail="Streak saver is no longer available. The streak system has been replaced with a weekly daily login reward system."
+        )
 
     # For all other boosts, we need a question number
     if not request.question_number:
@@ -268,7 +259,10 @@ async def use_gameplay_boost(
         raise HTTPException(status_code=400, detail="Question not unlocked for today")
 
     if user_daily.status in ['answered_correct', 'answered_wrong'] and request.boost_type not in ["extra_chance"]:
-        raise HTTPException(status_code=400, detail="Question already attempted")
+        if user_daily.status == 'answered_correct':
+            raise HTTPException(status_code=400, detail="Question already answered correctly")
+        else:
+            raise HTTPException(status_code=400, detail="Question already answered incorrectly")
 
     # Process boost
     response = {}
@@ -283,14 +277,26 @@ async def use_gameplay_boost(
         # Get correct answer and one random wrong answer
         options = ["a", "b", "c", "d"]
         # Find which option letter corresponds to the correct answer
+        # correct_answer could be either the option letter (a/b/c/d) or the full text
         correct_option = None
-        for opt in options:
-            if getattr(question, f"option_{opt}").lower() == question.correct_answer.lower():
-                correct_option = opt
-                break
+        correct_answer_lower = question.correct_answer.lower().strip()
+        
+        # First check if correct_answer is just an option letter
+        if correct_answer_lower in options:
+            correct_option = correct_answer_lower
+        else:
+            # Otherwise, match against option text
+            for opt in options:
+                option_text = getattr(question, f"option_{opt}")
+                if option_text and option_text.lower().strip() == correct_answer_lower:
+                    correct_option = opt
+                    break
         
         if not correct_option:
-            raise HTTPException(status_code=500, detail="Could not find correct option")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Could not find correct option. Correct answer: {question.correct_answer}"
+            )
             
         wrong_options = [opt for opt in options if opt != correct_option]
         random_wrong = random.choice(wrong_options)
@@ -299,7 +305,8 @@ async def use_gameplay_boost(
             "options": {
                 correct_option: getattr(question, f"option_{correct_option}"),
                 random_wrong: getattr(question, f"option_{random_wrong}")
-            }
+            },
+            "removed_options": [opt for opt in options if opt not in [correct_option, random_wrong]]
         }
 
     elif request.boost_type in ["question_reroll", "change_question"]:
@@ -310,8 +317,10 @@ async def use_gameplay_boost(
         )
 
     elif request.boost_type == "hint":
+        # Use hint field if available, otherwise fall back to explanation
+        hint_text = question.hint if question.hint else question.explanation
         response = {
-            "hint": question.explanation
+            "hint": hint_text
         }
     
     elif request.boost_type == "extra_chance":
@@ -349,10 +358,25 @@ async def use_gameplay_boost(
     
     elif request.boost_type == "auto_submit":
         if user_daily.status in ['answered_correct', 'answered_wrong']:
-            raise HTTPException(status_code=400, detail="Question already attempted")
+            if user_daily.status == 'answered_correct':
+                raise HTTPException(status_code=400, detail="Question already answered correctly")
+            else:
+                raise HTTPException(status_code=400, detail="Question already answered incorrectly")
+        
+        # Determine the actual answer text to store
+        # correct_answer could be either the option letter (a/b/c/d) or the full text
+        correct_answer_lower = question.correct_answer.lower().strip()
+        options = ["a", "b", "c", "d"]
+        
+        # If correct_answer is an option letter, get the full option text
+        if correct_answer_lower in options:
+            answer_to_store = getattr(question, f"option_{correct_answer_lower}")
+        else:
+            # Otherwise use the correct_answer as-is
+            answer_to_store = question.correct_answer
         
         # Mark question as answered with correct answer
-        user_daily.user_answer = question.correct_answer
+        user_daily.user_answer = answer_to_store
         user_daily.is_correct = True
         user_daily.answered_at = datetime.utcnow()
         user_daily.status = 'answered_correct'
@@ -393,7 +417,7 @@ async def use_gameplay_boost(
         
         # Return the correct answer and mark it as auto-submitted
         response = {
-            "correct_answer": question.correct_answer,
+            "correct_answer": answer_to_store,  # Return the actual answer text that was stored
             "explanation": question.explanation,
             "auto_submit": True,
             "is_correct": True  # Auto-submit always counts as correct
