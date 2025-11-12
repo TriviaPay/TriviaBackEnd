@@ -547,12 +547,15 @@ async def submit_answer(
     
     # Validate not already answered
     if user_daily.status in ['answered_correct', 'answered_wrong']:
-        warning_msg = "Question already answered"
+        if user_daily.status == 'answered_correct':
+            warning_msg = "Question already answered correctly"
+        else:
+            warning_msg = "Question already answered incorrectly"
         logging.warning(f"User {user.account_id} trying to answer question {question_number} which already has status: {user_daily.status}")
         return {
             "status": "error",
             "message": warning_msg,
-            "is_correct": False,
+            "is_correct": user_daily.is_correct if user_daily.is_correct is not None else False,
             "daily_completed": False
         }
     

@@ -99,10 +99,17 @@ async def upload_key_bundle(
     if not E2EE_DM_ENABLED:
         raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
     
+    # Validate request
+    if not request.one_time_prekeys or len(request.one_time_prekeys) == 0:
+        raise HTTPException(status_code=400, detail="At least one one-time prekey is required")
+    
     try:
         # Parse device_id or generate new one
         if request.device_id:
-            device_uuid = uuid.UUID(request.device_id)
+            try:
+                device_uuid = uuid.UUID(request.device_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid device_id format: {request.device_id}")
         else:
             device_uuid = uuid.uuid4()
         
@@ -202,11 +209,16 @@ async def upload_key_bundle(
         }
         
     except ValueError as e:
+        db.rollback()
+        logger.error(f"Invalid UUID in upload_key_bundle: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Invalid UUID: {str(e)}")
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error uploading key bundle: {e}")
-        raise HTTPException(status_code=500, detail="Failed to upload key bundle")
+        logger.error(f"Error uploading key bundle: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to upload key bundle: {str(e)}")
 
 
 @router.get("/keys/bundle")
