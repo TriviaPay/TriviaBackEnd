@@ -136,6 +136,7 @@ async def get_current_question(
     ).order_by(TriviaQuestionsDaily.question_order).all()
     
     if not daily_pool:
+        logging.warning(f"No questions found for today ({today}) in app timezone. Daily pool is empty.")
         raise HTTPException(status_code=404, detail="No questions available for today")
     
     # Check if user has answered correctly today
