@@ -113,13 +113,13 @@ async def upload_key_bundle(
         else:
             device_uuid = uuid.uuid4()
         
-        # Find or create device
+        # Find device by device_id first (device_id is globally unique)
         device = db.query(E2EEDevice).filter(
-            E2EEDevice.device_id == device_uuid,
-            E2EEDevice.user_id == current_user.account_id
+            E2EEDevice.device_id == device_uuid
         ).first()
         
         if not device:
+            # Device doesn't exist, create new one
             device = E2EEDevice(
                 device_id=device_uuid,
                 user_id=current_user.account_id,
@@ -129,6 +129,13 @@ async def upload_key_bundle(
             db.add(device)
             db.flush()
         else:
+            # Device exists - check ownership
+            if device.user_id != current_user.account_id:
+                raise HTTPException(
+                    status_code=403, 
+                    detail="Device belongs to another user. Cannot upload keys for this device."
+                )
+            
             # Update device name and last seen
             device.device_name = request.device_name
             device.last_seen_at = datetime.utcnow()

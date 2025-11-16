@@ -26,6 +26,24 @@ def get_today_in_app_timezone() -> date:
     now = datetime.now(tz)
     return now.date()
 
+def get_date_range_for_query(target_date: date):
+    """
+    Get start and end datetime for a date in the app timezone.
+    Returns tuple of (start_datetime, end_datetime) in UTC for database comparison.
+    """
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    tz = pytz.timezone(timezone_str)
+    
+    # Create start and end of day in app timezone
+    start_of_day = tz.localize(datetime.combine(target_date, datetime.min.time()))
+    end_of_day = tz.localize(datetime.combine(target_date, datetime.max.time()))
+    
+    # Convert to UTC for database comparison (most databases store in UTC)
+    start_utc = start_of_day.astimezone(pytz.UTC).replace(tzinfo=None)
+    end_utc = end_of_day.astimezone(pytz.UTC).replace(tzinfo=None)
+    
+    return start_utc, end_utc
+
 def cleanup_unused_questions():
     """
     Clean up unused daily questions and refresh the pool for today.
@@ -37,9 +55,11 @@ def cleanup_unused_questions():
         today = get_today_in_app_timezone()
         yesterday = today - timedelta(days=1)
         
-        # Step 1: Delete unused questions from yesterday
+        # Step 1: Delete unused questions from yesterday - use timezone-aware date range
+        start_datetime, end_datetime = get_date_range_for_query(yesterday)
         yesterday_unused = db.query(TriviaQuestionsDaily).filter(
-            func.date(TriviaQuestionsDaily.date) == yesterday,
+            TriviaQuestionsDaily.date >= start_datetime,
+            TriviaQuestionsDaily.date <= end_datetime,
             TriviaQuestionsDaily.is_used == False
         ).all()
         
@@ -64,9 +84,11 @@ def cleanup_unused_questions():
         db.commit()
         print(f"Deleted {deleted_count} unused questions from {yesterday}")
         
-        # Step 3: Check today's pool and add questions if needed
+        # Step 3: Check today's pool and add questions if needed - use timezone-aware date range
+        start_datetime, end_datetime = get_date_range_for_query(today)
         today_pool_count = db.query(TriviaQuestionsDaily).filter(
-            func.date(TriviaQuestionsDaily.date) == today
+            TriviaQuestionsDaily.date >= start_datetime,
+            TriviaQuestionsDaily.date <= end_datetime
         ).count()
         
         print(f"Today's pool has {today_pool_count} questions")
@@ -76,7 +98,8 @@ def cleanup_unused_questions():
             
             # Get existing question numbers in today's pool to avoid duplicates
             existing_numbers = [q.question_number for q in db.query(TriviaQuestionsDaily.question_number).filter(
-                func.date(TriviaQuestionsDaily.date) == today
+                TriviaQuestionsDaily.date >= start_datetime,
+                TriviaQuestionsDaily.date <= end_datetime
             ).all()]
             
             # Get unused questions (not in today's pool)
@@ -101,9 +124,10 @@ def cleanup_unused_questions():
                         ~Trivia.question_number.in_(existing_numbers) if existing_numbers else True
                     ).order_by(func.random()).limit(questions_needed).all()
             
-            # Determine starting order (max existing order + 1, or 1 if empty)
+            # Determine starting order (max existing order + 1, or 1 if empty) - use timezone-aware date range
             max_existing_order = db.query(func.max(TriviaQuestionsDaily.question_order)).filter(
-                func.date(TriviaQuestionsDaily.date) == today
+                TriviaQuestionsDaily.date >= start_datetime,
+                TriviaQuestionsDaily.date <= end_datetime
             ).scalar() or 0
             
             # Add new questions to pool
@@ -113,9 +137,10 @@ def cleanup_unused_questions():
                 if order > 4:
                     break
                 
-                # Check for unique constraint violations
+                # Check for unique constraint violations - use timezone-aware date range
                 existing_order = db.query(TriviaQuestionsDaily).filter(
-                    func.date(TriviaQuestionsDaily.date) == today,
+                    TriviaQuestionsDaily.date >= start_datetime,
+                    TriviaQuestionsDaily.date <= end_datetime,
                     TriviaQuestionsDaily.question_order == order
                 ).first()
                 
@@ -123,15 +148,23 @@ def cleanup_unused_questions():
                     continue  # Skip if order already taken
                 
                 existing_qnum = db.query(TriviaQuestionsDaily).filter(
-                    func.date(TriviaQuestionsDaily.date) == today,
+                    TriviaQuestionsDaily.date >= start_datetime,
+                    TriviaQuestionsDaily.date <= end_datetime,
                     TriviaQuestionsDaily.question_number == q.question_number
                 ).first()
                 
                 if existing_qnum:
                     continue  # Skip if question already in pool
                 
+                # Create timezone-aware datetime for the date
+                timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+                tz = pytz.timezone(timezone_str)
+                date_datetime = tz.localize(datetime.combine(today, datetime.min.time()))
+                # Convert to UTC and remove timezone info for database storage
+                date_utc = date_datetime.astimezone(pytz.UTC).replace(tzinfo=None)
+                
                 dq = TriviaQuestionsDaily(
-                    date=datetime.combine(today, datetime.min.time()),
+                    date=date_utc,
                     question_number=q.question_number,
                     question_order=order,
                     is_common=(order == 1),

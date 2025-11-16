@@ -24,6 +24,25 @@ def get_today_in_app_timezone() -> date:
     now = datetime.now(tz)
     return now.date()
 
+# Helper function to get date range for timezone-aware queries
+def get_date_range_for_query(target_date: date):
+    """
+    Get start and end datetime for a date in the app timezone.
+    Returns tuple of (start_datetime, end_datetime) in UTC for database comparison.
+    """
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    tz = pytz.timezone(timezone_str)
+    
+    # Create start and end of day in app timezone
+    start_of_day = tz.localize(datetime.combine(target_date, datetime.min.time()))
+    end_of_day = tz.localize(datetime.combine(target_date, datetime.max.time()))
+    
+    # Convert to UTC for database comparison (most databases store in UTC)
+    start_utc = start_of_day.astimezone(pytz.UTC).replace(tzinfo=None)
+    end_utc = end_of_day.astimezone(pytz.UTC).replace(tzinfo=None)
+    
+    return start_utc, end_utc
+
 # Load store configuration for boost costs
 STORE_CONFIG_PATH = FilePath("config/store_items.json")
 with open(STORE_CONFIG_PATH) as f:
@@ -45,9 +64,11 @@ async def get_daily_questions(
 
     today = get_today_in_app_timezone()
     
-    # Get today's shared pool (0-4 questions)
+    # Get today's shared pool (0-4 questions) - use timezone-aware date range
+    start_datetime, end_datetime = get_date_range_for_query(today)
     daily_pool = db.query(TriviaQuestionsDaily).filter(
-        func.date(TriviaQuestionsDaily.date) == today
+        TriviaQuestionsDaily.date >= start_datetime,
+        TriviaQuestionsDaily.date <= end_datetime
     ).order_by(TriviaQuestionsDaily.question_order).all()
     
     # Get user's unlocks for today
@@ -107,9 +128,11 @@ async def get_current_question(
 
     today = get_today_in_app_timezone()
     
-    # Get today's shared pool
+    # Get today's shared pool - use timezone-aware date range
+    start_datetime, end_datetime = get_date_range_for_query(today)
     daily_pool = db.query(TriviaQuestionsDaily).filter(
-        func.date(TriviaQuestionsDaily.date) == today
+        TriviaQuestionsDaily.date >= start_datetime,
+        TriviaQuestionsDaily.date <= end_datetime
     ).order_by(TriviaQuestionsDaily.question_order).all()
     
     if not daily_pool:
@@ -125,7 +148,8 @@ async def get_current_question(
     if user_correct:
         # User already answered correctly, return that question
         dq = db.query(TriviaQuestionsDaily).filter(
-            func.date(TriviaQuestionsDaily.date) == today,
+            TriviaQuestionsDaily.date >= start_datetime,
+            TriviaQuestionsDaily.date <= end_datetime,
             TriviaQuestionsDaily.question_order == user_correct.question_order
         ).first()
         if not dq:
@@ -281,9 +305,11 @@ async def unlock_next_question(
             detail="All questions are already unlocked"
         )
     
-    # Get next question from today's pool
+    # Get next question from today's pool - use timezone-aware date range
+    start_datetime, end_datetime = get_date_range_for_query(today)
     next_daily = db.query(TriviaQuestionsDaily).filter(
-        func.date(TriviaQuestionsDaily.date) == today,
+        TriviaQuestionsDaily.date >= start_datetime,
+        TriviaQuestionsDaily.date <= end_datetime,
         TriviaQuestionsDaily.question_order == next_order
     ).first()
     
@@ -434,9 +460,11 @@ async def retry_question(
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
     
-    # Get daily pool info
+    # Get daily pool info - use timezone-aware date range
+    start_datetime, end_datetime = get_date_range_for_query(today)
     daily_q = db.query(TriviaQuestionsDaily).filter(
-        func.date(TriviaQuestionsDaily.date) == today,
+        TriviaQuestionsDaily.date >= start_datetime,
+        TriviaQuestionsDaily.date <= end_datetime,
         TriviaQuestionsDaily.question_number == question_number
     ).first()
     
