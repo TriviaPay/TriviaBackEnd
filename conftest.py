@@ -134,14 +134,12 @@ def test_db(test_engine):
             User(
                 descope_user_id="test_user_1",
                 email="test1@example.com",
-                username="testuser1",
-                display_name="Test User 1"
+                username="testuser1"
             ),
             User(
                 descope_user_id="test_user_2",
                 email="test2@example.com",
-                username="testuser2",
-                display_name="Test User 2"
+                username="testuser2"
             )
         ]
         db.add_all(test_users)

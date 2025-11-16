@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal, live_chat
+from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth
 from config import E2EE_DM_ENABLED, GROUPS_ENABLED, STATUS_ENABLED, PRESENCE_ENABLED
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -128,6 +128,11 @@ app.include_router(updates.router)   # Live updates
 app.include_router(entries.router)   # Entries management
 app.include_router(internal.router)  # Internal endpoints for external cron
 app.include_router(live_chat.router) # Live chat endpoints
+app.include_router(global_chat.router) # Global chat endpoints
+app.include_router(private_chat.router) # Private chat endpoints
+app.include_router(trivia_live_chat.router) # Trivia live chat endpoints
+app.include_router(onesignal.router) # OneSignal endpoints
+app.include_router(pusher_auth.router) # Pusher authentication endpoints
 
 # E2EE DM routers (gated behind feature flag)
 if E2EE_DM_ENABLED:
@@ -175,6 +180,15 @@ else:
 async def startup_event():
     """Start the scheduler when the application starts (local dev only)"""
     logger.info("TriviaPay API started successfully")
+    
+    # Log all registered routes for debugging
+    from fastapi.routing import APIRoute
+    logger.info("=== Registered Routes ===")
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            methods = ",".join(route.methods)
+            logger.info(f"{methods:8} {route.path}")
+    logger.info("=== End of Routes ===")
     
     # Only start scheduler in local development
     if os.getenv("ENVIRONMENT", "development") == "development":

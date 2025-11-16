@@ -1217,3 +1217,123 @@ class StripeReconciliationSnapshot(Base):
     __table_args__ = (
         UniqueConstraint('as_of_date', 'currency', name='uq_reconciliation_date_currency'),
     )
+
+# =================================
+#  New Chat System Enums
+# =================================
+class PrivateChatStatus(PyEnum):
+    PENDING = 'pending'
+    ACCEPTED = 'accepted'
+    REJECTED = 'rejected'
+
+class MessageStatus(PyEnum):
+    SENT = 'sent'
+    DELIVERED = 'delivered'
+    SEEN = 'seen'
+
+# =================================
+#  Global Chat Messages Table
+# =================================
+class GlobalChatMessage(Base):
+    __tablename__ = "global_chat_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    message = Column(String, nullable=False)
+    message_type = Column(String, default="text")  # "text", "system"
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    is_from_trivia_live = Column(Boolean, default=False)
+    client_message_id = Column(String, nullable=True)  # For idempotency
+    
+    # Relationships
+    user = relationship("User", backref="global_chat_messages")
+    
+    __table_args__ = (
+        # Unique constraint for idempotency (only when client_message_id is provided)
+        # Note: PostgreSQL partial unique index will be created in migration
+    )
+
+# =================================
+#  Private Chat Conversations Table
+# =================================
+class PrivateChatConversation(Base):
+    __tablename__ = "private_chat_conversations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user1_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    user2_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    status = Column(SQLEnum(PrivateChatStatus), nullable=False, default=PrivateChatStatus.PENDING)
+    requested_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    requested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    responded_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_message_at = Column(DateTime, nullable=True, index=True)
+    last_read_message_id_user1 = Column(Integer, nullable=True)  # Last message ID read by user1
+    last_read_message_id_user2 = Column(Integer, nullable=True)  # Last message ID read by user2
+    
+    # Relationships
+    user1 = relationship("User", foreign_keys=[user1_id], backref="private_conversations_as_user1")
+    user2 = relationship("User", foreign_keys=[user2_id], backref="private_conversations_as_user2")
+    requester = relationship("User", foreign_keys=[requested_by])
+    
+    __table_args__ = (
+        UniqueConstraint('user1_id', 'user2_id', name='uq_private_chat_users'),
+    )
+
+# =================================
+#  Private Chat Messages Table
+# =================================
+class PrivateChatMessage(Base):
+    __tablename__ = "private_chat_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("private_chat_conversations.id"), nullable=False, index=True)
+    sender_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    message = Column(String, nullable=False)
+    status = Column(SQLEnum(MessageStatus), nullable=False, default=MessageStatus.SENT)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    delivered_at = Column(DateTime, nullable=True)
+    client_message_id = Column(String, nullable=True)  # For idempotency
+    
+    # Relationships
+    conversation = relationship("PrivateChatConversation", backref="messages")
+    sender = relationship("User", backref="private_chat_messages_sent")
+    
+    __table_args__ = (
+        # Unique constraint for idempotency (only when client_message_id is provided)
+        # Note: PostgreSQL partial unique index will be created in migration
+    )
+
+# =================================
+#  Trivia Live Chat Messages Table
+# =================================
+class TriviaLiveChatMessage(Base):
+    __tablename__ = "trivia_live_chat_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    message = Column(String, nullable=False)
+    draw_date = Column(Date, nullable=False, index=True)  # Use Date instead of DateTime for stability
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    client_message_id = Column(String, nullable=True)  # For idempotency
+    
+    # Relationships
+    user = relationship("User", backref="trivia_live_chat_messages")
+
+# =================================
+#  OneSignal Players Table
+# =================================
+class OneSignalPlayer(Base):
+    __tablename__ = "onesignal_players"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    player_id = Column(String, unique=True, nullable=False, index=True)
+    platform = Column(String, nullable=False)  # "ios", "android", "web"
+    is_valid = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_active = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_failure_at = Column(DateTime, nullable=True)
+    
+    # Relationships
+    user = relationship("User", backref="onesignal_players")

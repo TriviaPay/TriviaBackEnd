@@ -1,0 +1,529 @@
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_, func
+from datetime import datetime, timedelta
+from typing import Optional
+
+from db import get_db
+from models import (
+    User, PrivateChatConversation, PrivateChatMessage, Block,
+    PrivateChatStatus, MessageStatus
+)
+from routers.dependencies import get_current_user
+from config import (
+    PRIVATE_CHAT_ENABLED,
+    PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE,
+    PRIVATE_CHAT_MAX_MESSAGE_LENGTH
+)
+from utils.pusher_client import publish_chat_message_sync
+from utils.onesignal_client import (
+    send_push_notification_async,
+    should_send_push,
+    get_user_player_ids
+)
+import logging
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/private-chat", tags=["Private Chat"])
+
+
+class SendMessageRequest(BaseModel):
+    recipient_id: int = Field(..., description="User ID of recipient")
+    message: str = Field(..., min_length=1, max_length=PRIVATE_CHAT_MAX_MESSAGE_LENGTH)
+    client_message_id: Optional[str] = Field(None, description="Client-provided ID for idempotency")
+
+
+class AcceptRejectRequest(BaseModel):
+    conversation_id: int
+    action: str = Field(..., description="'accept' or 'reject'")
+
+
+def check_blocked(db: Session, user1_id: int, user2_id: int) -> bool:
+    """Check if user1 is blocked by user2 or vice versa"""
+    block = db.query(Block).filter(
+        or_(
+            and_(Block.blocker_id == user1_id, Block.blocked_id == user2_id),
+            and_(Block.blocker_id == user2_id, Block.blocked_id == user1_id)
+        )
+    ).first()
+    return block is not None
+
+
+def get_display_username(user: User) -> str:
+    """Get display username with fallback logic"""
+    if user.username and user.username.strip():
+        return user.username
+    if user.email:
+        return user.email.split('@')[0]
+    return f"User{user.account_id}"
+
+
+def publish_to_pusher_private(conversation_id: int, message_id: int, sender_id: int, 
+                               sender_username: str, message: str, created_at: datetime,
+                               is_new_conversation: bool):
+    """Background task to publish to Pusher"""
+    try:
+        channel = f"private-conversation-{conversation_id}"
+        publish_chat_message_sync(
+            channel,
+            "new-message",
+            {
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "sender_id": sender_id,
+                "sender_username": sender_username,
+                "message": message,
+                "created_at": created_at.isoformat(),
+                "is_new_conversation": is_new_conversation
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to publish private chat message to Pusher: {e}")
+
+
+def send_push_if_needed_sync(recipient_id: int, conversation_id: int, sender_id: int,
+                              sender_username: str, message: str, is_new_conversation: bool):
+    """Background task wrapper to send push notification if user is not active"""
+    import asyncio
+    from db import get_db
+    
+    db = next(get_db())
+    try:
+        # Check if user is active (should not send push)
+        if not should_send_push(recipient_id, db):
+            logger.debug(f"User {recipient_id} is active, skipping push notification")
+            return
+        
+        # Get player IDs
+        player_ids = get_user_player_ids(recipient_id, db, valid_only=True)
+        if not player_ids:
+            logger.debug(f"No valid OneSignal players for user {recipient_id}")
+            return
+        
+        if is_new_conversation:
+            heading = "New Chat Request"
+            content = f"{sender_username} wants to chat with you"
+            data = {
+                "type": "chat_request",
+                "conversation_id": conversation_id,
+                "sender_id": sender_id
+            }
+        else:
+            heading = sender_username
+            content = message[:100]  # Truncate for notification
+            data = {
+                "type": "private_message",
+                "conversation_id": conversation_id,
+                "sender_id": sender_id
+            }
+        
+        # Run async function in event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        loop.run_until_complete(
+            send_push_notification_async(
+                player_ids=player_ids,
+                heading=heading,
+                content=content,
+                data=data
+            )
+        )
+    except Exception as e:
+        logger.error(f"Failed to send push notification: {e}")
+    finally:
+        db.close()
+
+
+@router.post("/send")
+async def send_private_message(
+    request: SendMessageRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Send private message - creates conversation if needed"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    if request.recipient_id == current_user.account_id:
+        raise HTTPException(status_code=400, detail="Cannot message yourself")
+    
+    # Check if blocked
+    if check_blocked(db, current_user.account_id, request.recipient_id):
+        raise HTTPException(status_code=403, detail="User is blocked")
+    
+    # Validate recipient exists
+    recipient = db.query(User).filter(User.account_id == request.recipient_id).first()
+    if not recipient:
+        raise HTTPException(status_code=404, detail="Recipient not found")
+    
+    # Find or create conversation (sorted user IDs for consistency)
+    user_ids = sorted([current_user.account_id, request.recipient_id])
+    conversation = db.query(PrivateChatConversation).filter(
+        PrivateChatConversation.user1_id == user_ids[0],
+        PrivateChatConversation.user2_id == user_ids[1]
+    ).first()
+    
+    is_new_conversation = False
+    if not conversation:
+        # New conversation - set status to pending
+        conversation = PrivateChatConversation(
+            user1_id=user_ids[0],
+            user2_id=user_ids[1],
+            requested_by=current_user.account_id,
+            status=PrivateChatStatus.PENDING
+        )
+        db.add(conversation)
+        db.flush()
+        is_new_conversation = True
+    
+    # Check if conversation is rejected
+    if conversation.status == PrivateChatStatus.REJECTED:
+        raise HTTPException(
+            status_code=403,
+            detail="User is not accepting private messages."
+        )
+    
+    # If pending and sender is not the requester, auto-accept (recipient is sending first message)
+    if conversation.status == PrivateChatStatus.PENDING and conversation.requested_by != current_user.account_id:
+        conversation.status = PrivateChatStatus.ACCEPTED
+        conversation.responded_at = datetime.utcnow()
+    
+    # Check for duplicate message (idempotency)
+    if request.client_message_id:
+        existing_message = db.query(PrivateChatMessage).filter(
+            PrivateChatMessage.conversation_id == conversation.id,
+            PrivateChatMessage.sender_id == current_user.account_id,
+            PrivateChatMessage.client_message_id == request.client_message_id
+        ).first()
+        
+        if existing_message:
+            logger.debug(f"Duplicate private chat message detected: {request.client_message_id}")
+            return {
+                "conversation_id": conversation.id,
+                "message_id": existing_message.id,
+                "status": conversation.status.value,
+                "created_at": existing_message.created_at.isoformat(),
+                "duplicate": True
+            }
+    
+    # Rate limiting
+    one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
+    recent_messages = db.query(PrivateChatMessage).filter(
+        PrivateChatMessage.sender_id == current_user.account_id,
+        PrivateChatMessage.created_at >= one_minute_ago
+    ).count()
+    
+    if recent_messages >= PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Maximum {PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
+        )
+    
+    # Create message
+    new_message = PrivateChatMessage(
+        conversation_id=conversation.id,
+        sender_id=current_user.account_id,
+        message=request.message.strip(),
+        status=MessageStatus.SENT,
+        client_message_id=request.client_message_id
+    )
+    
+    db.add(new_message)
+    conversation.last_message_at = datetime.utcnow()
+    db.commit()
+    db.refresh(new_message)
+    
+    # Publish to Pusher in background
+    username = get_display_username(current_user)
+    background_tasks.add_task(
+        publish_to_pusher_private,
+        conversation.id,
+        new_message.id,
+        current_user.account_id,
+        username,
+        new_message.message,
+        new_message.created_at,
+        is_new_conversation
+    )
+    
+    # Send push notification in background (if user is not active)
+    background_tasks.add_task(
+        send_push_if_needed_sync,
+        request.recipient_id,
+        conversation.id,
+        current_user.account_id,
+        username,
+        new_message.message,
+        is_new_conversation
+    )
+    
+    return {
+        "conversation_id": conversation.id,
+        "message_id": new_message.id,
+        "status": conversation.status.value,
+        "created_at": new_message.created_at.isoformat(),
+        "duplicate": False
+    }
+
+
+@router.post("/accept-reject")
+async def accept_reject_chat(
+    request: AcceptRejectRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Accept or reject a chat request"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    conversation = db.query(PrivateChatConversation).filter(
+        PrivateChatConversation.id == request.conversation_id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Verify user is the recipient (not the requester)
+    if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    if current_user.account_id == conversation.requested_by:
+        raise HTTPException(status_code=400, detail="Cannot accept/reject your own request")
+    
+    if conversation.status != PrivateChatStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Conversation already responded to")
+    
+    if request.action == "accept":
+        conversation.status = PrivateChatStatus.ACCEPTED
+    elif request.action == "reject":
+        conversation.status = PrivateChatStatus.REJECTED
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action. Use 'accept' or 'reject'")
+    
+    conversation.responded_at = datetime.utcnow()
+    db.commit()
+    
+    # Notify requester via Pusher
+    requester_id = conversation.requested_by
+    background_tasks.add_task(
+        publish_chat_message_sync,
+        f"private-conversation-{conversation.id}",
+        "conversation-updated",
+        {
+            "conversation_id": conversation.id,
+            "status": conversation.status.value
+        }
+    )
+    
+    return {
+        "conversation_id": conversation.id,
+        "status": conversation.status.value
+    }
+
+
+@router.get("/conversations")
+async def list_private_conversations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List all private chat conversations with unread counts"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    # Get conversations where user is participant and status is accepted
+    conversations = db.query(PrivateChatConversation).filter(
+        or_(
+            PrivateChatConversation.user1_id == current_user.account_id,
+            PrivateChatConversation.user2_id == current_user.account_id
+        ),
+        PrivateChatConversation.status == PrivateChatStatus.ACCEPTED
+    ).order_by(
+        func.coalesce(PrivateChatConversation.last_message_at, PrivateChatConversation.created_at).desc()
+    ).all()
+    
+    result = []
+    for conv in conversations:
+        # Determine peer user
+        peer_id = conv.user2_id if conv.user1_id == current_user.account_id else conv.user1_id
+        peer_user = db.query(User).filter(User.account_id == peer_id).first()
+        
+        if not peer_user:
+            continue
+        
+        # Determine last_read_message_id for current user
+        last_read_id = conv.last_read_message_id_user1 if conv.user1_id == current_user.account_id else conv.last_read_message_id_user2
+        
+        # Count unread messages (messages after last_read_id)
+        if last_read_id:
+            unread_count = db.query(PrivateChatMessage).filter(
+                PrivateChatMessage.conversation_id == conv.id,
+                PrivateChatMessage.sender_id != current_user.account_id,
+                PrivateChatMessage.id > last_read_id
+            ).count()
+        else:
+            # No read messages yet, count all messages from peer
+            unread_count = db.query(PrivateChatMessage).filter(
+                PrivateChatMessage.conversation_id == conv.id,
+                PrivateChatMessage.sender_id != current_user.account_id
+            ).count()
+        
+        result.append({
+            "conversation_id": conv.id,
+            "peer_user_id": peer_id,
+            "peer_username": get_display_username(peer_user),
+            "peer_profile_pic": peer_user.profile_pic_url,
+            "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
+            "unread_count": unread_count
+        })
+    
+    return {"conversations": result}
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def get_private_messages(
+    conversation_id: int,
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get messages from a private conversation with read status"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    conversation = db.query(PrivateChatConversation).filter(
+        PrivateChatConversation.id == conversation_id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Get last_read_message_id for current user
+    last_read_id = conversation.last_read_message_id_user1 if conversation.user1_id == current_user.account_id else conversation.last_read_message_id_user2
+    
+    messages = db.query(PrivateChatMessage).filter(
+        PrivateChatMessage.conversation_id == conversation_id
+    ).order_by(PrivateChatMessage.created_at.desc()).limit(limit).all()
+    
+    return {
+        "messages": [
+            {
+                "id": msg.id,
+                "sender_id": msg.sender_id,
+                "sender_username": get_display_username(msg.sender),
+                "message": msg.message,
+                "status": msg.status.value,
+                "created_at": msg.created_at.isoformat(),
+                "delivered_at": msg.delivered_at.isoformat() if msg.delivered_at else None,
+                "is_read": last_read_id is not None and msg.id <= last_read_id if msg.sender_id != current_user.account_id else None
+            }
+            for msg in reversed(messages)
+        ]
+    }
+
+
+@router.post("/conversations/{conversation_id}/mark-read")
+async def mark_conversation_read(
+    conversation_id: int,
+    message_id: Optional[int] = Query(None, description="Message ID to mark as read up to (defaults to latest)"),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Mark conversation as read up to a specific message ID"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    conversation = db.query(PrivateChatConversation).filter(
+        PrivateChatConversation.id == conversation_id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # If message_id not provided, use the latest message ID
+    if message_id is None:
+        latest_message = db.query(PrivateChatMessage).filter(
+            PrivateChatMessage.conversation_id == conversation_id
+        ).order_by(PrivateChatMessage.id.desc()).first()
+        
+        if latest_message:
+            message_id = latest_message.id
+        else:
+            # No messages, nothing to mark as read
+            return {"conversation_id": conversation_id, "last_read_message_id": None}
+    
+    # Update last_read_message_id for current user
+    if conversation.user1_id == current_user.account_id:
+        conversation.last_read_message_id_user1 = message_id
+    else:
+        conversation.last_read_message_id_user2 = message_id
+    
+    db.commit()
+    
+    # Notify other participant via Pusher
+    peer_id = conversation.user2_id if conversation.user1_id == current_user.account_id else conversation.user1_id
+    if background_tasks is not None:
+        background_tasks.add_task(
+            publish_chat_message_sync,
+            f"private-conversation-{conversation_id}",
+            "messages-read",
+            {
+                "conversation_id": conversation_id,
+                "reader_id": current_user.account_id,
+                "last_read_message_id": message_id
+            }
+        )
+    
+    return {
+        "conversation_id": conversation_id,
+        "last_read_message_id": message_id
+    }
+
+
+@router.get("/conversations/{conversation_id}")
+async def get_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get conversation details"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    conversation = db.query(PrivateChatConversation).filter(
+        PrivateChatConversation.id == conversation_id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    peer_id = conversation.user2_id if conversation.user1_id == current_user.account_id else conversation.user1_id
+    peer_user = db.query(User).filter(User.account_id == peer_id).first()
+    
+    return {
+        "conversation_id": conversation.id,
+        "peer_user_id": peer_id,
+        "peer_username": get_display_username(peer_user) if peer_user else None,
+        "peer_profile_pic": peer_user.profile_pic_url if peer_user else None,
+        "status": conversation.status.value,
+        "created_at": conversation.created_at.isoformat(),
+        "last_message_at": conversation.last_message_at.isoformat() if conversation.last_message_at else None
+    }
+
