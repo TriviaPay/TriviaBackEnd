@@ -267,7 +267,7 @@ def get_draw_time():
     """Get draw time configuration from environment variables"""
     import os
     return {
-        "hour": int(os.environ.get("DRAW_TIME_HOUR", "20")),  # Default 8 PM
+        "hour": int(os.environ.get("DRAW_TIME_HOUR", "18")),  # Default 6 PM
         "minute": int(os.environ.get("DRAW_TIME_MINUTE", "0")),  # Default 0 minutes
         "timezone": os.environ.get("DRAW_TIMEZONE", "US/Eastern")  # Default EST
     }
@@ -276,10 +276,10 @@ def schedule_draws():
     """
     Schedule the daily draw and question reset.
     
-    Timing:
-    - 8:00 PM EST: Process yesterday's draw (winners selected)
-    - 8:01 PM EST: Reset questions and eligibility flags for new day
-    - Questions available from 8:01 PM to next 8:00 PM
+    Timing (configurable via DRAW_TIME_HOUR, DRAW_TIME_MINUTE, DRAW_TIMEZONE):
+    - Draw time (default 6:00 PM EST): Process yesterday's draw (winners selected)
+    - Draw time + 1 minute (default 6:01 PM EST): Reset questions and eligibility flags for new day
+    - Questions available from reset time to next draw time
     """
     global scheduler
     
@@ -392,8 +392,9 @@ async def run_daily_draw():
 
 async def reset_daily_questions():
     """
-    Reset daily questions at 8:01 PM EST.
+    Reset daily questions at draw time + 1 minute (default 6:01 PM EST).
     This makes new questions available for the next 24-hour period.
+    The reset time is automatically set to 1 minute after the configured draw time.
     """
     try:
         logger.info(f"🔄 Starting daily question reset at {datetime.now()}")

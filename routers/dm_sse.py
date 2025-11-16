@@ -155,23 +155,42 @@ async def dm_sse(
             # Store token for expiry checks during heartbeats
             current_token = token
             
+            # Check if Redis is available before subscribing
+            from utils.redis_pubsub import get_redis
+            redis_available = get_redis() is not None
+            
             # Redis subscription to per-user channel (for DM and status notifications)
-            redis_msgs = subscribe_dm_user(user.account_id)
-            redis_iter = redis_msgs.__aiter__()
+            redis_iter = None
+            if redis_available:
+                try:
+                    redis_msgs = subscribe_dm_user(user.account_id)
+                    redis_iter = redis_msgs.__aiter__()
+                except Exception as e:
+                    logger.warning(f"Failed to subscribe to DM channel for user {user_id_hash}: {e}")
+                    redis_available = False
+                    redis_iter = None
+            else:
+                logger.info(f"Redis unavailable, skipping real-time subscriptions for user {user_id_hash}")
             
             # Load user's group memberships and subscribe to group channels
             group_subscriptions = {}
-            if GROUPS_ENABLED:
-                from models import GroupParticipant
-                user_groups = db.query(GroupParticipant).filter(
-                    GroupParticipant.user_id == user.account_id,
-                    GroupParticipant.is_banned == False
-                ).all()
-                
-                for participant in user_groups:
-                    group_id_str = str(participant.group_id)
-                    group_msgs = subscribe_group(group_id_str)
-                    group_subscriptions[group_id_str] = group_msgs.__aiter__()
+            if GROUPS_ENABLED and redis_available:
+                try:
+                    from models import GroupParticipant
+                    user_groups = db.query(GroupParticipant).filter(
+                        GroupParticipant.user_id == user.account_id,
+                        GroupParticipant.is_banned == False
+                    ).all()
+                    
+                    for participant in user_groups:
+                        group_id_str = str(participant.group_id)
+                        try:
+                            group_msgs = subscribe_group(group_id_str)
+                            group_subscriptions[group_id_str] = group_msgs.__aiter__()
+                        except Exception as e:
+                            logger.warning(f"Failed to subscribe to group {group_id_str}: {e}")
+                except Exception as e:
+                    logger.warning(f"Failed to load group subscriptions: {e}")
             
             # Update presence last_seen_at on connect
             if PRESENCE_ENABLED:
@@ -213,7 +232,10 @@ async def dm_sse(
                     
                     # Race heartbeat vs redis messages (DM + groups)
                     tasks = {heartbeat}
-                    tasks.add(asyncio.create_task(redis_iter.__anext__()))
+                    
+                    # Only add Redis subscriptions if available
+                    if redis_iter is not None:
+                        tasks.add(asyncio.create_task(redis_iter.__anext__()))
                     
                     # Add group subscriptions
                     for group_id, group_iter in group_subscriptions.items():
@@ -222,7 +244,17 @@ async def dm_sse(
                     done, pending = await asyncio.wait(
                         tasks,
                         return_when=asyncio.FIRST_COMPLETED,
+                        timeout=SSE_HEARTBEAT_SECONDS + 1  # Add timeout to prevent hanging
                     )
+                    
+                    # If timeout occurred, just send heartbeat
+                    if not done:
+                        # Cancel pending tasks
+                        for task in pending:
+                            task.cancel()
+                        # Trigger heartbeat handling
+                        done = {heartbeat}
+                        pending = set()
                     
                     if heartbeat in done:
                         # Check token expiry during heartbeat
@@ -245,8 +277,7 @@ async def dm_sse(
                                 db.commit()
                         
                         # Check Redis status and include in heartbeat
-                        from utils.redis_pubsub import get_redis
-                        redis_status = "available" if get_redis() else "unavailable"
+                        redis_status = "available" if redis_available and get_redis() else "unavailable"
                         relay_lag = redis_status == "unavailable"
                         
                         # Send heartbeat with status

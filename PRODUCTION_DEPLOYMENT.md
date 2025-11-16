@@ -11,17 +11,17 @@
 1. Create account at cron-job.org
 2. Set up three cron jobs:
 
-#### Daily Draw (8:00 PM EST)
+#### Daily Draw (Draw Time, default 6:00 PM EST)
 - **URL**: `https://your-app.vercel.app/internal/daily-draw`
 - **Method**: POST
 - **Headers**: `X-Secret: your-internal-secret`
-- **Schedule**: `0 20 * * *` (8:00 PM EST)
+- **Schedule**: `0 18 * * *` (6:00 PM EST) - Update based on DRAW_TIME_HOUR
 
-#### Question Reset (8:01 PM EST)  
+#### Question Reset (Draw Time + 1 minute, default 6:01 PM EST)  
 - **URL**: `https://your-app.vercel.app/internal/question-reset`
 - **Method**: POST
 - **Headers**: `X-Secret: your-internal-secret`
-- **Schedule**: `1 20 * * *` (8:01 PM EST)
+- **Schedule**: `1 18 * * *` (6:01 PM EST) - Update based on DRAW_TIME_HOUR and DRAW_TIME_MINUTE + 1
 
 #### Monthly Reset (11:59 PM EST, last day of month)
 - **URL**: `https://your-app.vercel.app/internal/monthly-reset`
@@ -40,13 +40,13 @@ Create `.github/workflows/cron.yml`:
 name: Scheduled Tasks
 on:
   schedule:
-    - cron: '0 20 * * *'  # Daily draw at 8:00 PM EST
-    - cron: '1 20 * * *'  # Question reset at 8:01 PM EST
+    - cron: '0 18 * * *'  # Daily draw at 6:00 PM EST (update based on DRAW_TIME_HOUR)
+    - cron: '1 18 * * *'  # Question reset at 6:01 PM EST (update based on DRAW_TIME_MINUTE + 1)
     - cron: '59 23 L * *' # Monthly reset
 
 jobs:
   daily-draw:
-    if: github.event.schedule == '0 20 * * *'
+    if: github.event.schedule == '0 18 * * *'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Daily Draw
@@ -55,7 +55,7 @@ jobs:
             -H "X-Secret: ${{ secrets.INTERNAL_SECRET }}"
 
   question-reset:
-    if: github.event.schedule == '1 20 * * *'
+    if: github.event.schedule == '1 18 * * *'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Question Reset
