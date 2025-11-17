@@ -13,6 +13,8 @@ import os
 from db import get_db
 from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, GemPackageConfig, BoostConfig, UserGemPurchase, TriviaUserDaily
 from routers.dependencies import get_current_user, get_admin_user
+from utils.storage import presign_get
+import logging
 
 router = APIRouter(prefix="/store", tags=["Store"])
 
@@ -114,6 +116,18 @@ class GemPackageRequest(BaseModel):
         None,
         description="Description of the package"
     )
+    bucket: Optional[str] = Field(
+        None,
+        description="S3 bucket name for the package image"
+    )
+    object_key: Optional[str] = Field(
+        None,
+        description="S3 object key for the package image"
+    )
+    mime_type: Optional[str] = Field(
+        None,
+        description="MIME type of the image (e.g., image/png, image/jpeg)"
+    )
 
     class Config:
         json_schema_extra = {
@@ -156,6 +170,8 @@ class GemPackageResponse(BaseModel):
     gems_amount: int
     is_one_time: bool
     description: Optional[str]
+    url: Optional[str] = None  # Presigned S3 URL
+    mime_type: Optional[str] = None  # MIME type of the image
     created_at: datetime
     updated_at: datetime
 
@@ -495,9 +511,34 @@ async def get_gem_packages(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all available gem packages"""
+    """Get all available gem packages with presigned URLs for images"""
     packages = db.query(GemPackageConfig).all()
-    return packages
+    result = []
+    for pkg in packages:
+        # Generate presigned URL if bucket and object_key are present
+        signed_url = None
+        if pkg.bucket and pkg.object_key:
+            try:
+                signed_url = presign_get(pkg.bucket, pkg.object_key, expires=900)  # 15 minutes
+                if not signed_url:
+                    logging.warning(f"presign_get returned None for gem package {pkg.id} with bucket={pkg.bucket}, key={pkg.object_key}")
+            except Exception as e:
+                logging.error(f"Failed to presign gem package {pkg.id}: {e}", exc_info=True)
+        else:
+            logging.debug(f"Gem package {pkg.id} missing bucket/object_key: bucket={pkg.bucket}, object_key={pkg.object_key}")
+        
+        result.append(GemPackageResponse(
+            id=pkg.id,
+            price_usd=pkg.price_usd,
+            gems_amount=pkg.gems_amount,
+            is_one_time=pkg.is_one_time,
+            description=pkg.description,
+            url=signed_url,
+            mime_type=pkg.mime_type,
+            created_at=pkg.created_at,
+            updated_at=pkg.updated_at
+        ))
+    return result
 
 @router.get("/boost-configs", response_model=List[BoostConfigResponse])
 async def get_boost_configs(
@@ -519,14 +560,35 @@ async def create_gem_package(
         price_usd=package.price_usd,
         gems_amount=package.gems_amount,
         is_one_time=package.is_one_time,
-        description=package.description
+        description=package.description,
+        bucket=package.bucket,
+        object_key=package.object_key,
+        mime_type=package.mime_type
     )
     
     db.add(new_package)
     db.commit()
     db.refresh(new_package)
     
-    return new_package
+    # Generate presigned URL if bucket and object_key are present
+    signed_url = None
+    if new_package.bucket and new_package.object_key:
+        try:
+            signed_url = presign_get(new_package.bucket, new_package.object_key, expires=900)
+        except Exception as e:
+            logging.error(f"Failed to presign gem package {new_package.id}: {e}", exc_info=True)
+    
+    return GemPackageResponse(
+        id=new_package.id,
+        price_usd=new_package.price_usd,
+        gems_amount=new_package.gems_amount,
+        is_one_time=new_package.is_one_time,
+        description=new_package.description,
+        url=signed_url,
+        mime_type=new_package.mime_type,
+        created_at=new_package.created_at,
+        updated_at=new_package.updated_at
+    )
 
 @router.put("/admin/gem-packages/{package_id}", response_model=GemPackageResponse)
 async def update_gem_package(
@@ -545,12 +607,33 @@ async def update_gem_package(
     db_package.gems_amount = package.gems_amount
     db_package.is_one_time = package.is_one_time
     db_package.description = package.description
+    db_package.bucket = package.bucket
+    db_package.object_key = package.object_key
+    db_package.mime_type = package.mime_type
     db_package.updated_at = datetime.utcnow()
     
     db.commit()
     db.refresh(db_package)
     
-    return db_package
+    # Generate presigned URL if bucket and object_key are present
+    signed_url = None
+    if db_package.bucket and db_package.object_key:
+        try:
+            signed_url = presign_get(db_package.bucket, db_package.object_key, expires=900)
+        except Exception as e:
+            logging.error(f"Failed to presign gem package {db_package.id}: {e}", exc_info=True)
+    
+    return GemPackageResponse(
+        id=db_package.id,
+        price_usd=db_package.price_usd,
+        gems_amount=db_package.gems_amount,
+        is_one_time=db_package.is_one_time,
+        description=db_package.description,
+        url=signed_url,
+        mime_type=db_package.mime_type,
+        created_at=db_package.created_at,
+        updated_at=db_package.updated_at
+    )
 
 @router.delete("/admin/gem-packages/{package_id}", response_model=Dict[str, Any])
 async def delete_gem_package(
