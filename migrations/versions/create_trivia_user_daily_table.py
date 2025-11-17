@@ -1,6 +1,6 @@
 """create_trivia_user_daily_table
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: c1d2e3f4a5b6
 Revises: remove_avatar_frame_unused_columns
 Create Date: 2025-11-01 12:00:00.000000
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'a1b2c3d4e5f6'
+revision: str = 'c1d2e3f4a5b6'
 down_revision: Union[str, None] = 'remove_unused_columns'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

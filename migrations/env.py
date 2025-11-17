@@ -23,6 +23,15 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import Base
 target_metadata = Base.metadata
 
+# Override sqlalchemy.url with DATABASE_URL from environment if available
+# This allows migrations to work in production where DATABASE_URL is set via env vars
+database_url = os.getenv("DATABASE_URL")
+if database_url:
+    # Convert postgres:// to postgresql:// if needed (for Heroku/Vercel compatibility)
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    config.set_main_option("sqlalchemy.url", database_url)
+
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")

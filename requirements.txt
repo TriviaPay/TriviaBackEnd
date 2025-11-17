@@ -21,3 +21,4 @@ boto3==1.34.131
 redis[hiredis]>=5.0.0
 pusher==3.0.0
 httpx==0.25.0
+bleach>=6.0.0

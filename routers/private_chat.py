@@ -14,7 +14,10 @@ from routers.dependencies import get_current_user
 from config import (
     PRIVATE_CHAT_ENABLED,
     PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE,
-    PRIVATE_CHAT_MAX_MESSAGE_LENGTH
+    PRIVATE_CHAT_MAX_MESSAGE_LENGTH,
+    PRIVATE_CHAT_MAX_MESSAGES_PER_BURST,
+    PRIVATE_CHAT_BURST_WINDOW_SECONDS,
+    TYPING_TIMEOUT_SECONDS
 )
 from utils.pusher_client import publish_chat_message_sync
 from utils.onesignal_client import (
@@ -22,6 +25,7 @@ from utils.onesignal_client import (
     should_send_push,
     get_user_player_ids
 )
+from utils.message_sanitizer import sanitize_message
 import logging
 
 logger = logging.getLogger(__name__)
@@ -38,6 +42,10 @@ class SendMessageRequest(BaseModel):
 class AcceptRejectRequest(BaseModel):
     conversation_id: int
     action: str = Field(..., description="'accept' or 'reject'")
+
+
+class BlockUserRequest(BaseModel):
+    blocked_user_id: int = Field(..., description="User ID to block")
 
 
 def check_blocked(db: Session, user1_id: int, user2_id: int) -> bool:
@@ -177,23 +185,28 @@ async def send_private_message(
             user1_id=user_ids[0],
             user2_id=user_ids[1],
             requested_by=current_user.account_id,
-            status=PrivateChatStatus.PENDING
+            status='pending'
         )
         db.add(conversation)
         db.flush()
         is_new_conversation = True
     
     # Check if conversation is rejected
-    if conversation.status == PrivateChatStatus.REJECTED:
+    if conversation.status == 'rejected':
         raise HTTPException(
             status_code=403,
             detail="User is not accepting private messages."
         )
     
     # If pending and sender is not the requester, auto-accept (recipient is sending first message)
-    if conversation.status == PrivateChatStatus.PENDING and conversation.requested_by != current_user.account_id:
-        conversation.status = PrivateChatStatus.ACCEPTED
+    if conversation.status == 'pending' and conversation.requested_by != current_user.account_id:
+        conversation.status = 'accepted'
         conversation.responded_at = datetime.utcnow()
+    
+    # Sanitize message to prevent XSS
+    sanitized_message = sanitize_message(request.message)
+    if not sanitized_message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
     
     # Check for duplicate message (idempotency)
     if request.client_message_id:
@@ -208,12 +221,25 @@ async def send_private_message(
             return {
                 "conversation_id": conversation.id,
                 "message_id": existing_message.id,
-                "status": conversation.status.value,
+                "status": conversation.status,
                 "created_at": existing_message.created_at.isoformat(),
                 "duplicate": True
             }
     
-    # Rate limiting
+    # Burst rate limiting (3 messages per 3 seconds)
+    burst_window_ago = datetime.utcnow() - timedelta(seconds=PRIVATE_CHAT_BURST_WINDOW_SECONDS)
+    recent_burst = db.query(PrivateChatMessage).filter(
+        PrivateChatMessage.sender_id == current_user.account_id,
+        PrivateChatMessage.created_at >= burst_window_ago
+    ).count()
+    
+    if recent_burst >= PRIVATE_CHAT_MAX_MESSAGES_PER_BURST:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Burst rate limit exceeded. Maximum {PRIVATE_CHAT_MAX_MESSAGES_PER_BURST} messages per {PRIVATE_CHAT_BURST_WINDOW_SECONDS} seconds."
+        )
+    
+    # Per-minute rate limiting
     one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
     recent_messages = db.query(PrivateChatMessage).filter(
         PrivateChatMessage.sender_id == current_user.account_id,
@@ -230,8 +256,8 @@ async def send_private_message(
     new_message = PrivateChatMessage(
         conversation_id=conversation.id,
         sender_id=current_user.account_id,
-        message=request.message.strip(),
-        status=MessageStatus.SENT,
+        message=sanitized_message,
+        status='sent',
         client_message_id=request.client_message_id
     )
     
@@ -267,7 +293,7 @@ async def send_private_message(
     return {
         "conversation_id": conversation.id,
         "message_id": new_message.id,
-        "status": conversation.status.value,
+        "status": conversation.status,
         "created_at": new_message.created_at.isoformat(),
         "duplicate": False
     }
@@ -298,13 +324,18 @@ async def accept_reject_chat(
     if current_user.account_id == conversation.requested_by:
         raise HTTPException(status_code=400, detail="Cannot accept/reject your own request")
     
-    if conversation.status != PrivateChatStatus.PENDING:
-        raise HTTPException(status_code=400, detail="Conversation already responded to")
+    if conversation.status != 'pending':
+        # Conversation already responded to - return current status
+        return {
+            "conversation_id": conversation.id,
+            "status": conversation.status,
+            "message": f"Conversation already {conversation.status}"
+        }
     
     if request.action == "accept":
-        conversation.status = PrivateChatStatus.ACCEPTED
+        conversation.status = 'accepted'
     elif request.action == "reject":
-        conversation.status = PrivateChatStatus.REJECTED
+        conversation.status = 'rejected'
     else:
         raise HTTPException(status_code=400, detail="Invalid action. Use 'accept' or 'reject'")
     
@@ -319,13 +350,13 @@ async def accept_reject_chat(
         "conversation-updated",
         {
             "conversation_id": conversation.id,
-            "status": conversation.status.value
+            "status": conversation.status
         }
     )
     
     return {
         "conversation_id": conversation.id,
-        "status": conversation.status.value
+        "status": conversation.status
     }
 
 
@@ -344,7 +375,7 @@ async def list_private_conversations(
             PrivateChatConversation.user1_id == current_user.account_id,
             PrivateChatConversation.user2_id == current_user.account_id
         ),
-        PrivateChatConversation.status == PrivateChatStatus.ACCEPTED
+        PrivateChatConversation.status == 'accepted'
     ).order_by(
         func.coalesce(PrivateChatConversation.last_message_at, PrivateChatConversation.created_at).desc()
     ).all()
@@ -422,7 +453,7 @@ async def get_private_messages(
                 "sender_id": msg.sender_id,
                 "sender_username": get_display_username(msg.sender),
                 "message": msg.message,
-                "status": msg.status.value,
+                "status": msg.status,
                 "created_at": msg.created_at.isoformat(),
                 "delivered_at": msg.delivered_at.isoformat() if msg.delivered_at else None,
                 "is_read": last_read_id is not None and msg.id <= last_read_id if msg.sender_id != current_user.account_id else None
@@ -522,8 +553,258 @@ async def get_conversation(
         "peer_user_id": peer_id,
         "peer_username": get_display_username(peer_user) if peer_user else None,
         "peer_profile_pic": peer_user.profile_pic_url if peer_user else None,
-        "status": conversation.status.value,
+        "status": conversation.status,
         "created_at": conversation.created_at.isoformat(),
         "last_message_at": conversation.last_message_at.isoformat() if conversation.last_message_at else None
+    }
+
+
+@router.post("/conversations/{conversation_id}/typing")
+async def send_typing_indicator(
+    conversation_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Send typing indicator to conversation"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    conversation = db.query(PrivateChatConversation).filter(
+        PrivateChatConversation.id == conversation_id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    if conversation.status != 'accepted':
+        raise HTTPException(status_code=403, detail="Conversation not accepted")
+    
+    # Publish typing event via Pusher
+    username = get_display_username(current_user)
+    background_tasks.add_task(
+        publish_chat_message_sync,
+        f"private-conversation-{conversation_id}",
+        "typing",
+        {
+            "conversation_id": conversation_id,
+            "user_id": current_user.account_id,
+            "username": username
+        }
+    )
+    
+    return {"status": "typing"}
+
+
+@router.post("/conversations/{conversation_id}/typing-stop")
+async def send_typing_stop(
+    conversation_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Send typing stop indicator to conversation"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    conversation = db.query(PrivateChatConversation).filter(
+        PrivateChatConversation.id == conversation_id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Publish typing-stop event via Pusher
+    background_tasks.add_task(
+        publish_chat_message_sync,
+        f"private-conversation-{conversation_id}",
+        "typing-stop",
+        {
+            "conversation_id": conversation_id,
+            "user_id": current_user.account_id
+        }
+    )
+    
+    return {"status": "stopped"}
+
+
+@router.post("/messages/{message_id}/mark-delivered")
+async def mark_message_delivered(
+    message_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Mark a message as delivered"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    message = db.query(PrivateChatMessage).filter(
+        PrivateChatMessage.id == message_id
+    ).first()
+    
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    
+    # Verify user is in the conversation
+    conversation = db.query(PrivateChatConversation).filter(
+        PrivateChatConversation.id == message.conversation_id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Only mark as delivered if message is not from current user
+    if message.sender_id == current_user.account_id:
+        raise HTTPException(status_code=400, detail="Cannot mark own message as delivered")
+    
+    # Update message status if not already delivered/seen
+    if message.status == 'sent':
+        message.status = 'delivered'
+        message.delivered_at = datetime.utcnow()
+        db.commit()
+        
+        # Notify sender via Pusher
+        background_tasks.add_task(
+            publish_chat_message_sync,
+            f"private-conversation-{conversation.id}",
+            "message-delivered",
+            {
+                "conversation_id": conversation.id,
+                "message_id": message_id,
+                "delivered_at": message.delivered_at.isoformat()
+            }
+        )
+    
+    return {
+        "message_id": message_id,
+        "status": message.status,
+        "delivered_at": message.delivered_at.isoformat() if message.delivered_at else None
+    }
+
+
+@router.post("/block")
+async def block_user(
+    request: BlockUserRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Block a user from sending private messages"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    if request.blocked_user_id == current_user.account_id:
+        raise HTTPException(status_code=400, detail="Cannot block yourself")
+    
+    # Validate blocked user exists
+    blocked_user = db.query(User).filter(User.account_id == request.blocked_user_id).first()
+    if not blocked_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if already blocked
+    existing_block = db.query(Block).filter(
+        Block.blocker_id == current_user.account_id,
+        Block.blocked_id == request.blocked_user_id
+    ).first()
+    
+    if existing_block:
+        return {
+            "success": True,
+            "message": "User already blocked"
+        }
+    
+    # Create block
+    new_block = Block(
+        blocker_id=current_user.account_id,
+        blocked_id=request.blocked_user_id,
+        created_at=datetime.utcnow()
+    )
+    db.add(new_block)
+    
+    # Reject any pending conversations
+    user_ids = sorted([current_user.account_id, request.blocked_user_id])
+    pending_conversations = db.query(PrivateChatConversation).filter(
+        PrivateChatConversation.user1_id == user_ids[0],
+        PrivateChatConversation.user2_id == user_ids[1],
+        PrivateChatConversation.status == 'pending'
+    ).all()
+    
+    for conv in pending_conversations:
+        conv.status = 'rejected'
+        conv.responded_at = datetime.utcnow()
+    
+    db.commit()
+    
+    logger.info(f"User {current_user.account_id} blocked user {request.blocked_user_id}")
+    
+    return {
+        "success": True,
+        "message": "User blocked successfully"
+    }
+
+
+@router.delete("/block/{blocked_user_id}")
+async def unblock_user(
+    blocked_user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Unblock a user"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    block = db.query(Block).filter(
+        Block.blocker_id == current_user.account_id,
+        Block.blocked_id == blocked_user_id
+    ).first()
+    
+    if not block:
+        raise HTTPException(status_code=404, detail="User is not blocked")
+    
+    db.delete(block)
+    db.commit()
+    
+    logger.info(f"User {current_user.account_id} unblocked user {blocked_user_id}")
+    
+    return {
+        "success": True,
+        "message": "User unblocked successfully"
+    }
+
+
+@router.get("/blocks")
+async def list_blocks(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List all users blocked by the current user"""
+    if not PRIVATE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Private chat is disabled")
+    
+    blocks = db.query(Block).filter(
+        Block.blocker_id == current_user.account_id
+    ).order_by(Block.created_at.desc()).all()
+    
+    blocked_users = []
+    for block in blocks:
+        blocked_user = db.query(User).filter(User.account_id == block.blocked_id).first()
+        if blocked_user:
+            blocked_users.append({
+                "user_id": blocked_user.account_id,
+                "username": get_display_username(blocked_user),
+                "blocked_at": block.created_at.isoformat()
+            })
+    
+    return {
+        "blocked_users": blocked_users
     }
 

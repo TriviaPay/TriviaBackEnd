@@ -12,9 +12,12 @@ from config import (
     GLOBAL_CHAT_ENABLED,
     GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE,
     GLOBAL_CHAT_MAX_MESSAGE_LENGTH,
-    GLOBAL_CHAT_RETENTION_DAYS
+    GLOBAL_CHAT_RETENTION_DAYS,
+    GLOBAL_CHAT_MAX_MESSAGES_PER_BURST,
+    GLOBAL_CHAT_BURST_WINDOW_SECONDS
 )
 from utils.pusher_client import publish_chat_message_sync
+from utils.message_sanitizer import sanitize_message
 import logging
 
 logger = logging.getLogger(__name__)
@@ -68,7 +71,8 @@ async def send_global_message(
     if not GLOBAL_CHAT_ENABLED:
         raise HTTPException(status_code=403, detail="Global chat is disabled")
     
-    message_text = request.message.strip()
+    # Sanitize message to prevent XSS
+    message_text = sanitize_message(request.message)
     if not message_text:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
@@ -87,7 +91,20 @@ async def send_global_message(
                 "duplicate": True
             }
     
-    # Rate limiting
+    # Burst rate limiting (3 messages per 3 seconds)
+    burst_window_ago = datetime.utcnow() - timedelta(seconds=GLOBAL_CHAT_BURST_WINDOW_SECONDS)
+    recent_burst = db.query(GlobalChatMessage).filter(
+        GlobalChatMessage.user_id == current_user.account_id,
+        GlobalChatMessage.created_at >= burst_window_ago
+    ).count()
+    
+    if recent_burst >= GLOBAL_CHAT_MAX_MESSAGES_PER_BURST:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Burst rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_BURST} messages per {GLOBAL_CHAT_BURST_WINDOW_SECONDS} seconds."
+        )
+    
+    # Per-minute rate limiting
     one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
     recent_messages = db.query(GlobalChatMessage).filter(
         GlobalChatMessage.user_id == current_user.account_id,
