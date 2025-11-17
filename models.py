@@ -1,7 +1,7 @@
 from sqlalchemy import (
     Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint, Text, Enum as SQLEnum, LargeBinary
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID, JSONB, ENUM as PG_ENUM
 import uuid
 from enum import Enum as PyEnum
 from sqlalchemy.orm import relationship
@@ -1262,7 +1262,7 @@ class PrivateChatConversation(Base):
     id = Column(Integer, primary_key=True, index=True)
     user1_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
     user2_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
-    status = Column(SQLEnum(PrivateChatStatus), nullable=False, default=PrivateChatStatus.PENDING)
+    status = Column(PG_ENUM('pending', 'accepted', 'rejected', name='privatechatstatus', create_type=False), nullable=False, default='pending')
     requested_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     requested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     responded_at = Column(DateTime, nullable=True)
@@ -1290,7 +1290,7 @@ class PrivateChatMessage(Base):
     conversation_id = Column(Integer, ForeignKey("private_chat_conversations.id"), nullable=False, index=True)
     sender_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     message = Column(String, nullable=False)
-    status = Column(SQLEnum(MessageStatus), nullable=False, default=MessageStatus.SENT)
+    status = Column(PG_ENUM('sent', 'delivered', 'seen', name='messagestatus', create_type=False), nullable=False, default='sent')
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     delivered_at = Column(DateTime, nullable=True)
     client_message_id = Column(String, nullable=True)  # For idempotency

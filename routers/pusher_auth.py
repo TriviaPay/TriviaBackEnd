@@ -5,9 +5,10 @@ import logging
 
 from db import get_db
 from routers.dependencies import get_current_user
-from models import User, PrivateChatConversation
+from models import User, PrivateChatConversation, PrivateChatStatus
 from config import PUSHER_ENABLED, PUSHER_SECRET, PUSHER_KEY
 from utils.pusher_client import get_pusher_client
+from routers.private_chat import check_blocked
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,14 @@ async def pusher_auth(
         
         if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
             raise HTTPException(status_code=403, detail="Not authorized for this conversation")
+        
+        # Check conversation status - must be ACCEPTED
+        if conversation.status != 'accepted':
+            raise HTTPException(status_code=403, detail="Conversation not accepted")
+        
+        # Check if users are blocked
+        if check_blocked(db, conversation.user1_id, conversation.user2_id):
+            raise HTTPException(status_code=403, detail="Users are blocked")
         
         # Authenticate private channel
         auth = pusher_client.authenticate(

@@ -20,19 +20,38 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # ### Rename tables to use winners_ prefix ###
-    # Rename trivia_questions_winners to winners_draw_results
-    op.rename_table('trivia_questions_winners', 'winners_draw_results')
+    # Make operations conditional for fresh database setups
+    from sqlalchemy import inspect
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    table_names = inspector.get_table_names()
     
-    # Rename trivia_draw_config to winners_draw_config
-    op.rename_table('trivia_draw_config', 'winners_draw_config')
+    # Rename trivia_questions_winners to winners_draw_results (only if old name exists)
+    if 'trivia_questions_winners' in table_names and 'winners_draw_results' not in table_names:
+        op.rename_table('trivia_questions_winners', 'winners_draw_results')
+        # Rename index if it exists
+        try:
+            op.execute('ALTER INDEX ix_trivia_questions_winners_id RENAME TO ix_winners_draw_results_id')
+        except Exception:
+            pass  # Index might not exist or already renamed
     
-    # Rename draw_config to winners_draw_settings
-    op.rename_table('draw_config', 'winners_draw_settings')
+    # Rename trivia_draw_config to winners_draw_config (only if old name exists)
+    if 'trivia_draw_config' in table_names and 'winners_draw_config' not in table_names:
+        op.rename_table('trivia_draw_config', 'winners_draw_config')
+        # Rename index if it exists
+        try:
+            op.execute('ALTER INDEX ix_trivia_draw_config_id RENAME TO ix_winners_draw_config_id')
+        except Exception:
+            pass
     
-    # Rename indexes to match new table names
-    op.execute('ALTER INDEX ix_trivia_questions_winners_id RENAME TO ix_winners_draw_results_id')
-    op.execute('ALTER INDEX ix_trivia_draw_config_id RENAME TO ix_winners_draw_config_id')
-    op.execute('ALTER INDEX ix_draw_config_id RENAME TO ix_winners_draw_settings_id')
+    # Rename draw_config to winners_draw_settings (only if old name exists)
+    if 'draw_config' in table_names and 'winners_draw_settings' not in table_names:
+        op.rename_table('draw_config', 'winners_draw_settings')
+        # Rename index if it exists
+        try:
+            op.execute('ALTER INDEX ix_draw_config_id RENAME TO ix_winners_draw_settings_id')
+        except Exception:
+            pass
 
 
 def downgrade() -> None:

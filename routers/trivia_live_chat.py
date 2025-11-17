@@ -15,10 +15,13 @@ from config import (
     TRIVIA_LIVE_CHAT_PRE_HOURS,
     TRIVIA_LIVE_CHAT_POST_HOURS,
     TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE,
-    TRIVIA_LIVE_CHAT_MAX_MESSAGE_LENGTH
+    TRIVIA_LIVE_CHAT_MAX_MESSAGE_LENGTH,
+    TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST,
+    TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS
 )
 from utils.draw_calculations import get_next_draw_time
 from utils.pusher_client import publish_chat_message_sync
+from utils.message_sanitizer import sanitize_message
 import logging
 
 logger = logging.getLogger(__name__)
@@ -119,7 +122,8 @@ async def send_trivia_live_message(
     if not is_trivia_live_chat_active():
         raise HTTPException(status_code=403, detail="Trivia live chat is not active")
     
-    message_text = request.message.strip()
+    # Sanitize message to prevent XSS
+    message_text = sanitize_message(request.message)
     if not message_text:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
@@ -145,7 +149,20 @@ async def send_trivia_live_message(
                 "duplicate": True
             }
     
-    # Rate limiting
+    # Burst rate limiting (3 messages per 3 seconds)
+    burst_window_ago = datetime.utcnow() - timedelta(seconds=TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS)
+    recent_burst = db.query(TriviaLiveChatMessage).filter(
+        TriviaLiveChatMessage.user_id == current_user.account_id,
+        TriviaLiveChatMessage.created_at >= burst_window_ago
+    ).count()
+    
+    if recent_burst >= TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Burst rate limit exceeded. Maximum {TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST} messages per {TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS} seconds."
+        )
+    
+    # Per-minute rate limiting
     one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
     recent_messages = db.query(TriviaLiveChatMessage).filter(
         TriviaLiveChatMessage.user_id == current_user.account_id,
