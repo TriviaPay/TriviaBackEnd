@@ -56,9 +56,6 @@ class User(Base):
     
     # Added fields for trivia game
     gems = Column(Integer, default=0)  # Track user's gems
-    streaks = Column(Integer, default=0)  # Track user's streaks
-    lifeline_changes_remaining = Column(Integer, default=3)  # Track remaining question changes
-    last_streak_date = Column(DateTime, nullable=True)  # To track daily streaks
     
     # Daily draw eligibility tracking
     daily_eligibility_flag = Column(Boolean, default=False)  # True if user answered all 3 questions correctly today
@@ -75,9 +72,6 @@ class User(Base):
 
     # Stripe integration fields
     stripe_customer_id = Column(String, nullable=True, index=True)  # Stripe customer ID for payment methods
-
-    # Store purchased items
-    owned_boosts = Column(Text, nullable=True)  # JSON string of owned boost items
     
     # Cosmetic selections
     selected_avatar_id = Column(String, nullable=True)  # Currently selected avatar ID

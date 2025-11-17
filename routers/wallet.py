@@ -137,10 +137,6 @@ def apply_purchase_effects(user: User, purchase: PurchaseRequest):
         }
         user.gems += gem_amounts[purchase.item_id] * purchase.quantity
     
-    elif purchase.item_type == "lifeline":
-        if purchase.item_id == "change":
-            user.lifeline_changes_remaining += purchase.quantity
-    
     elif purchase.item_type == "subscription":
         # Handle subscription logic
         pass

@@ -514,8 +514,6 @@ async def bind_password(
                 profile_pic_url=profile_pic_url,  # Set default profile pic based on first letter
                 notification_on=True,
                 gems=0,
-                streaks=0,
-                lifeline_changes_remaining=3,
                 referral_count=0,
                 is_admin=False,
                 username_updated=False,
