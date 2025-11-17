@@ -510,6 +510,9 @@ class GemPackageConfig(Base):
     gems_amount = Column(Integer, nullable=False)
     is_one_time = Column(Boolean, default=False)  # For one-time offers
     description = Column(String, nullable=True)
+    bucket = Column(String, nullable=True)  # S3 bucket name
+    object_key = Column(String, nullable=True)  # S3 object key
+    mime_type = Column(String, nullable=True)  # MIME type (e.g., image/png, image/jpeg)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -775,7 +778,7 @@ class LiveChatViewer(Base):
 #  E2EE Devices Table
 # =================================
 class E2EEDevice(Base):
-    __tablename__ = "e2ee_devices"
+    __tablename__ = "z_e2ee_devices"
     
     device_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
@@ -793,9 +796,9 @@ class E2EEDevice(Base):
 #  E2EE Key Bundles Table
 # =================================
 class E2EEKeyBundle(Base):
-    __tablename__ = "e2ee_key_bundles"
+    __tablename__ = "z_e2ee_key_bundles"
     
-    device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), primary_key=True, unique=True)
+    device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), primary_key=True, unique=True)
     identity_key_pub = Column(String, nullable=False)  # Base64 encoded
     signed_prekey_pub = Column(String, nullable=False)  # Base64 encoded
     signed_prekey_sig = Column(String, nullable=False)  # Base64 encoded signature
@@ -810,10 +813,10 @@ class E2EEKeyBundle(Base):
 #  E2EE One-Time Prekeys Table
 # =================================
 class E2EEOneTimePrekey(Base):
-    __tablename__ = "e2ee_one_time_prekeys"
+    __tablename__ = "z_e2ee_one_time_prekeys"
     
     id = Column(Integer, primary_key=True, index=True)
-    device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False)
+    device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), nullable=False)
     prekey_pub = Column(String, nullable=False)  # Base64 encoded
     claimed = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -825,7 +828,7 @@ class E2EEOneTimePrekey(Base):
 #  DM Conversations Table
 # =================================
 class DMConversation(Base):
-    __tablename__ = "dm_conversations"
+    __tablename__ = "z_dm_conversations"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     last_message_at = Column(DateTime, nullable=True, index=True)
@@ -840,10 +843,10 @@ class DMConversation(Base):
 #  DM Participants Table
 # =================================
 class DMParticipant(Base):
-    __tablename__ = "dm_participants"
+    __tablename__ = "z_dm_participants"
     
     id = Column(Integer, primary_key=True, index=True)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False, index=True)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("z_dm_conversations.id"), nullable=False, index=True)
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
     device_ids = Column(JSONB, nullable=True)  # Array of device UUIDs
     
@@ -859,12 +862,12 @@ class DMParticipant(Base):
 #  DM Messages Table
 # =================================
 class DMMessage(Base):
-    __tablename__ = "dm_messages"
+    __tablename__ = "z_dm_messages"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False, index=True)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("z_dm_conversations.id"), nullable=False, index=True)
     sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False)
+    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), nullable=False)
     ciphertext = Column(LargeBinary, nullable=False)  # Binary encrypted payload
     proto = Column(Integer, nullable=False)  # 1=DR message, 2=PreKey message
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
@@ -880,10 +883,10 @@ class DMMessage(Base):
 #  DM Delivery Table
 # =================================
 class DMDelivery(Base):
-    __tablename__ = "dm_delivery"
+    __tablename__ = "z_dm_delivery"
     
     id = Column(Integer, primary_key=True, index=True)
-    message_id = Column(UUID(as_uuid=True), ForeignKey("dm_messages.id"), nullable=False)
+    message_id = Column(UUID(as_uuid=True), ForeignKey("z_dm_messages.id"), nullable=False)
     recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
     delivered_at = Column(DateTime, nullable=True)
     read_at = Column(DateTime, nullable=True, index=True)
@@ -900,7 +903,7 @@ class DMDelivery(Base):
 #  Blocks Table
 # =================================
 class Block(Base):
-    __tablename__ = "blocks"
+    __tablename__ = "z_blocks"
     
     id = Column(Integer, primary_key=True, index=True)
     blocker_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
@@ -919,7 +922,7 @@ class Block(Base):
 #  Device Revocations Table
 # =================================
 class DeviceRevocation(Base):
-    __tablename__ = "device_revocations"
+    __tablename__ = "z_device_revocations"
     
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
     device_id = Column(UUID(as_uuid=True), nullable=False, primary_key=True)
@@ -931,7 +934,7 @@ class DeviceRevocation(Base):
 # =================================
 
 class Group(Base):
-    __tablename__ = "groups"
+    __tablename__ = "z_groups"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String, nullable=False)
@@ -951,10 +954,10 @@ class Group(Base):
 
 
 class GroupParticipant(Base):
-    __tablename__ = "group_participants"
+    __tablename__ = "z_group_participants"
     
     id = Column(Integer, primary_key=True, index=True)
-    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, index=True)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, index=True)
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
     role = Column(SQLEnum('owner', 'admin', 'member', name='grouprole'), nullable=False, default='member')
     joined_at = Column(DateTime, default=datetime.utcnow)
@@ -971,12 +974,12 @@ class GroupParticipant(Base):
 
 
 class GroupMessage(Base):
-    __tablename__ = "group_messages"
+    __tablename__ = "z_group_messages"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, index=True)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, index=True)
     sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False)
+    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), nullable=False)
     ciphertext = Column(LargeBinary, nullable=False)
     proto = Column(Integer, nullable=False)  # 10=sender-key msg, 11=sender-key distribution
     group_epoch = Column(Integer, nullable=False)
@@ -991,10 +994,10 @@ class GroupMessage(Base):
 
 
 class GroupDelivery(Base):
-    __tablename__ = "group_delivery"
+    __tablename__ = "z_group_delivery"
     
     id = Column(Integer, primary_key=True, index=True)
-    message_id = Column(UUID(as_uuid=True), ForeignKey("group_messages.id"), nullable=False)
+    message_id = Column(UUID(as_uuid=True), ForeignKey("z_group_messages.id"), nullable=False)
     recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
     delivered_at = Column(DateTime, nullable=True)
     read_at = Column(DateTime, nullable=True, index=True)
@@ -1009,9 +1012,9 @@ class GroupDelivery(Base):
 
 
 class GroupSenderKey(Base):
-    __tablename__ = "group_sender_keys"
+    __tablename__ = "z_group_sender_keys"
     
-    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, primary_key=True)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, primary_key=True)
     sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
     sender_device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False, primary_key=True)
     group_epoch = Column(Integer, nullable=False, primary_key=True)
@@ -1021,10 +1024,10 @@ class GroupSenderKey(Base):
 
 
 class GroupInvite(Base):
-    __tablename__ = "group_invites"
+    __tablename__ = "z_group_invites"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, index=True)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, index=True)
     created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     type = Column(SQLEnum('link', 'direct', name='invitetype'), nullable=False)
     code = Column(String, unique=True, nullable=False, index=True)
@@ -1035,9 +1038,9 @@ class GroupInvite(Base):
 
 
 class GroupBan(Base):
-    __tablename__ = "group_bans"
+    __tablename__ = "z_group_bans"
     
-    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, primary_key=True)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, primary_key=True)
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True, index=True)
     banned_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     reason = Column(String, nullable=True)
@@ -1048,7 +1051,7 @@ class GroupBan(Base):
 # =================================
 
 class StatusPost(Base):
-    __tablename__ = "status_posts"
+    __tablename__ = "z_status_posts"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
@@ -1065,9 +1068,9 @@ class StatusPost(Base):
 
 
 class StatusAudience(Base):
-    __tablename__ = "status_audience"
+    __tablename__ = "z_status_audience"
     
-    post_id = Column(UUID(as_uuid=True), ForeignKey("status_posts.id"), nullable=False, primary_key=True)
+    post_id = Column(UUID(as_uuid=True), ForeignKey("z_status_posts.id"), nullable=False, primary_key=True)
     viewer_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True, index=True)
     
     # Relationships
@@ -1076,9 +1079,9 @@ class StatusAudience(Base):
 
 
 class StatusView(Base):
-    __tablename__ = "status_views"
+    __tablename__ = "z_status_views"
     
-    post_id = Column(UUID(as_uuid=True), ForeignKey("status_posts.id"), nullable=False, primary_key=True)
+    post_id = Column(UUID(as_uuid=True), ForeignKey("z_status_posts.id"), nullable=False, primary_key=True)
     viewer_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True, index=True)
     viewed_at = Column(DateTime, default=datetime.utcnow)
     
@@ -1088,7 +1091,7 @@ class StatusView(Base):
 
 
 class UserPresence(Base):
-    __tablename__ = "user_presence"
+    __tablename__ = "z_user_presence"
     
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
     last_seen_at = Column(DateTime, nullable=True)
