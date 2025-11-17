@@ -205,7 +205,7 @@ async def use_gameplay_boost(
     - **hint** (30 gems): Get a hint for the current question
     - **change_question** (10 gems): Change to a different question (max 3 per day)
     - **auto_submit** (300 gems): Automatically submit the correct answer
-    - **extra_chance** (150 gems): Reset a question for a fresh attempt after wrong answer
+    - **extra_chance** (150 gems): Reset a question for a fresh attempt after wrong answer. Includes hint and correct answer.
     - **streak_saver** (100 gems): Save your daily streak if you missed a day
     
     **Requirements:**
@@ -354,9 +354,35 @@ async def use_gameplay_boost(
         user_daily.answered_at = None
         user_daily.retry_count += 1
         
+        # Get hint (use hint field if available, otherwise fall back to explanation)
+        hint_text = question.hint if question.hint else question.explanation
+        
+        # Get correct answer (handle both option letter and full text)
+        correct_answer_lower = question.correct_answer.lower().strip()
+        options = ["a", "b", "c", "d"]
+        
+        # If correct_answer is an option letter, get the full option text
+        if correct_answer_lower in options:
+            correct_answer_text = getattr(question, f"option_{correct_answer_lower}")
+            correct_answer_letter = correct_answer_lower
+        else:
+            # Otherwise use the correct_answer as-is and find matching option letter
+            correct_answer_text = question.correct_answer
+            correct_answer_letter = None
+            for opt in options:
+                option_text = getattr(question, f"option_{opt}")
+                if option_text and option_text.lower().strip() == correct_answer_lower:
+                    correct_answer_letter = opt
+                    break
+        
         response = {
             "message": "Question has been reset for a fresh attempt",
             "retry_count": user_daily.retry_count,
+            "hint": hint_text,
+            "correct_answer": {
+                "letter": correct_answer_letter,
+                "text": correct_answer_text
+            },
             "question": {
                 "question_number": question.question_number,
                 "question": question.question,
