@@ -609,11 +609,11 @@ async def handle_successful_payment(payment_intent, event_id: Optional[str] = No
                         WalletLedger.external_ref_type == 'payment_intent',
                         WalletLedger.external_ref_id == payment_intent.id,
                         WalletLedger.kind == 'deposit'
-                    ).first()
-                    
+                        ).first()
+                        
                     if existing_ledger:
                         logger.info(f"Deposit for payment_intent {payment_intent.id} already processed. Balance: {existing_ledger.balance_after_minor}")
-                    else:
+                        else:
                         try:
                             new_balance = add_ledger_entry(
                                 db=db,
@@ -687,8 +687,8 @@ async def handle_refund(charge, event_id: Optional[str] = None):
                 logger.info(f"Refunded {refund_amount_minor} {currency} from user {transaction.user_id}'s wallet. New balance: {new_balance}")
             except ValueError as e:
                 logger.warning(f"Could not process refund: {str(e)}")
-        
-        db.commit()
+                
+                db.commit()
         logger.info(f"Refund processed for charge {charge.id}")
     except Exception as e:
         db.rollback()
@@ -895,7 +895,7 @@ async def stripe_webhook(
                 # For testing without a webhook secret
                 data = json.loads(payload)
                 event = stripe.Event.construct_from(data, stripe.api_key)
-            
+                
             # Get event_id from event object if not already set
             if not event_id and hasattr(event, 'id'):
                 event_id = event.id
@@ -1171,8 +1171,8 @@ async def stripe_webhook(
                     withdrawal_request.admin_notes = f"Payout failed: {failure_message}"
                     db.add(withdrawal_request)
                     db.commit()
-                    
-                    # TODO: Send email notification about the failed payout
+                        
+                            # TODO: Send email notification about the failed payout
                     logger.warning(f"Payout failed for withdrawal {withdrawal_request.id}. Reason: {failure_message}")
         
         # Refund events
@@ -1217,7 +1217,7 @@ async def stripe_webhook(
                 webhook_event.status = 'processed'
                 webhook_event.processed_at = datetime.utcnow()
                 db.add(webhook_event)
-                db.commit()
+                    db.commit()
         
         return {"status": "success"}
     
@@ -1377,7 +1377,7 @@ async def withdraw_from_wallet(
         fee_minor = 0
         if method == "instant":
             fee_minor = max(math.ceil(Decimal(amount_minor) * Decimal("0.015")), 50)
-        
+            
         # Calculate total amount needed (withdrawal + fee)
         total_amount_minor = amount_minor + fee_minor
         
@@ -1423,7 +1423,7 @@ async def withdraw_from_wallet(
         # Validate sufficient balance
         if available_balance < total_amount_minor:
             raise HTTPException(
-                status_code=400,
+                status_code=400, 
                 detail=f"Insufficient funds. Available balance: {available_balance / 100.0:.2f} {currency.upper()}, "
                        f"Required: {amount_minor / 100.0:.2f} + {fee_minor / 100.0:.2f} fee = {total_amount_minor / 100.0:.2f} {currency.upper()}"
             )
@@ -1443,7 +1443,7 @@ async def withdraw_from_wallet(
                 raise HTTPException(status_code=400, detail="Bank account is not verified")
         elif not payout_details:
             raise HTTPException(
-                status_code=400,
+                status_code=400, 
                 detail="Either bank_account_id or payout_details must be provided"
             )
         
@@ -1551,7 +1551,7 @@ async def withdraw_from_wallet(
                     )
                     withdrawal_request.status = 'failed'
                     db.add(withdrawal_request)
-                    db.commit()
+                db.commit()
                 except Exception as revert_error:
                     logger.error(f"Failed to revert withdrawal: {str(revert_error)}", exc_info=True)
                     db.rollback()
@@ -1650,12 +1650,12 @@ async def get_withdrawal_history(
         # Format the results
         withdrawal_history = []
         for withdrawal in withdrawals:
-            withdrawal_history.append({
-                "id": withdrawal.id,
+                withdrawal_history.append({
+                    "id": withdrawal.id,
                 "amount_minor": withdrawal.amount_minor,
                 "fee_minor": withdrawal.fee_minor,
-                "currency": withdrawal.currency,
-                "status": withdrawal.status,
+                    "currency": withdrawal.currency,
+                    "status": withdrawal.status,
                 "method": withdrawal.method,
                 "requested_at": withdrawal.requested_at.isoformat() if withdrawal.requested_at else None,
                 "processed_at": withdrawal.processed_at.isoformat() if withdrawal.processed_at else None,
@@ -1791,7 +1791,7 @@ async def process_withdrawal(
                 # 4. Store stripe_transfer_id and stripe_payout_id
                 
                 # For now, simulate a successful payout
-                payout_id = f"po_std_{int(datetime.utcnow().timestamp())}"
+            payout_id = f"po_std_{int(datetime.utcnow().timestamp())}"
                 withdrawal_request.stripe_payout_id = payout_id
                 withdrawal_request.stripe_balance_txn_id = f"txn_{int(datetime.utcnow().timestamp())}"
                 
@@ -2424,7 +2424,7 @@ async def admin_get_withdrawals(
         if status:
             if status not in ["pending", "processing", "paid", "failed", "canceled"]:
                 raise HTTPException(
-                    status_code=400,
+                    status_code=400, 
                     detail="Status must be one of: 'pending', 'processing', 'paid', 'failed', 'canceled'"
                 )
             base_query = base_query.filter(WithdrawalRequest.status == status)
