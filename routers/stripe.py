@@ -613,7 +613,7 @@ async def handle_successful_payment(payment_intent, event_id: Optional[str] = No
                         
                     if existing_ledger:
                         logger.info(f"Deposit for payment_intent {payment_intent.id} already processed. Balance: {existing_ledger.balance_after_minor}")
-                        else:
+                    else:
                         try:
                             new_balance = add_ledger_entry(
                                 db=db,
@@ -1217,7 +1217,7 @@ async def stripe_webhook(
                 webhook_event.status = 'processed'
                 webhook_event.processed_at = datetime.utcnow()
                 db.add(webhook_event)
-                    db.commit()
+                db.commit()
         
         return {"status": "success"}
     
@@ -1551,7 +1551,7 @@ async def withdraw_from_wallet(
                     )
                     withdrawal_request.status = 'failed'
                     db.add(withdrawal_request)
-                db.commit()
+                    db.commit()
                 except Exception as revert_error:
                     logger.error(f"Failed to revert withdrawal: {str(revert_error)}", exc_info=True)
                     db.rollback()
@@ -1791,7 +1791,7 @@ async def process_withdrawal(
                 # 4. Store stripe_transfer_id and stripe_payout_id
                 
                 # For now, simulate a successful payout
-            payout_id = f"po_std_{int(datetime.utcnow().timestamp())}"
+                payout_id = f"po_std_{int(datetime.utcnow().timestamp())}"
                 withdrawal_request.stripe_payout_id = payout_id
                 withdrawal_request.stripe_balance_txn_id = f"txn_{int(datetime.utcnow().timestamp())}"
                 
