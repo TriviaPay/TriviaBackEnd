@@ -180,9 +180,9 @@ async def get_daily_winners(
         if date_str:
             target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         else:
-            # Default to yesterday if no date specified
+            # Default to today if no date specified
             est = pytz.timezone('US/Eastern')
-            target_date = (datetime.now(est) - timedelta(days=1)).date()
+            target_date = datetime.now(est).date()
 
         # Get winners for the specified date
         winners = db.query(TriviaQuestionsWinners, User).join(
