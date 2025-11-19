@@ -198,10 +198,15 @@ async def send_private_message(
             detail="User is not accepting private messages."
         )
     
-    # If pending and sender is not the requester, auto-accept (recipient is sending first message)
-    if conversation.status == 'pending' and conversation.requested_by != current_user.account_id:
-        conversation.status = 'accepted'
-        conversation.responded_at = datetime.utcnow()
+    # Check if conversation is pending - only requester can send messages until accepted
+    if conversation.status == 'pending':
+        if conversation.requested_by != current_user.account_id:
+            # Recipient trying to send message before accepting - must accept first
+            raise HTTPException(
+                status_code=403,
+                detail="Chat request must be accepted before sending messages. Please accept the chat request first."
+            )
+        # Requester can send messages even while pending (to allow follow-up messages)
     
     # Sanitize message to prevent XSS
     sanitized_message = sanitize_message(request.message)
