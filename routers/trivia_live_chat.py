@@ -45,8 +45,8 @@ def get_display_username(user: User) -> str:
 
 def is_trivia_live_chat_active() -> bool:
     """
-    Check if trivia live chat is active (3 hours before/after draw).
-    Returns True if within active window.
+    Check if trivia live chat is active (X hours before/after draw).
+    Returns True if within active window of either previous or next draw.
     """
     if not TRIVIA_LIVE_CHAT_ENABLED:
         return False
@@ -57,10 +57,25 @@ def is_trivia_live_chat_active() -> bool:
         tz = pytz.timezone(timezone_str)
         now = datetime.now(tz)
         
-        chat_start = next_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
-        chat_end = next_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+        # Check next draw window
+        next_chat_start = next_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+        next_chat_end = next_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
         
-        return chat_start <= now <= chat_end
+        # Check previous draw window (in case we're in post-window)
+        prev_draw_time = next_draw_time - timedelta(days=1)
+        prev_chat_start = prev_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+        prev_chat_end = prev_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+        
+        # Check if we're in either window
+        in_next_window = next_chat_start <= now <= next_chat_end
+        in_prev_window = prev_chat_start <= now <= prev_chat_end
+        
+        logger.debug(f"Trivia live chat - Next window: {next_chat_start} to {next_chat_end}")
+        logger.debug(f"Trivia live chat - Prev window: {prev_chat_start} to {prev_chat_end}")
+        logger.debug(f"Trivia live chat - Current time: {now}")
+        logger.debug(f"Trivia live chat - In next window: {in_next_window}, In prev window: {in_prev_window}")
+        
+        return in_next_window or in_prev_window
     except Exception as e:
         logger.error(f"Error checking trivia live chat window: {e}")
         return False
@@ -260,20 +275,44 @@ async def get_trivia_live_messages(
             "message": "Trivia live chat is not currently active"
         }
     
-    # Get next draw time and calculate window
+    # Get next draw time and calculate windows
     next_draw_time = get_next_draw_time()  # Timezone-aware
-    draw_date = next_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
-    
     timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
     tz = pytz.timezone(timezone_str)
     now = datetime.now(tz)
     
-    window_start = next_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
-    window_end = next_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+    # Calculate both windows
+    next_window_start = next_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+    next_window_end = next_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
     
-    # Convert window to UTC naive for database comparison
-    window_start_utc = window_start.astimezone(pytz.UTC).replace(tzinfo=None)
-    window_end_utc = window_end.astimezone(pytz.UTC).replace(tzinfo=None)
+    prev_draw_time = next_draw_time - timedelta(days=1)
+    prev_window_start = prev_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+    prev_window_end = prev_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+    
+    # Determine which window we're in
+    in_next_window = next_window_start <= now <= next_window_end
+    in_prev_window = prev_window_start <= now <= prev_window_end
+    
+    # Use the appropriate draw date and window
+    if in_next_window:
+        draw_date = next_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
+        window_start_utc = next_window_start.astimezone(pytz.UTC).replace(tzinfo=None)
+        window_end_utc = next_window_end.astimezone(pytz.UTC).replace(tzinfo=None)
+        window_start = next_window_start
+        window_end = next_window_end
+    elif in_prev_window:
+        draw_date = prev_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
+        window_start_utc = prev_window_start.astimezone(pytz.UTC).replace(tzinfo=None)
+        window_end_utc = prev_window_end.astimezone(pytz.UTC).replace(tzinfo=None)
+        window_start = prev_window_start
+        window_end = prev_window_end
+    else:
+        # Not in any window, return empty
+        return {
+            "messages": [],
+            "is_active": False,
+            "message": "Trivia live chat is not currently active"
+        }
     
     # Query messages by draw_date and created_at range
     messages = db.query(TriviaLiveChatMessage).filter(
@@ -325,6 +364,23 @@ async def get_trivia_live_messages(
     }
 
 
+@router.get("/debug-config")
+async def debug_trivia_live_chat_config(
+    current_user: User = Depends(get_current_user)
+):
+    """Debug endpoint to check configuration values"""
+    return {
+        "TRIVIA_LIVE_CHAT_PRE_HOURS_env": os.getenv("TRIVIA_LIVE_CHAT_PRE_HOURS", "NOT SET"),
+        "TRIVIA_LIVE_CHAT_POST_HOURS_env": os.getenv("TRIVIA_LIVE_CHAT_POST_HOURS", "NOT SET"),
+        "loaded_pre_hours": TRIVIA_LIVE_CHAT_PRE_HOURS,
+        "loaded_post_hours": TRIVIA_LIVE_CHAT_POST_HOURS,
+        "DRAW_TIMEZONE": os.getenv("DRAW_TIMEZONE", "NOT SET"),
+        "DRAW_TIME_HOUR": os.getenv("DRAW_TIME_HOUR", "NOT SET"),
+        "DRAW_TIME_MINUTE": os.getenv("DRAW_TIME_MINUTE", "NOT SET"),
+        "TRIVIA_LIVE_CHAT_ENABLED": TRIVIA_LIVE_CHAT_ENABLED
+    }
+
+
 @router.get("/status")
 async def get_trivia_live_chat_status(
     db: Session = Depends(get_db),
@@ -339,18 +395,35 @@ async def get_trivia_live_chat_status(
         }
     
     is_active = is_trivia_live_chat_active()
+    next_draw_time = get_next_draw_time()
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    
+    # Calculate both windows for display
+    next_window_start = next_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+    next_window_end = next_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+    
+    prev_draw_time = next_draw_time - timedelta(days=1)
+    prev_window_start = prev_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+    prev_window_end = prev_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
     
     if is_active:
-        next_draw_time = get_next_draw_time()
-        timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
-        tz = pytz.timezone(timezone_str)
-        now = datetime.now(tz)
+        # Determine which window we're in
+        in_next_window = next_window_start <= now <= next_window_end
+        in_prev_window = prev_window_start <= now <= prev_window_end
         
-        window_start = next_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
-        window_end = next_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+        # Use the appropriate draw date for viewer count
+        if in_next_window:
+            draw_date = next_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
+            window_start = next_window_start
+            window_end = next_window_end
+        else:
+            draw_date = prev_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
+            window_start = prev_window_start
+            window_end = prev_window_end
         
         # Get active viewer count (users active within last 5 minutes)
-        draw_date = next_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
         cutoff_time = datetime.utcnow() - timedelta(minutes=5)
         active_viewers = db.query(TriviaLiveChatViewer).filter(
             TriviaLiveChatViewer.draw_date == draw_date,
@@ -363,12 +436,23 @@ async def get_trivia_live_chat_status(
             "window_start": window_start.isoformat(),
             "window_end": window_end.isoformat(),
             "next_draw_time": next_draw_time.isoformat(),
-            "viewer_count": active_viewers
+            "viewer_count": active_viewers,
+            "current_time": now.isoformat(),
+            "pre_hours": TRIVIA_LIVE_CHAT_PRE_HOURS,
+            "post_hours": TRIVIA_LIVE_CHAT_POST_HOURS
         }
     else:
         return {
             "enabled": True,
             "is_active": False,
-            "message": "Trivia live chat is not currently active"
+            "message": "Trivia live chat is not currently active",
+            "next_window_start": next_window_start.isoformat(),
+            "next_window_end": next_window_end.isoformat(),
+            "prev_window_start": prev_window_start.isoformat(),
+            "prev_window_end": prev_window_end.isoformat(),
+            "current_time": now.isoformat(),
+            "next_draw_time": next_draw_time.isoformat(),
+            "pre_hours": TRIVIA_LIVE_CHAT_PRE_HOURS,
+            "post_hours": TRIVIA_LIVE_CHAT_POST_HOURS
         }
 
