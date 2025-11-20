@@ -33,11 +33,10 @@ def upgrade() -> None:
         sa.Column('draw_date', sa.Date(), nullable=False),
         sa.Column('last_seen', sa.DateTime(), nullable=False, server_default=sa.text('now()')),
         sa.ForeignKeyConstraint(['user_id'], ['users.account_id'], ),
-        sa.PrimaryKeyConstraint('user_id', 'draw_date')
+        sa.PrimaryKeyConstraint('user_id', 'draw_date')  # Composite primary key
     )
     op.create_index('ix_trivia_live_chat_viewers_draw_date', 'trivia_live_chat_viewers', ['draw_date'], unique=False)
     op.create_index('ix_trivia_live_chat_viewers_last_seen', 'trivia_live_chat_viewers', ['last_seen'], unique=False)
-    op.create_unique_constraint('uq_trivia_live_chat_viewer_user_draw', 'trivia_live_chat_viewers', ['user_id', 'draw_date'])
 
 
 def downgrade() -> None:
