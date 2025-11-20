@@ -1336,14 +1336,30 @@ class TriviaLiveChatViewer(Base):
     __tablename__ = "trivia_live_chat_viewers"
     
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
-    draw_date = Column(Date, nullable=False, index=True)  # Track per draw date
+    draw_date = Column(Date, nullable=False, primary_key=True, index=True)  # Composite primary key
     last_seen = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     
     # Relationships
     user = relationship("User", backref="trivia_live_chat_viewers")
+
+# =================================
+#  Trivia Live Chat Likes Table
+# =================================
+class TriviaLiveChatLike(Base):
+    __tablename__ = "trivia_live_chat_likes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    draw_date = Column(Date, nullable=False, index=True)  # Like for a specific draw date
+    message_id = Column(Integer, ForeignKey("trivia_live_chat_messages.id"), nullable=True)  # Null for session-level likes
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="trivia_live_chat_likes")
+    message = relationship("TriviaLiveChatMessage", backref="likes")
     
     __table_args__ = (
-        UniqueConstraint('user_id', 'draw_date', name='uq_trivia_live_chat_viewer_user_draw'),
+        UniqueConstraint('user_id', 'draw_date', 'message_id', name='uq_trivia_live_chat_like_user_draw_message'),
     )
 
 # =================================

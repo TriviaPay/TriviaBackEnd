@@ -8,7 +8,7 @@ import pytz
 import os
 
 from db import get_db
-from models import User, TriviaLiveChatMessage, GlobalChatMessage, TriviaLiveChatViewer
+from models import User, TriviaLiveChatMessage, GlobalChatMessage, TriviaLiveChatViewer, TriviaLiveChatLike
 from routers.dependencies import get_current_user
 from config import (
     TRIVIA_LIVE_CHAT_ENABLED,
@@ -200,9 +200,12 @@ async def send_trivia_live_message(
     db.add(new_message)
     
     # Update or create viewer tracking (user is active in trivia live chat)
+    from sqlalchemy import and_
     existing_viewer = db.query(TriviaLiveChatViewer).filter(
-        TriviaLiveChatViewer.user_id == current_user.account_id,
-        TriviaLiveChatViewer.draw_date == draw_date
+        and_(
+            TriviaLiveChatViewer.user_id == current_user.account_id,
+            TriviaLiveChatViewer.draw_date == draw_date
+        )
     ).first()
     
     if existing_viewer:
@@ -322,9 +325,12 @@ async def get_trivia_live_messages(
     ).order_by(TriviaLiveChatMessage.created_at.desc()).limit(limit).all()
     
     # Update viewer tracking (user is viewing trivia live chat)
+    from sqlalchemy import and_
     existing_viewer = db.query(TriviaLiveChatViewer).filter(
-        TriviaLiveChatViewer.user_id == current_user.account_id,
-        TriviaLiveChatViewer.draw_date == draw_date
+        and_(
+            TriviaLiveChatViewer.user_id == current_user.account_id,
+            TriviaLiveChatViewer.draw_date == draw_date
+        )
     ).first()
     
     if existing_viewer:
@@ -345,6 +351,14 @@ async def get_trivia_live_messages(
         TriviaLiveChatViewer.last_seen >= cutoff_time
     ).count()
     
+    # Get total likes for this draw
+    total_likes = db.query(TriviaLiveChatLike).filter(
+        and_(
+            TriviaLiveChatLike.draw_date == draw_date,
+            TriviaLiveChatLike.message_id.is_(None)  # Only session-level likes
+        )
+    ).count()
+    
     return {
         "messages": [
             {
@@ -360,7 +374,8 @@ async def get_trivia_live_messages(
         "is_active": True,
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
-        "viewer_count": active_viewers
+        "viewer_count": active_viewers,
+        "like_count": total_likes
     }
 
 
@@ -430,6 +445,23 @@ async def get_trivia_live_chat_status(
             TriviaLiveChatViewer.last_seen >= cutoff_time
         ).count()
         
+        # Get total likes for this draw
+        total_likes = db.query(TriviaLiveChatLike).filter(
+            and_(
+                TriviaLiveChatLike.draw_date == draw_date,
+                TriviaLiveChatLike.message_id.is_(None)  # Only session-level likes
+            )
+        ).count()
+        
+        # Check if current user has liked
+        user_liked = db.query(TriviaLiveChatLike).filter(
+            and_(
+                TriviaLiveChatLike.user_id == current_user.account_id,
+                TriviaLiveChatLike.draw_date == draw_date,
+                TriviaLiveChatLike.message_id.is_(None)
+            )
+        ).first() is not None
+        
         return {
             "enabled": True,
             "is_active": True,
@@ -437,6 +469,8 @@ async def get_trivia_live_chat_status(
             "window_end": window_end.isoformat(),
             "next_draw_time": next_draw_time.isoformat(),
             "viewer_count": active_viewers,
+            "like_count": total_likes,
+            "user_liked": user_liked,
             "current_time": now.isoformat(),
             "pre_hours": TRIVIA_LIVE_CHAT_PRE_HOURS,
             "post_hours": TRIVIA_LIVE_CHAT_POST_HOURS
@@ -455,4 +489,156 @@ async def get_trivia_live_chat_status(
             "pre_hours": TRIVIA_LIVE_CHAT_PRE_HOURS,
             "post_hours": TRIVIA_LIVE_CHAT_POST_HOURS
         }
+
+
+@router.post("/like")
+async def like_trivia_live_chat(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Like the trivia live chat session. Idempotent: if already liked, returns current count."""
+    if not TRIVIA_LIVE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Trivia live chat is disabled")
+    
+    if not is_trivia_live_chat_active():
+        raise HTTPException(status_code=403, detail="Trivia live chat is not currently active")
+    
+    # Get the current draw date
+    next_draw_time = get_next_draw_time()
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    
+    # Determine which draw date we're in
+    next_window_start = next_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+    next_window_end = next_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+    
+    prev_draw_time = next_draw_time - timedelta(days=1)
+    prev_window_start = prev_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+    prev_window_end = prev_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+    
+    if prev_window_start <= now <= prev_window_end:
+        draw_date = prev_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
+    else:
+        draw_date = next_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
+    
+    # Check if user already liked this draw
+    existing_like = db.query(TriviaLiveChatLike).filter(
+        and_(
+            TriviaLiveChatLike.user_id == current_user.account_id,
+            TriviaLiveChatLike.draw_date == draw_date,
+            TriviaLiveChatLike.message_id.is_(None)  # Session-level like
+        )
+    ).first()
+    
+    if existing_like:
+        # Already liked - return current count
+        total_likes = db.query(TriviaLiveChatLike).filter(
+            and_(
+                TriviaLiveChatLike.draw_date == draw_date,
+                TriviaLiveChatLike.message_id.is_(None)
+            )
+        ).count()
+        
+        return {
+            "message": "Already liked",
+            "total_likes": total_likes,
+            "already_liked": True,
+            "draw_date": draw_date.isoformat()
+        }
+    
+    # Add like
+    new_like = TriviaLiveChatLike(
+        user_id=current_user.account_id,
+        draw_date=draw_date,
+        message_id=None  # Session-level like
+    )
+    
+    db.add(new_like)
+    db.commit()
+    db.refresh(new_like)
+    
+    # Get total likes
+    total_likes = db.query(TriviaLiveChatLike).filter(
+        and_(
+            TriviaLiveChatLike.draw_date == draw_date,
+            TriviaLiveChatLike.message_id.is_(None)
+        )
+    ).count()
+    
+    # Publish like update via Pusher
+    try:
+        publish_chat_message_sync(
+            "trivia-live-chat",
+            "like-update",
+            {
+                "draw_date": draw_date.isoformat(),
+                "total_likes": total_likes,
+                "user_id": current_user.account_id
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to publish like update to Pusher: {e}")
+    
+    return {
+        "message": "Trivia live chat liked successfully",
+        "total_likes": total_likes,
+        "already_liked": False,
+        "draw_date": draw_date.isoformat()
+    }
+
+
+@router.get("/likes")
+async def get_trivia_live_chat_likes(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get current like count for the active trivia live chat session"""
+    if not TRIVIA_LIVE_CHAT_ENABLED:
+        raise HTTPException(status_code=403, detail="Trivia live chat is disabled")
+    
+    if not is_trivia_live_chat_active():
+        raise HTTPException(status_code=403, detail="Trivia live chat is not currently active")
+    
+    # Get the current draw date
+    next_draw_time = get_next_draw_time()
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    
+    # Determine which draw date we're in
+    next_window_start = next_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+    next_window_end = next_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+    
+    prev_draw_time = next_draw_time - timedelta(days=1)
+    prev_window_start = prev_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
+    prev_window_end = prev_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
+    
+    if prev_window_start <= now <= prev_window_end:
+        draw_date = prev_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
+    else:
+        draw_date = next_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
+    
+    # Get total likes for this draw
+    total_likes = db.query(TriviaLiveChatLike).filter(
+        and_(
+            TriviaLiveChatLike.draw_date == draw_date,
+            TriviaLiveChatLike.message_id.is_(None)  # Only session-level likes
+        )
+    ).count()
+    
+    # Check if current user has liked
+    user_liked = db.query(TriviaLiveChatLike).filter(
+        and_(
+            TriviaLiveChatLike.user_id == current_user.account_id,
+            TriviaLiveChatLike.draw_date == draw_date,
+            TriviaLiveChatLike.message_id.is_(None)
+        )
+    ).first() is not None
+    
+    return {
+        "total_likes": total_likes,
+        "draw_date": draw_date.isoformat(),
+        "user_liked": user_liked
+    }
 
