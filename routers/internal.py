@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from datetime import date, timedelta, datetime
 import os
@@ -6,8 +6,119 @@ from db import get_db
 from rewards_logic import perform_draw, reset_monthly_subscriptions, reset_weekly_daily_rewards
 import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
+from models import GlobalChatMessage, User
+from utils.pusher_client import publish_chat_message_sync
+from config import GLOBAL_CHAT_ENABLED
 
 router = APIRouter(prefix="/internal", tags=["Internal"])
+
+
+def get_display_username(user: User) -> str:
+    """Get display username with fallback logic"""
+    if user.username and user.username.strip():
+        return user.username
+    if user.email:
+        return user.email.split('@')[0]
+    return f"User{user.account_id}"
+
+
+def send_winner_announcement(db: Session, draw_date: date, winners: list):
+    """
+    Send winner announcement message to global chat.
+    
+    Args:
+        db: Database session
+        draw_date: The date of the draw
+        winners: List of winner dictionaries with 'username' and 'position' keys
+    """
+    if not GLOBAL_CHAT_ENABLED:
+        logging.warning("Global chat is disabled, skipping winner announcement")
+        return
+    
+    # Get top 6 winners (or fewer if there are less than 6)
+    top_winners = sorted(winners, key=lambda x: x.get('position', 999))[:6]
+    
+    if not top_winners:
+        logging.warning("No winners to announce")
+        return
+    
+    # Build the message
+    message_lines = [
+        "🎉 Daily Winners Announced! 🎉",
+        "Congrats to today's champions on the Trivia Coin leaderboard! 🏆"
+    ]
+    
+    # Add winners with positions
+    medals = ["🥇", "🥈", "🥉"]
+    for winner in top_winners:
+        position = winner.get('position', 999)
+        username = winner.get('username', 'Unknown')
+        
+        if position == 1:
+            message_lines.append(f"{medals[0]} {username}")
+        elif position == 2:
+            message_lines.append(f"{medals[1]} {username}")
+        elif position == 3:
+            message_lines.append(f"{medals[2]} {username}")
+        else:
+            message_lines.append(f"#{position} {username}")
+    
+    message_lines.extend([
+        "",
+        "Your rewards have been added to your accounts. 🙌",
+        "Come back tomorrow, answer the daily question, and you could be at the top of the board next! 💰✨"
+    ])
+    
+    message = "\n".join(message_lines)
+    
+    # Get or create a system user (you might want to use a specific system account_id)
+    # For now, we'll use a special system user ID (you may want to configure this)
+    system_user_id = int(os.getenv("SYSTEM_USER_ID", "0"))  # Default to 0, but should be configured
+    
+    if system_user_id == 0:
+        # Try to find a system/admin user
+        system_user = db.query(User).filter(User.is_admin == True).first()
+        if system_user:
+            system_user_id = system_user.account_id
+        else:
+            logging.error("No system user found for sending winner announcement")
+            return
+    
+    # Create the message
+    system_message = GlobalChatMessage(
+        user_id=system_user_id,
+        message=message,
+        message_type="system",  # Mark as system message
+        is_from_trivia_live=False,
+        client_message_id=f"winner_announcement_{draw_date.isoformat()}"  # Unique ID for idempotency
+    )
+    
+    db.add(system_message)
+    db.commit()
+    db.refresh(system_message)
+    
+    # Get system user for display
+    system_user = db.query(User).filter(User.account_id == system_user_id).first()
+    username = get_display_username(system_user) if system_user else "System"
+    
+    # Publish to Pusher
+    try:
+        publish_chat_message_sync(
+            "global-chat",
+            "new-message",
+            {
+                "id": system_message.id,
+                "user_id": system_user_id,
+                "username": username,
+                "profile_pic": system_user.profile_pic_url if system_user else None,
+                "message": message,
+                "created_at": system_message.created_at.isoformat(),
+                "is_from_trivia_live": False,
+                "message_type": "system"
+            }
+        )
+    except Exception as e:
+        logging.error(f"Failed to publish winner announcement to Pusher: {e}")
 
 @router.post("/daily-draw")
 async def internal_daily_draw(
@@ -54,6 +165,15 @@ async def internal_daily_draw(
         try:
             result = perform_draw(db, yesterday)
             logging.info(f"✅ Draw completed: {result.get('status', 'unknown')} - {result.get('total_participants', 0)} participants, {result.get('total_winners', 0)} winners")
+            
+            # Send winner announcement to global chat if draw was successful
+            if result.get('status') == 'success' and result.get('winners'):
+                try:
+                    send_winner_announcement(db, yesterday, result.get('winners', []))
+                    logging.info("✅ Winner announcement sent to global chat")
+                except Exception as announcement_error:
+                    logging.error(f"❌ Failed to send winner announcement: {str(announcement_error)}", exc_info=True)
+                    # Don't fail the draw if announcement fails
         except Exception as draw_error:
             logging.error(f"❌ Failed to perform draw: {str(draw_error)}", exc_info=True)
             # Re-raise so the error is returned to cron-job.org
