@@ -198,7 +198,14 @@ async def send_private_message(
             detail="User is not accepting private messages."
         )
     
-    # Check if conversation is pending - only requester can send messages until accepted
+    # Check if this is the first message in the conversation
+    existing_message_count = db.query(PrivateChatMessage).filter(
+        PrivateChatMessage.conversation_id == conversation.id
+    ).count()
+    
+    is_first_message = existing_message_count == 0
+    
+    # Check if conversation is pending
     if conversation.status == 'pending':
         if conversation.requested_by != current_user.account_id:
             # Recipient trying to send message before accepting - must accept first
@@ -206,7 +213,14 @@ async def send_private_message(
                 status_code=403,
                 detail="Chat request must be accepted before sending messages. Please accept the chat request first."
             )
-        # Requester can send messages even while pending (to allow follow-up messages)
+        
+        # If requester is sending and it's NOT the first message, block until accepted
+        if conversation.requested_by == current_user.account_id and not is_first_message:
+            raise HTTPException(
+                status_code=403,
+                detail="Chat request must be accepted before sending more messages. Please wait for the recipient to accept."
+            )
+        # First message from requester is always allowed (creates the request)
     
     # Sanitize message to prevent XSS
     sanitized_message = sanitize_message(request.message)
@@ -374,13 +388,17 @@ async def list_private_conversations(
     if not PRIVATE_CHAT_ENABLED:
         raise HTTPException(status_code=403, detail="Private chat is disabled")
     
-    # Get conversations where user is participant and status is accepted
+    # Get conversations where user is participant
+    # Include: accepted conversations OR pending conversations (requester can see their request, recipient can see requests to them)
     conversations = db.query(PrivateChatConversation).filter(
         or_(
             PrivateChatConversation.user1_id == current_user.account_id,
             PrivateChatConversation.user2_id == current_user.account_id
         ),
-        PrivateChatConversation.status == 'accepted'
+        or_(
+            PrivateChatConversation.status == 'accepted',
+            PrivateChatConversation.status == 'pending'
+        )
     ).order_by(
         func.coalesce(PrivateChatConversation.last_message_at, PrivateChatConversation.created_at).desc()
     ).all()
@@ -443,6 +461,15 @@ async def get_private_messages(
     
     if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
         raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Check if conversation is accepted - recipient cannot view messages until accepted
+    if conversation.status == 'pending':
+        if conversation.requested_by != current_user.account_id:
+            # Recipient trying to view messages before accepting
+            raise HTTPException(
+                status_code=403,
+                detail="Chat request must be accepted before viewing messages. Please accept the chat request first."
+            )
     
     # Get last_read_message_id for current user
     last_read_id = conversation.last_read_message_id_user1 if conversation.user1_id == current_user.account_id else conversation.last_read_message_id_user2
