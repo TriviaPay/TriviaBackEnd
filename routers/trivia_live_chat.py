@@ -8,7 +8,7 @@ import pytz
 import os
 
 from db import get_db
-from models import User, TriviaLiveChatMessage, GlobalChatMessage
+from models import User, TriviaLiveChatMessage, GlobalChatMessage, TriviaLiveChatViewer
 from routers.dependencies import get_current_user
 from config import (
     TRIVIA_LIVE_CHAT_ENABLED,
@@ -184,6 +184,22 @@ async def send_trivia_live_message(
     )
     db.add(new_message)
     
+    # Update or create viewer tracking (user is active in trivia live chat)
+    existing_viewer = db.query(TriviaLiveChatViewer).filter(
+        TriviaLiveChatViewer.user_id == current_user.account_id,
+        TriviaLiveChatViewer.draw_date == draw_date
+    ).first()
+    
+    if existing_viewer:
+        existing_viewer.last_seen = datetime.utcnow()
+    else:
+        viewer = TriviaLiveChatViewer(
+            user_id=current_user.account_id,
+            draw_date=draw_date,
+            last_seen=datetime.utcnow()
+        )
+        db.add(viewer)
+    
     # Also add to global chat (no expiry)
     global_message = GlobalChatMessage(
         user_id=current_user.account_id,
@@ -266,6 +282,30 @@ async def get_trivia_live_messages(
         TriviaLiveChatMessage.created_at <= window_end_utc
     ).order_by(TriviaLiveChatMessage.created_at.desc()).limit(limit).all()
     
+    # Update viewer tracking (user is viewing trivia live chat)
+    existing_viewer = db.query(TriviaLiveChatViewer).filter(
+        TriviaLiveChatViewer.user_id == current_user.account_id,
+        TriviaLiveChatViewer.draw_date == draw_date
+    ).first()
+    
+    if existing_viewer:
+        existing_viewer.last_seen = datetime.utcnow()
+    else:
+        viewer = TriviaLiveChatViewer(
+            user_id=current_user.account_id,
+            draw_date=draw_date,
+            last_seen=datetime.utcnow()
+        )
+        db.add(viewer)
+    db.commit()
+    
+    # Get active viewer count (users active within last 5 minutes)
+    cutoff_time = datetime.utcnow() - timedelta(minutes=5)
+    active_viewers = db.query(TriviaLiveChatViewer).filter(
+        TriviaLiveChatViewer.draw_date == draw_date,
+        TriviaLiveChatViewer.last_seen >= cutoff_time
+    ).count()
+    
     return {
         "messages": [
             {
@@ -280,7 +320,8 @@ async def get_trivia_live_messages(
         ],
         "is_active": True,
         "window_start": window_start.isoformat(),
-        "window_end": window_end.isoformat()
+        "window_end": window_end.isoformat(),
+        "viewer_count": active_viewers
     }
 
 
@@ -308,12 +349,21 @@ async def get_trivia_live_chat_status(
         window_start = next_draw_time - timedelta(hours=TRIVIA_LIVE_CHAT_PRE_HOURS)
         window_end = next_draw_time + timedelta(hours=TRIVIA_LIVE_CHAT_POST_HOURS)
         
+        # Get active viewer count (users active within last 5 minutes)
+        draw_date = next_draw_time.astimezone(pytz.UTC).replace(tzinfo=None).date()
+        cutoff_time = datetime.utcnow() - timedelta(minutes=5)
+        active_viewers = db.query(TriviaLiveChatViewer).filter(
+            TriviaLiveChatViewer.draw_date == draw_date,
+            TriviaLiveChatViewer.last_seen >= cutoff_time
+        ).count()
+        
         return {
             "enabled": True,
             "is_active": True,
             "window_start": window_start.isoformat(),
             "window_end": window_end.isoformat(),
-            "next_draw_time": next_draw_time.isoformat()
+            "next_draw_time": next_draw_time.isoformat(),
+            "viewer_count": active_viewers
         }
     else:
         return {

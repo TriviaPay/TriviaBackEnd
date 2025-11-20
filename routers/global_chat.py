@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from db import get_db
-from models import User, GlobalChatMessage
+from models import User, GlobalChatMessage, GlobalChatViewer
 from routers.dependencies import get_current_user
 from config import (
     GLOBAL_CHAT_ENABLED,
@@ -126,6 +126,21 @@ async def send_global_message(
     )
     
     db.add(new_message)
+    
+    # Update or create viewer tracking (user is active in global chat)
+    existing_viewer = db.query(GlobalChatViewer).filter(
+        GlobalChatViewer.user_id == current_user.account_id
+    ).first()
+    
+    if existing_viewer:
+        existing_viewer.last_seen = datetime.utcnow()
+    else:
+        viewer = GlobalChatViewer(
+            user_id=current_user.account_id,
+            last_seen=datetime.utcnow()
+        )
+        db.add(viewer)
+    
     db.commit()
     db.refresh(new_message)
     
@@ -169,6 +184,27 @@ async def get_global_messages(
     
     messages = query.limit(limit).all()
     
+    # Update viewer tracking (user is viewing global chat)
+    existing_viewer = db.query(GlobalChatViewer).filter(
+        GlobalChatViewer.user_id == current_user.account_id
+    ).first()
+    
+    if existing_viewer:
+        existing_viewer.last_seen = datetime.utcnow()
+    else:
+        viewer = GlobalChatViewer(
+            user_id=current_user.account_id,
+            last_seen=datetime.utcnow()
+        )
+        db.add(viewer)
+    db.commit()
+    
+    # Get active online count (users active within last 5 minutes)
+    cutoff_time = datetime.utcnow() - timedelta(minutes=5)
+    online_count = db.query(GlobalChatViewer).filter(
+        GlobalChatViewer.last_seen >= cutoff_time
+    ).count()
+    
     return {
         "messages": [
             {
@@ -181,7 +217,8 @@ async def get_global_messages(
                 "is_from_trivia_live": msg.is_from_trivia_live
             }
             for msg in reversed(messages)
-        ]
+        ],
+        "online_count": online_count
     }
 
 
