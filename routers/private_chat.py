@@ -8,7 +8,7 @@ from typing import Optional
 from db import get_db
 from models import (
     User, PrivateChatConversation, PrivateChatMessage, Block,
-    PrivateChatStatus, MessageStatus
+    PrivateChatStatus, MessageStatus, UserPresence
 )
 from routers.dependencies import get_current_user
 from config import (
@@ -429,13 +429,37 @@ async def list_private_conversations(
                 PrivateChatMessage.sender_id != current_user.account_id
             ).count()
         
+        # Get peer user's presence (last seen and online status)
+        peer_presence = db.query(UserPresence).filter(
+            UserPresence.user_id == peer_id
+        ).first()
+        
+        # Check privacy settings (simplified - respect share_online and share_last_seen)
+        peer_online = False
+        peer_last_seen = None
+        
+        if peer_presence:
+            privacy = peer_presence.privacy_settings or {}
+            share_online = privacy.get("share_online", True)
+            share_last_seen = privacy.get("share_last_seen", "contacts")
+            
+            # For now, assume if user is in conversation, they're a contact
+            # TODO: Implement proper contact/friend checking
+            if share_online:
+                peer_online = peer_presence.device_online
+            
+            if share_last_seen in ["everyone", "contacts"]:
+                peer_last_seen = peer_presence.last_seen_at.isoformat() if peer_presence.last_seen_at else None
+        
         result.append({
             "conversation_id": conv.id,
             "peer_user_id": peer_id,
             "peer_username": get_display_username(peer_user),
             "peer_profile_pic": peer_user.profile_pic_url,
             "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
-            "unread_count": unread_count
+            "unread_count": unread_count,
+            "peer_online": peer_online,
+            "peer_last_seen": peer_last_seen
         })
     
     return {"conversations": result}
@@ -478,6 +502,29 @@ async def get_private_messages(
         PrivateChatMessage.conversation_id == conversation_id
     ).order_by(PrivateChatMessage.created_at.desc()).limit(limit).all()
     
+    # Get peer user's presence (last seen and online status)
+    peer_id = conversation.user2_id if conversation.user1_id == current_user.account_id else conversation.user1_id
+    peer_presence = db.query(UserPresence).filter(
+        UserPresence.user_id == peer_id
+    ).first()
+    
+    # Check privacy settings (simplified - respect share_online and share_last_seen)
+    peer_online = False
+    peer_last_seen = None
+    
+    if peer_presence:
+        privacy = peer_presence.privacy_settings or {}
+        share_online = privacy.get("share_online", True)
+        share_last_seen = privacy.get("share_last_seen", "contacts")
+        
+        # For now, assume if user is in conversation, they're a contact
+        # TODO: Implement proper contact/friend checking
+        if share_online:
+            peer_online = peer_presence.device_online
+        
+        if share_last_seen in ["everyone", "contacts"]:
+            peer_last_seen = peer_presence.last_seen_at.isoformat() if peer_presence.last_seen_at else None
+    
     return {
         "messages": [
             {
@@ -491,7 +538,9 @@ async def get_private_messages(
                 "is_read": last_read_id is not None and msg.id <= last_read_id if msg.sender_id != current_user.account_id else None
             }
             for msg in reversed(messages)
-        ]
+        ],
+        "peer_online": peer_online,
+        "peer_last_seen": peer_last_seen
     }
 
 
@@ -580,6 +629,28 @@ async def get_conversation(
     peer_id = conversation.user2_id if conversation.user1_id == current_user.account_id else conversation.user1_id
     peer_user = db.query(User).filter(User.account_id == peer_id).first()
     
+    # Get peer user's presence (last seen and online status)
+    peer_presence = db.query(UserPresence).filter(
+        UserPresence.user_id == peer_id
+    ).first()
+    
+    # Check privacy settings (simplified - respect share_online and share_last_seen)
+    peer_online = False
+    peer_last_seen = None
+    
+    if peer_presence:
+        privacy = peer_presence.privacy_settings or {}
+        share_online = privacy.get("share_online", True)
+        share_last_seen = privacy.get("share_last_seen", "contacts")
+        
+        # For now, assume if user is in conversation, they're a contact
+        # TODO: Implement proper contact/friend checking
+        if share_online:
+            peer_online = peer_presence.device_online
+        
+        if share_last_seen in ["everyone", "contacts"]:
+            peer_last_seen = peer_presence.last_seen_at.isoformat() if peer_presence.last_seen_at else None
+    
     return {
         "conversation_id": conversation.id,
         "peer_user_id": peer_id,
@@ -587,6 +658,8 @@ async def get_conversation(
         "peer_profile_pic": peer_user.profile_pic_url if peer_user else None,
         "status": conversation.status,
         "created_at": conversation.created_at.isoformat(),
+        "peer_online": peer_online,
+        "peer_last_seen": peer_last_seen,
         "last_message_at": conversation.last_message_at.isoformat() if conversation.last_message_at else None
     }
 

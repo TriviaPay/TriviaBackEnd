@@ -1318,6 +1318,35 @@ class TriviaLiveChatMessage(Base):
     user = relationship("User", backref="trivia_live_chat_messages")
 
 # =================================
+#  Global Chat Viewers Table
+# =================================
+class GlobalChatViewer(Base):
+    __tablename__ = "global_chat_viewers"
+    
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
+    last_seen = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    # Relationships
+    user = relationship("User", backref="global_chat_viewer")
+
+# =================================
+#  Trivia Live Chat Viewers Table
+# =================================
+class TriviaLiveChatViewer(Base):
+    __tablename__ = "trivia_live_chat_viewers"
+    
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
+    draw_date = Column(Date, nullable=False, index=True)  # Track per draw date
+    last_seen = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    # Relationships
+    user = relationship("User", backref="trivia_live_chat_viewers")
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'draw_date', name='uq_trivia_live_chat_viewer_user_draw'),
+    )
+
+# =================================
 #  OneSignal Players Table
 # =================================
 class OneSignalPlayer(Base):
