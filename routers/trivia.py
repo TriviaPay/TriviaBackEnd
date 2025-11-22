@@ -123,10 +123,14 @@ async def get_current_question(
     Auto-unlocks Q1 if eligible (free, first question).
     Returns the question the user should see next.
     """
+    logging.info(f"🔍 GET /trivia/current-question - User: {user.account_id if user else 'None'}")
+    
     if not user:
+        logging.error("❌ User not found in get_current_question")
         raise HTTPException(status_code=404, detail="User not found")
 
     today = get_today_in_app_timezone()
+    logging.info(f"📅 Today in app timezone: {today}")
     
     # Get today's shared pool - use timezone-aware date range
     start_datetime, end_datetime = get_date_range_for_query(today)
