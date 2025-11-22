@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Union
 
 from db import get_db
 from models import User, GlobalChatMessage, GlobalChatViewer
@@ -21,6 +21,7 @@ from utils.message_sanitizer import sanitize_message
 from utils.chat_helpers import get_user_chat_profile_data
 from utils.onesignal_client import send_push_notification_async, should_send_push, get_user_player_ids, is_user_active
 from utils.chat_mute import is_chat_muted
+from utils.chat_redis import check_burst_limit, check_rate_limit, enqueue_chat_event
 from models import OneSignalPlayer
 import logging
 
@@ -43,11 +44,21 @@ def get_display_username(user: User) -> str:
     return f"User{user.account_id}"
 
 
+def _ensure_datetime(value: Union[datetime, str]) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return datetime.utcnow()
+
+
 def publish_to_pusher_global(message_id: int, user_id: int, username: str, profile_pic: Optional[str],
                              avatar_url: Optional[str], frame_url: Optional[str], badge: Optional[dict],
-                             message: str, created_at: datetime):
+                             message: str, created_at: Union[datetime, str]):
     """Background task to publish to Pusher"""
     try:
+        created_at_dt = _ensure_datetime(created_at)
         publish_chat_message_sync(
             "global-chat",
             "new-message",
@@ -60,20 +71,22 @@ def publish_to_pusher_global(message_id: int, user_id: int, username: str, profi
                 "frame_url": frame_url,
                 "badge": badge,
                 "message": message,
-                "created_at": created_at.isoformat()
+                "created_at": created_at_dt.isoformat()
             }
         )
     except Exception as e:
         logger.error(f"Failed to publish global chat message to Pusher: {e}")
 
 
-def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_username: str, message: str, created_at: datetime):
+def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_username: str, message: str,
+                                   created_at: Union[datetime, str]):
     """Background task to send push notifications for global chat to all users (except sender)"""
     import asyncio
     from db import get_db
     
     db = next(get_db())
     try:
+        created_at_dt = _ensure_datetime(created_at)
         # Get all users with OneSignal players (except sender)
         all_players = db.query(OneSignalPlayer).filter(
             OneSignalPlayer.user_id != sender_id,
@@ -129,7 +142,7 @@ def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_usern
             "sender_id": sender_id,
             "sender_username": sender_username,
             "message": message,
-            "created_at": created_at.isoformat()
+            "created_at": created_at_dt.isoformat()
         }
         
         # Run async function in event loop
@@ -203,31 +216,55 @@ async def send_global_message(
                 "duplicate": True
             }
     
-    # Burst rate limiting (3 messages per 3 seconds)
-    burst_window_ago = datetime.utcnow() - timedelta(seconds=GLOBAL_CHAT_BURST_WINDOW_SECONDS)
-    recent_burst = db.query(GlobalChatMessage).filter(
-        GlobalChatMessage.user_id == current_user.account_id,
-        GlobalChatMessage.created_at >= burst_window_ago
-    ).count()
-    
-    if recent_burst >= GLOBAL_CHAT_MAX_MESSAGES_PER_BURST:
+    # Burst rate limiting via Redis (fallback to DB if unavailable)
+    burst_allowed = await check_burst_limit(
+        "global",
+        current_user.account_id,
+        GLOBAL_CHAT_MAX_MESSAGES_PER_BURST,
+        GLOBAL_CHAT_BURST_WINDOW_SECONDS
+    )
+    if burst_allowed is False:
         raise HTTPException(
             status_code=429,
             detail=f"Burst rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_BURST} messages per {GLOBAL_CHAT_BURST_WINDOW_SECONDS} seconds."
         )
+    if burst_allowed is None:
+        burst_window_ago = datetime.utcnow() - timedelta(seconds=GLOBAL_CHAT_BURST_WINDOW_SECONDS)
+        recent_burst = db.query(GlobalChatMessage).filter(
+            GlobalChatMessage.user_id == current_user.account_id,
+            GlobalChatMessage.created_at >= burst_window_ago
+        ).count()
+        
+        if recent_burst >= GLOBAL_CHAT_MAX_MESSAGES_PER_BURST:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Burst rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_BURST} messages per {GLOBAL_CHAT_BURST_WINDOW_SECONDS} seconds."
+            )
     
     # Per-minute rate limiting
-    one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
-    recent_messages = db.query(GlobalChatMessage).filter(
-        GlobalChatMessage.user_id == current_user.account_id,
-        GlobalChatMessage.created_at >= one_minute_ago
-    ).count()
-    
-    if recent_messages >= GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE:
+    minute_allowed = await check_rate_limit(
+        "global",
+        current_user.account_id,
+        GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE,
+        60
+    )
+    if minute_allowed is False:
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
         )
+    if minute_allowed is None:
+        one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
+        recent_messages = db.query(GlobalChatMessage).filter(
+            GlobalChatMessage.user_id == current_user.account_id,
+            GlobalChatMessage.created_at >= one_minute_ago
+        ).count()
+        
+        if recent_messages >= GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
+            )
     
     # Create message
     new_message = GlobalChatMessage(
@@ -258,30 +295,53 @@ async def send_global_message(
     # Get user profile data (avatar, frame)
     profile_data = get_user_chat_profile_data(current_user, db)
     
-    # Publish to Pusher in background
+    # Publish to Pusher via Redis queue (fallback to inline background tasks)
     username = get_display_username(current_user)
-    background_tasks.add_task(
-        publish_to_pusher_global,
-        new_message.id,
-        current_user.account_id,
-        username,
-        profile_data["profile_pic_url"],
-        profile_data["avatar_url"],
-        profile_data["frame_url"],
-        profile_data["badge"],
-        new_message.message,
-        new_message.created_at
+    event_enqueued = await enqueue_chat_event(
+        "global_message",
+        {
+            "pusher_args": {
+                "message_id": new_message.id,
+                "user_id": current_user.account_id,
+                "username": username,
+                "profile_pic": profile_data["profile_pic_url"],
+                "avatar_url": profile_data["avatar_url"],
+                "frame_url": profile_data["frame_url"],
+                "badge": profile_data["badge"],
+                "message": new_message.message,
+                "created_at": new_message.created_at.isoformat()
+            },
+            "push_args": {
+                "message_id": new_message.id,
+                "sender_id": current_user.account_id,
+                "sender_username": username,
+                "message": new_message.message,
+                "created_at": new_message.created_at.isoformat()
+            }
+        }
     )
     
-    # Send push notifications in background (to all users except sender)
-    background_tasks.add_task(
-        send_push_for_global_chat_sync,
-        new_message.id,
-        current_user.account_id,
-        username,
-        new_message.message,
-        new_message.created_at
-    )
+    if not event_enqueued:
+        background_tasks.add_task(
+            publish_to_pusher_global,
+            new_message.id,
+            current_user.account_id,
+            username,
+            profile_data["profile_pic_url"],
+            profile_data["avatar_url"],
+            profile_data["frame_url"],
+            profile_data["badge"],
+            new_message.message,
+            new_message.created_at
+        )
+        background_tasks.add_task(
+            send_push_for_global_chat_sync,
+            new_message.id,
+            current_user.account_id,
+            username,
+            new_message.message,
+            new_message.created_at
+        )
     
     return {
         "message_id": new_message.id,
@@ -379,4 +439,3 @@ async def cleanup_old_messages(
         "deleted_count": deleted_count,
         "cutoff_date": cutoff_date.isoformat()
     }
-

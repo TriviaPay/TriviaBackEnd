@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from datetime import datetime, timedelta, date
-from typing import Optional
+from typing import Optional, Union
 import pytz
 import os
 
@@ -25,6 +25,7 @@ from utils.message_sanitizer import sanitize_message
 from utils.chat_helpers import get_user_chat_profile_data
 from utils.onesignal_client import send_push_notification_async, should_send_push, get_user_player_ids, is_user_active
 from utils.chat_mute import is_chat_muted
+from utils.chat_redis import check_burst_limit, check_rate_limit, enqueue_chat_event
 from models import OneSignalPlayer
 import logging
 
@@ -85,11 +86,31 @@ def is_trivia_live_chat_active() -> bool:
         return False
 
 
+def _ensure_datetime(value: Union[datetime, str]) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return datetime.utcnow()
+
+
+def _ensure_date(value: Union[date, str]) -> date:
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.fromisoformat(value).date()
+    except Exception:
+        return datetime.utcnow().date()
+
+
 def publish_to_pusher_trivia_live(message_id: int, user_id: int, username: str, profile_pic: Optional[str],
                                    avatar_url: Optional[str], frame_url: Optional[str], badge: Optional[dict],
-                                   message: str, created_at: datetime, draw_date: date):
+                                   message: str, created_at: Union[datetime, str], draw_date: Union[date, str]):
     """Background task to publish to Pusher for trivia live chat"""
     try:
+        created_at_dt = _ensure_datetime(created_at)
+        draw_date_val = _ensure_date(draw_date)
         publish_chat_message_sync(
             "trivia-live-chat",
             "new-message",
@@ -102,21 +123,24 @@ def publish_to_pusher_trivia_live(message_id: int, user_id: int, username: str, 
                 "frame_url": frame_url,
                 "badge": badge,
                 "message": message,
-                "created_at": created_at.isoformat(),
-                "draw_date": draw_date.isoformat()
+                "created_at": created_at_dt.isoformat(),
+                "draw_date": draw_date_val.isoformat()
             }
         )
     except Exception as e:
         logger.error(f"Failed to publish trivia live chat message to Pusher: {e}")
 
 
-def send_push_for_trivia_live_chat_sync(message_id: int, sender_id: int, sender_username: str, message: str, draw_date: date, created_at: datetime):
+def send_push_for_trivia_live_chat_sync(message_id: int, sender_id: int, sender_username: str, message: str,
+                                        draw_date: Union[date, str], created_at: Union[datetime, str]):
     """Background task to send push notifications for trivia live chat to all users (except sender)"""
     import asyncio
     from db import get_db
     
     db = next(get_db())
     try:
+        created_at_dt = _ensure_datetime(created_at)
+        draw_date_val = _ensure_date(draw_date)
         # Get all users with OneSignal players (except sender)
         all_players = db.query(OneSignalPlayer).filter(
             OneSignalPlayer.user_id != sender_id,
@@ -172,8 +196,8 @@ def send_push_for_trivia_live_chat_sync(message_id: int, sender_id: int, sender_
             "sender_id": sender_id,
             "sender_username": sender_username,
             "message": message,
-            "draw_date": draw_date.isoformat(),
-            "created_at": created_at.isoformat()
+            "draw_date": draw_date_val.isoformat(),
+            "created_at": created_at_dt.isoformat()
         }
         
         # Run async function in event loop
@@ -256,31 +280,56 @@ async def send_trivia_live_message(
                 "duplicate": True
             }
     
-    # Burst rate limiting (3 messages per 3 seconds)
-    burst_window_ago = datetime.utcnow() - timedelta(seconds=TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS)
-    recent_burst = db.query(TriviaLiveChatMessage).filter(
-        TriviaLiveChatMessage.user_id == current_user.account_id,
-        TriviaLiveChatMessage.created_at >= burst_window_ago
-    ).count()
-    
-    if recent_burst >= TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST:
+    # Burst rate limiting (Redis first, fallback to DB)
+    burst_allowed = await check_burst_limit(
+        "trivia",
+        f"{current_user.account_id}:{draw_date.isoformat()}",
+        TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST,
+        TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS
+    )
+    if burst_allowed is False:
         raise HTTPException(
             status_code=429,
             detail=f"Burst rate limit exceeded. Maximum {TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST} messages per {TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS} seconds."
         )
+    if burst_allowed is None:
+        burst_window_ago = datetime.utcnow() - timedelta(seconds=TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS)
+        recent_burst = db.query(TriviaLiveChatMessage).filter(
+            TriviaLiveChatMessage.user_id == current_user.account_id,
+            TriviaLiveChatMessage.created_at >= burst_window_ago
+        ).count()
+        
+        if recent_burst >= TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Burst rate limit exceeded. Maximum {TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST} messages per {TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS} seconds."
+            )
     
     # Per-minute rate limiting
-    one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
-    recent_messages = db.query(TriviaLiveChatMessage).filter(
-        TriviaLiveChatMessage.user_id == current_user.account_id,
-        TriviaLiveChatMessage.created_at >= one_minute_ago
-    ).count()
-    
-    if recent_messages >= TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE:
+    minute_allowed = await check_rate_limit(
+        "trivia",
+        f"{current_user.account_id}:{draw_date.isoformat()}",
+        TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE,
+        60
+    )
+    if minute_allowed is False:
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Maximum {TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
         )
+    if minute_allowed is None:
+        one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
+        recent_messages = db.query(TriviaLiveChatMessage).filter(
+            TriviaLiveChatMessage.user_id == current_user.account_id,
+            TriviaLiveChatMessage.created_at >= one_minute_ago,
+            TriviaLiveChatMessage.draw_date == draw_date
+        ).count()
+        
+        if recent_messages >= TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Maximum {TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
+            )
     
     # Create trivia live chat message
     new_message = TriviaLiveChatMessage(
@@ -316,32 +365,57 @@ async def send_trivia_live_message(
     # Get user profile data (avatar, frame)
     profile_data = get_user_chat_profile_data(current_user, db)
     
-    # Publish to trivia live chat channel
+    # Publish to trivia live chat channel via Redis queue (fallback to inline background tasks)
     username = get_display_username(current_user)
-    background_tasks.add_task(
-        publish_to_pusher_trivia_live,
-        new_message.id,
-        current_user.account_id,
-        username,
-        profile_data["profile_pic_url"],
-        profile_data["avatar_url"],
-        profile_data["frame_url"],
-        profile_data["badge"],
-        new_message.message,
-        new_message.created_at,
-        draw_date
+    event_enqueued = await enqueue_chat_event(
+        "trivia_message",
+        {
+            "pusher_args": {
+                "message_id": new_message.id,
+                "user_id": current_user.account_id,
+                "username": username,
+                "profile_pic": profile_data["profile_pic_url"],
+                "avatar_url": profile_data["avatar_url"],
+                "frame_url": profile_data["frame_url"],
+                "badge": profile_data["badge"],
+                "message": new_message.message,
+                "created_at": new_message.created_at.isoformat(),
+                "draw_date": draw_date.isoformat()
+            },
+            "push_args": {
+                "message_id": new_message.id,
+                "sender_id": current_user.account_id,
+                "sender_username": username,
+                "message": new_message.message,
+                "draw_date": draw_date.isoformat(),
+                "created_at": new_message.created_at.isoformat()
+            }
+        }
     )
     
-    # Send push notifications in background (to all users except sender)
-    background_tasks.add_task(
-        send_push_for_trivia_live_chat_sync,
-        new_message.id,
-        current_user.account_id,
-        username,
-        new_message.message,
-        draw_date,
-        new_message.created_at
-    )
+    if not event_enqueued:
+        background_tasks.add_task(
+            publish_to_pusher_trivia_live,
+            new_message.id,
+            current_user.account_id,
+            username,
+            profile_data["profile_pic_url"],
+            profile_data["avatar_url"],
+            profile_data["frame_url"],
+            profile_data["badge"],
+            new_message.message,
+            new_message.created_at,
+            draw_date
+        )
+        background_tasks.add_task(
+            send_push_for_trivia_live_chat_sync,
+            new_message.id,
+            current_user.account_id,
+            username,
+            new_message.message,
+            draw_date,
+            new_message.created_at
+        )
     
     return {
         "message_id": new_message.id,
@@ -736,4 +810,3 @@ async def get_trivia_live_chat_likes(
         "draw_date": draw_date.isoformat(),
         "user_liked": user_liked
     }
-
