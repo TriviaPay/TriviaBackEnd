@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Union
 
 from db import get_db
 from models import (
@@ -29,6 +29,13 @@ from utils.onesignal_client import (
 from utils.chat_mute import is_user_muted_for_private_chat
 from utils.message_sanitizer import sanitize_message
 from utils.chat_helpers import get_user_chat_profile_data
+from utils.chat_redis import (
+    check_burst_limit,
+    check_rate_limit,
+    enqueue_chat_event,
+    should_emit_typing_event,
+    clear_typing_event
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -71,13 +78,23 @@ def get_display_username(user: User) -> str:
     return f"User{user.account_id}"
 
 
+def _ensure_datetime(value: Union[datetime, str]) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return datetime.utcnow()
+
+
 def publish_to_pusher_private(conversation_id: int, message_id: int, sender_id: int, 
                                sender_username: str, profile_pic_url: Optional[str],
                                avatar_url: Optional[str], frame_url: Optional[str], badge: Optional[dict],
-                               message: str, created_at: datetime,
+                               message: str, created_at: Union[datetime, str],
                                is_new_conversation: bool):
     """Background task to publish to Pusher"""
     try:
+        created_at_dt = _ensure_datetime(created_at)
         channel = f"private-conversation-{conversation_id}"
         publish_chat_message_sync(
             channel,
@@ -92,7 +109,7 @@ def publish_to_pusher_private(conversation_id: int, message_id: int, sender_id: 
                 "frame_url": frame_url,
                 "badge": badge,
                 "message": message,
-                "created_at": created_at.isoformat(),
+                "created_at": created_at_dt.isoformat(),
                 "is_new_conversation": is_new_conversation
             }
         )
@@ -261,31 +278,55 @@ async def send_private_message(
                 "duplicate": True
             }
     
-    # Burst rate limiting (3 messages per 3 seconds)
-    burst_window_ago = datetime.utcnow() - timedelta(seconds=PRIVATE_CHAT_BURST_WINDOW_SECONDS)
-    recent_burst = db.query(PrivateChatMessage).filter(
-        PrivateChatMessage.sender_id == current_user.account_id,
-        PrivateChatMessage.created_at >= burst_window_ago
-    ).count()
-    
-    if recent_burst >= PRIVATE_CHAT_MAX_MESSAGES_PER_BURST:
+    # Burst rate limiting via Redis (fallback to DB)
+    burst_allowed = await check_burst_limit(
+        "private",
+        current_user.account_id,
+        PRIVATE_CHAT_MAX_MESSAGES_PER_BURST,
+        PRIVATE_CHAT_BURST_WINDOW_SECONDS
+    )
+    if burst_allowed is False:
         raise HTTPException(
             status_code=429,
             detail=f"Burst rate limit exceeded. Maximum {PRIVATE_CHAT_MAX_MESSAGES_PER_BURST} messages per {PRIVATE_CHAT_BURST_WINDOW_SECONDS} seconds."
         )
+    if burst_allowed is None:
+        burst_window_ago = datetime.utcnow() - timedelta(seconds=PRIVATE_CHAT_BURST_WINDOW_SECONDS)
+        recent_burst = db.query(PrivateChatMessage).filter(
+            PrivateChatMessage.sender_id == current_user.account_id,
+            PrivateChatMessage.created_at >= burst_window_ago
+        ).count()
+        
+        if recent_burst >= PRIVATE_CHAT_MAX_MESSAGES_PER_BURST:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Burst rate limit exceeded. Maximum {PRIVATE_CHAT_MAX_MESSAGES_PER_BURST} messages per {PRIVATE_CHAT_BURST_WINDOW_SECONDS} seconds."
+            )
     
     # Per-minute rate limiting
-    one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
-    recent_messages = db.query(PrivateChatMessage).filter(
-        PrivateChatMessage.sender_id == current_user.account_id,
-        PrivateChatMessage.created_at >= one_minute_ago
-    ).count()
-    
-    if recent_messages >= PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE:
+    minute_allowed = await check_rate_limit(
+        "private",
+        current_user.account_id,
+        PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE,
+        60
+    )
+    if minute_allowed is False:
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Maximum {PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
         )
+    if minute_allowed is None:
+        one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
+        recent_messages = db.query(PrivateChatMessage).filter(
+            PrivateChatMessage.sender_id == current_user.account_id,
+            PrivateChatMessage.created_at >= one_minute_ago
+        ).count()
+        
+        if recent_messages >= PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Maximum {PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
+            )
     
     # Create message
     new_message = PrivateChatMessage(
@@ -304,33 +345,59 @@ async def send_private_message(
     # Get user profile data (avatar, frame)
     profile_data = get_user_chat_profile_data(current_user, db)
     
-    # Publish to Pusher in background
+    # Publish to Pusher via Redis queue (fallback to inline background tasks)
     username = get_display_username(current_user)
-    background_tasks.add_task(
-        publish_to_pusher_private,
-        conversation.id,
-        new_message.id,
-        current_user.account_id,
-        username,
-        profile_data["profile_pic_url"],
-        profile_data["avatar_url"],
-        profile_data["frame_url"],
-        profile_data["badge"],
-        new_message.message,
-        new_message.created_at,
-        is_new_conversation
+    event_enqueued = await enqueue_chat_event(
+        "private_message",
+        {
+            "pusher_args": {
+                "conversation_id": conversation.id,
+                "message_id": new_message.id,
+                "sender_id": current_user.account_id,
+                "sender_username": username,
+                "profile_pic_url": profile_data["profile_pic_url"],
+                "avatar_url": profile_data["avatar_url"],
+                "frame_url": profile_data["frame_url"],
+                "badge": profile_data["badge"],
+                "message": new_message.message,
+                "created_at": new_message.created_at.isoformat(),
+                "is_new_conversation": is_new_conversation
+            },
+            "push_args": {
+                "recipient_id": request.recipient_id,
+                "conversation_id": conversation.id,
+                "sender_id": current_user.account_id,
+                "sender_username": username,
+                "message": new_message.message,
+                "is_new_conversation": is_new_conversation
+            }
+        }
     )
     
-    # Send push notification in background (if user is not active)
-    background_tasks.add_task(
-        send_push_if_needed_sync,
-        request.recipient_id,
-        conversation.id,
-        current_user.account_id,
-        username,
-        new_message.message,
-        is_new_conversation
-    )
+    if not event_enqueued:
+        background_tasks.add_task(
+            publish_to_pusher_private,
+            conversation.id,
+            new_message.id,
+            current_user.account_id,
+            username,
+            profile_data["profile_pic_url"],
+            profile_data["avatar_url"],
+            profile_data["frame_url"],
+            profile_data["badge"],
+            new_message.message,
+            new_message.created_at,
+            is_new_conversation
+        )
+        background_tasks.add_task(
+            send_push_if_needed_sync,
+            request.recipient_id,
+            conversation.id,
+            current_user.account_id,
+            username,
+            new_message.message,
+            is_new_conversation
+        )
     
     return {
         "conversation_id": conversation.id,
@@ -736,6 +803,11 @@ async def send_typing_indicator(
     if conversation.status != 'accepted':
         raise HTTPException(status_code=403, detail="Conversation not accepted")
     
+    channel_key = f"conversation:{conversation_id}"
+    should_emit = await should_emit_typing_event(channel_key, current_user.account_id)
+    if not should_emit:
+        return {"status": "typing"}
+    
     # Publish typing event via Pusher
     username = get_display_username(current_user)
     background_tasks.add_task(
@@ -772,6 +844,9 @@ async def send_typing_stop(
     
     if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
         raise HTTPException(status_code=403, detail="Not authorized")
+    
+    channel_key = f"conversation:{conversation_id}"
+    await clear_typing_event(channel_key, current_user.account_id)
     
     # Publish typing-stop event via Pusher
     background_tasks.add_task(
@@ -960,4 +1035,3 @@ async def list_blocks(
     return {
         "blocked_users": blocked_users
     }
-
