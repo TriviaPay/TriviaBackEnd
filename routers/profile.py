@@ -489,13 +489,22 @@ async def get_profile_summary(
         else:
             profile_pic_type = "default"  # Default letter-based profile picture
 
+        def _safe_iso(value):
+            if not value:
+                return None
+            if hasattr(value, "isoformat"):
+                return value.isoformat()
+            if isinstance(value, str):
+                return value
+            return str(value)
+
         return {
             "status": "success",
             "data": {
                 "username": user.username,
                 "account_id": user.account_id,
                 "email": user.email,
-                "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth else None,
+                "date_of_birth": _safe_iso(user.date_of_birth),
                 "gender": getattr(user, "gender", None),
                 "address1": user.street_1,
                 "address2": user.street_2,
@@ -659,4 +668,3 @@ async def upload_profile_picture(
             status_code=500,
             detail=f"An error occurred while uploading profile picture: {str(e)}"
         )
-
