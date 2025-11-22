@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth
+from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute
 from config import E2EE_DM_ENABLED, GROUPS_ENABLED, STATUS_ENABLED, PRESENCE_ENABLED
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -133,6 +133,7 @@ app.include_router(private_chat.router) # Private chat endpoints
 app.include_router(trivia_live_chat.router) # Trivia live chat endpoints
 app.include_router(onesignal.router) # OneSignal endpoints
 app.include_router(pusher_auth.router) # Pusher authentication endpoints
+app.include_router(chat_mute.router) # Chat mute preferences endpoints
 
 # E2EE DM routers (gated behind feature flag)
 if E2EE_DM_ENABLED:

@@ -8,7 +8,7 @@ import pytz
 import os
 
 from db import get_db
-from models import User, TriviaLiveChatMessage, GlobalChatMessage, TriviaLiveChatViewer, TriviaLiveChatLike
+from models import User, TriviaLiveChatMessage, TriviaLiveChatViewer, TriviaLiveChatLike
 from routers.dependencies import get_current_user
 from config import (
     TRIVIA_LIVE_CHAT_ENABLED,
@@ -22,6 +22,10 @@ from config import (
 from utils.draw_calculations import get_next_draw_time
 from utils.pusher_client import publish_chat_message_sync
 from utils.message_sanitizer import sanitize_message
+from utils.chat_helpers import get_user_chat_profile_data
+from utils.onesignal_client import send_push_notification_async, should_send_push, get_user_player_ids
+from utils.chat_mute import is_chat_muted
+from models import OneSignalPlayer
 import logging
 
 logger = logging.getLogger(__name__)
@@ -82,6 +86,7 @@ def is_trivia_live_chat_active() -> bool:
 
 
 def publish_to_pusher_trivia_live(message_id: int, user_id: int, username: str, profile_pic: Optional[str],
+                                   avatar_url: Optional[str], frame_url: Optional[str], badge: Optional[dict],
                                    message: str, created_at: datetime, draw_date: date):
     """Background task to publish to Pusher for trivia live chat"""
     try:
@@ -93,6 +98,9 @@ def publish_to_pusher_trivia_live(message_id: int, user_id: int, username: str, 
                 "user_id": user_id,
                 "username": username,
                 "profile_pic": profile_pic,
+                "avatar_url": avatar_url,
+                "frame_url": frame_url,
+                "badge": badge,
                 "message": message,
                 "created_at": created_at.isoformat(),
                 "draw_date": draw_date.isoformat()
@@ -102,25 +110,87 @@ def publish_to_pusher_trivia_live(message_id: int, user_id: int, username: str, 
         logger.error(f"Failed to publish trivia live chat message to Pusher: {e}")
 
 
-def publish_to_pusher_global_from_trivia(message_id: int, user_id: int, username: str, profile_pic: Optional[str],
-                                         message: str, created_at: datetime):
-    """Background task to publish to global chat (from trivia live)"""
+def send_push_for_trivia_live_chat_sync(message_id: int, sender_id: int, sender_username: str, message: str, draw_date: date, created_at: datetime):
+    """Background task to send push notifications for trivia live chat to all users (except sender)"""
+    import asyncio
+    from db import get_db
+    
+    db = next(get_db())
     try:
-        publish_chat_message_sync(
-            "global-chat",
-            "new-message",
-            {
-                "id": message_id,
-                "user_id": user_id,
-                "username": username,
-                "profile_pic": profile_pic,
-                "message": message,
-                "created_at": created_at.isoformat(),
-                "is_from_trivia_live": True
-            }
-        )
+        # Get all users with OneSignal players (except sender)
+        all_players = db.query(OneSignalPlayer).filter(
+            OneSignalPlayer.user_id != sender_id,
+            OneSignalPlayer.is_valid == True
+        ).all()
+        
+        if not all_players:
+            logger.debug("No OneSignal players found for trivia live chat push")
+            return
+        
+        # Batch player IDs (OneSignal supports up to 2000 per request)
+        BATCH_SIZE = 2000
+        player_batches = []
+        current_batch = []
+        
+        for player in all_players:
+            user_id = player.user_id
+            
+            # Check if user is active (skip if active)
+            if not should_send_push(user_id, db):
+                continue
+            
+            # Check if user has muted trivia live chat
+            if is_chat_muted(user_id, 'trivia_live', db):
+                continue
+            
+            current_batch.append(player.player_id)
+            
+            if len(current_batch) >= BATCH_SIZE:
+                player_batches.append(current_batch)
+                current_batch = []
+        
+        if current_batch:
+            player_batches.append(current_batch)
+        
+        if not player_batches:
+            logger.debug("No eligible users for trivia live chat push (all muted or active)")
+            return
+        
+        # Send push notifications in batches
+        heading = "Trivia Live Chat"
+        content = f"{sender_username}: {message[:100]}"  # Truncate for notification
+        data = {
+            "type": "trivia_live_chat",
+            "message_id": message_id,
+            "sender_id": sender_id,
+            "sender_username": sender_username,
+            "message": message,
+            "draw_date": draw_date.isoformat(),
+            "created_at": created_at.isoformat()
+        }
+        
+        # Run async function in event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        for batch in player_batches:
+            loop.run_until_complete(
+                send_push_notification_async(
+                    player_ids=batch,
+                    heading=heading,
+                    content=content,
+                    data=data
+                )
+            )
+        
+        logger.info(f"Sent trivia live chat push notifications to {sum(len(b) for b in player_batches)} players")
     except Exception as e:
-        logger.error(f"Failed to publish trivia message to global chat via Pusher: {e}")
+        logger.error(f"Failed to send push notifications for trivia live chat: {e}")
+    finally:
+        db.close()
 
 
 @router.post("/send")
@@ -159,7 +229,6 @@ async def send_trivia_live_message(
             logger.debug(f"Duplicate trivia live chat message detected: {request.client_message_id}")
             return {
                 "message_id": existing_message.id,
-                "global_message_id": None,  # Would need to look up
                 "created_at": existing_message.created_at.isoformat(),
                 "duplicate": True
             }
@@ -218,44 +287,41 @@ async def send_trivia_live_message(
         )
         db.add(viewer)
     
-    # Also add to global chat (no expiry)
-    global_message = GlobalChatMessage(
-        user_id=current_user.account_id,
-        message=message_text,
-        is_from_trivia_live=True,
-        client_message_id=request.client_message_id  # Same client_message_id for both
-    )
-    db.add(global_message)
     db.commit()
     db.refresh(new_message)
-    db.refresh(global_message)
     
-    # Publish to both channels in background
+    # Get user profile data (avatar, frame)
+    profile_data = get_user_chat_profile_data(current_user, db)
+    
+    # Publish to trivia live chat channel
     username = get_display_username(current_user)
     background_tasks.add_task(
         publish_to_pusher_trivia_live,
         new_message.id,
         current_user.account_id,
         username,
-        current_user.profile_pic_url,
+        profile_data["profile_pic_url"],
+        profile_data["avatar_url"],
+        profile_data["frame_url"],
+        profile_data["badge"],
         new_message.message,
         new_message.created_at,
         draw_date
     )
     
+    # Send push notifications in background (to all users except sender)
     background_tasks.add_task(
-        publish_to_pusher_global_from_trivia,
-        global_message.id,
+        send_push_for_trivia_live_chat_sync,
+        new_message.id,
         current_user.account_id,
         username,
-        current_user.profile_pic_url,
-        global_message.message,
-        global_message.created_at
+        new_message.message,
+        draw_date,
+        new_message.created_at
     )
     
     return {
         "message_id": new_message.id,
-        "global_message_id": global_message.id,
         "created_at": new_message.created_at.isoformat(),
         "duplicate": False
     }
@@ -359,18 +425,24 @@ async def get_trivia_live_messages(
         )
     ).count()
     
+    # Get profile data for all message senders
+    result_messages = []
+    for msg in reversed(messages):
+        profile_data = get_user_chat_profile_data(msg.user, db)
+        result_messages.append({
+            "id": msg.id,
+            "user_id": msg.user_id,
+            "username": get_display_username(msg.user),
+            "profile_pic": profile_data["profile_pic_url"],
+            "avatar_url": profile_data["avatar_url"],
+            "frame_url": profile_data["frame_url"],
+            "badge": profile_data["badge"],
+            "message": msg.message,
+            "created_at": msg.created_at.isoformat()
+        })
+    
     return {
-        "messages": [
-            {
-                "id": msg.id,
-                "user_id": msg.user_id,
-                "username": get_display_username(msg.user),
-                "profile_pic": msg.user.profile_pic_url,
-                "message": msg.message,
-                "created_at": msg.created_at.isoformat()
-            }
-            for msg in reversed(messages)
-        ],
+        "messages": result_messages,
         "is_active": True,
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),

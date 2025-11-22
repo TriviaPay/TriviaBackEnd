@@ -1010,7 +1010,7 @@ class GroupSenderKey(Base):
     
     group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, primary_key=True)
     sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
-    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False, primary_key=True)
+    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), nullable=False, primary_key=True)
     group_epoch = Column(Integer, nullable=False, primary_key=True)
     sender_key_id = Column(UUID(as_uuid=True), nullable=False)
     current_chain_index = Column(Integer, nullable=False, default=0)
@@ -1239,7 +1239,6 @@ class GlobalChatMessage(Base):
     message = Column(String, nullable=False)
     message_type = Column(String, default="text")  # "text", "system"
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    is_from_trivia_live = Column(Boolean, default=False)
     client_message_id = Column(String, nullable=True)  # For idempotency
     
     # Relationships
@@ -1379,3 +1378,20 @@ class OneSignalPlayer(Base):
     
     # Relationships
     user = relationship("User", backref="onesignal_players")
+
+
+# =================================
+#  Chat Mute Preferences Table
+# =================================
+class ChatMutePreferences(Base):
+    __tablename__ = "chat_mute_preferences"
+    
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True, nullable=False)
+    global_chat_muted = Column(Boolean, default=False, nullable=False)
+    trivia_live_chat_muted = Column(Boolean, default=False, nullable=False)
+    private_chat_muted_users = Column(JSONB, nullable=True)  # List of user IDs: [123, 456, ...]
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="chat_mute_preferences", uselist=False)
