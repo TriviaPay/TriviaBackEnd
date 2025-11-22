@@ -210,10 +210,37 @@ async def internal_question_reset(
     db: Session = Depends(get_db)
 ):
     """Internal endpoint for question reset triggered by external cron"""
+    # Log immediately when endpoint is called
+    logging.info("=" * 80)
+    logging.info("🚀 QUESTION RESET ENDPOINT CALLED")
+    logging.info(f"⏰ Timestamp: {datetime.now()}")
+    logging.info("=" * 80)
+    
     if secret != os.getenv("INTERNAL_SECRET"):
+        logging.error("❌ UNAUTHORIZED: Invalid secret key")
         raise HTTPException(status_code=401, detail="Unauthorized")
     
+    logging.info("✅ Secret key validated - proceeding with question reset")
+    
     try:
+        # Log timezone info for debugging
+        from cleanup_unused_questions import get_today_in_app_timezone, get_date_range_for_query
+        from models import TriviaQuestionsDaily
+        
+        today = get_today_in_app_timezone()
+        start_datetime, end_datetime = get_date_range_for_query(today)
+        
+        logging.info(f"🔄 Question reset triggered at {datetime.now()}")
+        logging.info(f"📅 Today in app timezone: {today}")
+        logging.info(f"📅 Date range: {start_datetime} to {end_datetime}")
+        
+        # Get initial pool count
+        initial_pool_count = db.query(TriviaQuestionsDaily).filter(
+            TriviaQuestionsDaily.date >= start_datetime,
+            TriviaQuestionsDaily.date <= end_datetime
+        ).count()
+        logging.info(f"📊 Initial pool count: {initial_pool_count} questions")
+        
         # Get detailed metrics before reset
         logging.info("📊 Collecting detailed reset metrics...")
         metrics = get_detailed_reset_metrics(db)
@@ -223,21 +250,70 @@ async def internal_question_reset(
         from rewards_logic import reset_daily_eligibility_flags
         
         # Clean up unused questions
+        logging.info("🧹 Cleaning up unused questions...")
         cleanup_unused_questions()
         
+        # Verify questions exist after cleanup
+        today_pool_count = db.query(TriviaQuestionsDaily).filter(
+            TriviaQuestionsDaily.date >= start_datetime,
+            TriviaQuestionsDaily.date <= end_datetime
+        ).count()
+        
+        # Get the actual questions for debugging
+        pool_questions = db.query(TriviaQuestionsDaily).filter(
+            TriviaQuestionsDaily.date >= start_datetime,
+            TriviaQuestionsDaily.date <= end_datetime
+        ).all()
+        
+        logging.info(f"✅ Today's pool after cleanup: {today_pool_count} questions")
+        if pool_questions:
+            logging.info(f"Pool questions: {[(q.question_number, q.question_order, q.date) for q in pool_questions]}")
+        else:
+            logging.warning("⚠️  No questions found in pool after cleanup!")
+        
+        if today_pool_count == 0:
+            error_msg = "CRITICAL: Pool is empty after cleanup! This should not happen."
+            logging.error(f"❌ {error_msg}")
+            logging.error(f"Initial count: {initial_pool_count}, Final count: {today_pool_count}")
+            logging.error(f"Date range used: {start_datetime} to {end_datetime}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"{error_msg} Check cleanup_unused_questions() function. Initial count: {initial_pool_count}, Final count: {today_pool_count}, Date range: {start_datetime} to {end_datetime}"
+            )
+        elif today_pool_count < 4:
+            logging.warning(f"⚠️  WARNING: Pool has only {today_pool_count} questions (should have 4)")
+        
         # Reset eligibility flags
+        logging.info("🔄 Resetting eligibility flags...")
         reset_daily_eligibility_flags(db)
         
-        logging.info("Question reset completed via external cron")
+        logging.info("=" * 80)
+        logging.info("✅ Question reset completed via external cron")
+        logging.info(f"📊 Final Results:")
+        logging.info(f"   - Initial pool count: {initial_pool_count}")
+        logging.info(f"   - Final pool count: {today_pool_count}")
+        logging.info(f"   - Today: {today}")
+        logging.info("=" * 80)
+        
         return {
             "status": "success",
             "message": "Questions reset and eligibility flags cleared",
             "triggered_by": "external_cron",
             "detailed_metrics": metrics,
+            "today_pool_count": today_pool_count,
+            "initial_pool_count": initial_pool_count,
+            "today": today.isoformat(),
             "timestamp": datetime.now().isoformat()
         }
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
-        logging.error(f"Error in question reset: {str(e)}")
+        logging.error("=" * 80)
+        logging.error(f"❌ ERROR in question reset: {str(e)}")
+        logging.error("=" * 80)
+        import traceback
+        logging.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/monthly-reset")

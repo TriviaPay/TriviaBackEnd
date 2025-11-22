@@ -19,5 +19,6 @@ else
     export PORT="${PORT:-8000}"
     
     echo "Starting app on port $PORT with uvicorn directly"
-    exec uvicorn main:app --host 0.0.0.0 --port $PORT --log-level debug
+    LOG_LEVEL="${LOG_LEVEL:-info}"
+    exec uvicorn main:app --host 0.0.0.0 --port $PORT --log-level $LOG_LEVEL --no-access-log
 fi 

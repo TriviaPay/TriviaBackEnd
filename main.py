@@ -17,26 +17,36 @@ load_dotenv()
 # Configure logging
 import logging
 import sys
+from config import LOG_LEVEL
+
+# Convert string log level to logging constant
+log_level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
 
 # Create a custom logger
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+logger.setLevel(log_level)  # Use LOG_LEVEL from config, not hardcoded DEBUG
 
 # Create handlers
 c_handler = logging.StreamHandler(sys.stdout)  # Console handler
-c_handler.setLevel(logging.DEBUG)
+c_handler.setLevel(log_level)  # Use LOG_LEVEL from config
 
 # Create formatters and add it to handlers
 c_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 c_handler.setFormatter(c_format)
 
-# Add handlers to the logger
-logger.addHandler(c_handler)
+# Add handlers to the logger (only if not already added)
+if not logger.handlers:
+    logger.addHandler(c_handler)
 
 # Reduce noise from other libraries
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
+
+# Configure uvicorn logging to match our log level (prevents duplicate logs)
+logging.getLogger('uvicorn').setLevel(log_level)
+logging.getLogger('uvicorn.error').setLevel(log_level)
+logging.getLogger('uvicorn.access').setLevel(logging.WARNING)  # Suppress access logs unless needed
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -90,6 +100,36 @@ def custom_openapi():
     return openapi_schema
 
 app.openapi = custom_openapi
+
+# Request logging middleware
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+import time
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        
+        # Log incoming request
+        logger.info(f"📥 {request.method} {request.url.path}")
+        if request.query_params:
+            logger.debug(f"   Query params: {dict(request.query_params)}")
+        
+        try:
+            response = await call_next(request)
+            process_time = time.time() - start_time
+            
+            # Log response
+            logger.info(f"📤 {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.3f}s")
+            
+            return response
+        except Exception as e:
+            process_time = time.time() - start_time
+            logger.error(f"❌ {request.method} {request.url.path} - Error: {str(e)} - Time: {process_time:.3f}s")
+            raise
+
+# Add request logging middleware (before CORS so it logs all requests)
+app.add_middleware(RequestLoggingMiddleware)
 
 # CORS configuration
 app.add_middleware(

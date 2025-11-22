@@ -13,11 +13,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, date, timedelta
 import pytz
+import logging
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from db import SessionLocal
 from models import TriviaQuestionsDaily, Trivia
+
+# Use existing logger configuration from main app (don't call basicConfig)
+logger = logging.getLogger(__name__)
 
 def get_today_in_app_timezone() -> date:
     """Get today's date in the app's timezone (EST/US Eastern)."""
@@ -49,6 +53,11 @@ def cleanup_unused_questions():
     Clean up unused daily questions and refresh the pool for today.
     This should be run daily (e.g., after draw) to manage question allocation.
     """
+    logger.info("=" * 80)
+    logger.info("🧹 CLEANUP_UNUSED_QUESTIONS FUNCTION CALLED")
+    logger.info(f"⏰ Timestamp: {datetime.now()}")
+    logger.info("=" * 80)
+    
     db: Session = SessionLocal()
     
     try:
@@ -79,10 +88,21 @@ def cleanup_unused_questions():
                 Trivia.question_done: False,
                 Trivia.que_displayed_date: None
             }, synchronize_session=False)
-            print(f"Reset {len(question_numbers_to_reset)} questions in trivia table")
+            logger.info(f"Reset {len(question_numbers_to_reset)} questions in trivia table")
         
         db.commit()
-        print(f"Deleted {deleted_count} unused questions from {yesterday}")
+        logger.info(f"Deleted {deleted_count} unused questions from {yesterday}")
+        
+        # Check total questions in database
+        total_questions_in_db = db.query(Trivia).count()
+        unused_questions_in_db = db.query(Trivia).filter(Trivia.question_done == False).count()
+        used_questions_in_db = db.query(Trivia).filter(Trivia.question_done == True).count()
+        logger.info(f"📊 Database stats: {total_questions_in_db} total questions, {unused_questions_in_db} unused, {used_questions_in_db} used")
+        
+        if total_questions_in_db == 0:
+            error_msg = "CRITICAL ERROR: No questions exist in the trivia table!"
+            logger.error(f"❌ {error_msg}")
+            raise Exception(error_msg)
         
         # Step 3: Check today's pool and add questions if needed - use timezone-aware date range
         start_datetime, end_datetime = get_date_range_for_query(today)
@@ -91,16 +111,28 @@ def cleanup_unused_questions():
             TriviaQuestionsDaily.date <= end_datetime
         ).count()
         
-        print(f"Today's pool has {today_pool_count} questions")
+        logger.info(f"Today's pool has {today_pool_count} questions")
+        logger.info(f"Today in app timezone: {today}")
+        logger.info(f"Date range: {start_datetime} to {end_datetime}")
         
+        # CRITICAL: Always ensure at least 4 questions exist for today
+        # If pool is empty or has less than 4, add questions
+        if today_pool_count == 0:
+            logger.warning("⚠️  WARNING: Today's pool is EMPTY! Adding questions immediately...")
+        elif today_pool_count < 4:
+            logger.warning(f"⚠️  Today's pool has only {today_pool_count} questions (need 4). Adding more...")
+        
+        # ALWAYS ensure we have at least 4 questions for today
         if today_pool_count < 4:
             questions_needed = 4 - today_pool_count
+            logger.info(f"Need to add {questions_needed} questions to today's pool")
             
             # Get existing question numbers in today's pool to avoid duplicates
             existing_numbers = [q.question_number for q in db.query(TriviaQuestionsDaily.question_number).filter(
                 TriviaQuestionsDaily.date >= start_datetime,
                 TriviaQuestionsDaily.date <= end_datetime
             ).all()]
+            logger.debug(f"Existing question numbers in pool: {existing_numbers}")
             
             # Get unused questions (not in today's pool)
             unused_questions = db.query(Trivia).filter(
@@ -108,21 +140,36 @@ def cleanup_unused_questions():
                 ~Trivia.question_number.in_(existing_numbers) if existing_numbers else True
             ).order_by(func.random()).limit(questions_needed).all()
             
+            logger.debug(f"Found {len(unused_questions)} unused questions (need {questions_needed})")
+            
             # If not enough questions, reset all questions
             if len(unused_questions) < questions_needed:
                 total_questions = db.query(Trivia).count()
+                logger.warning(f"Not enough unused questions. Total in DB: {total_questions}, Need: {questions_needed}")
+                
                 if total_questions < 4:
-                    print(f"Warning: Only {total_questions} questions in database (need at least 4)")
+                    error_msg = f"CRITICAL ERROR: Only {total_questions} questions in database (need at least 4)"
+                    logger.error(f"❌ {error_msg}")
+                    raise Exception(error_msg)
                 else:
                     # Reset all questions
-                    db.query(Trivia).update({Trivia.question_done: False, Trivia.que_displayed_date: None})
+                    logger.warning("⚠️  Not enough unused questions. Resetting ALL questions in trivia table...")
+                    reset_count = db.query(Trivia).update({Trivia.question_done: False, Trivia.que_displayed_date: None})
                     db.commit()
+                    logger.info(f"Reset {reset_count} questions in trivia table")
                     
                     # Get questions again (excluding existing)
                     unused_questions = db.query(Trivia).filter(
                         Trivia.question_done == False,
                         ~Trivia.question_number.in_(existing_numbers) if existing_numbers else True
                     ).order_by(func.random()).limit(questions_needed).all()
+                    
+                    logger.debug(f"After reset: Found {len(unused_questions)} unused questions (need {questions_needed})")
+                    
+                    if len(unused_questions) < questions_needed:
+                        error_msg = f"CRITICAL ERROR: Still not enough questions after reset. Got {len(unused_questions)}, need {questions_needed}"
+                        logger.error(f"❌ {error_msg}")
+                        raise Exception(error_msg)
             
             # Determine starting order (max existing order + 1, or 1 if empty) - use timezone-aware date range
             max_existing_order = db.query(func.max(TriviaQuestionsDaily.question_order)).filter(
@@ -132,6 +179,8 @@ def cleanup_unused_questions():
             
             # Add new questions to pool
             added_count = 0
+            logger.info(f"Attempting to add {questions_needed} questions. Available unused questions: {len(unused_questions)}")
+            
             for i, q in enumerate(unused_questions):
                 order = max_existing_order + i + 1
                 if order > 4:
@@ -145,6 +194,7 @@ def cleanup_unused_questions():
                 ).first()
                 
                 if existing_order:
+                    logger.debug(f"Skipping order {order} - already exists")
                     continue  # Skip if order already taken
                 
                 existing_qnum = db.query(TriviaQuestionsDaily).filter(
@@ -154,6 +204,7 @@ def cleanup_unused_questions():
                 ).first()
                 
                 if existing_qnum:
+                    logger.debug(f"Skipping question {q.question_number} - already in pool")
                     continue  # Skip if question already in pool
                 
                 # Create timezone-aware datetime for the date
@@ -163,27 +214,63 @@ def cleanup_unused_questions():
                 # Convert to UTC and remove timezone info for database storage
                 date_utc = date_datetime.astimezone(pytz.UTC).replace(tzinfo=None)
                 
-                dq = TriviaQuestionsDaily(
-                    date=date_utc,
-                    question_number=q.question_number,
-                    question_order=order,
-                    is_common=(order == 1),
-                    is_used=False
-                )
-                db.add(dq)
-                
-                # Mark question as used in trivia table
-                q.question_done = True
-                q.que_displayed_date = datetime.utcnow()
-                
-                added_count += 1
+                try:
+                    dq = TriviaQuestionsDaily(
+                        date=date_utc,
+                        question_number=q.question_number,
+                        question_order=order,
+                        is_common=(order == 1),
+                        is_used=False
+                    )
+                    db.add(dq)
+                    logger.info(f"Adding question {q.question_number} as order {order} for date {date_utc}")
+                    
+                    # Mark question as used in trivia table
+                    q.question_done = True
+                    q.que_displayed_date = datetime.utcnow()
+                    
+                    added_count += 1
+                except Exception as add_error:
+                    logger.error(f"Failed to add question {q.question_number}: {add_error}")
+                    db.rollback()
+                    raise
+            
+            if added_count == 0:
+                error_msg = f"CRITICAL: No questions were added! Tried to add {questions_needed} but added 0."
+                logger.error(f"❌ {error_msg}")
+                logger.error(f"Unused questions available: {len(unused_questions)}")
+                logger.error(f"Existing numbers in pool: {existing_numbers}")
+                raise Exception(error_msg)
             
             db.commit()
-            print(f"Added {added_count} new questions to today's pool")
+            logger.info(f"✅ Added {added_count} new questions to today's pool")
+            
+            # Verify questions were added
+            final_count = db.query(TriviaQuestionsDaily).filter(
+                TriviaQuestionsDaily.date >= start_datetime,
+                TriviaQuestionsDaily.date <= end_datetime
+            ).count()
+            logger.info(f"✅ Final pool count: {final_count} questions")
+            
+            # Get the actual questions that were added for verification
+            added_questions = db.query(TriviaQuestionsDaily).filter(
+                TriviaQuestionsDaily.date >= start_datetime,
+                TriviaQuestionsDaily.date <= end_datetime
+            ).all()
+            logger.debug(f"Questions in pool: {[(q.question_number, q.question_order) for q in added_questions]}")
+            
+            if final_count == 0:
+                error_msg = "CRITICAL: Questions were not added to pool! Pool is still empty."
+                logger.error(f"❌ {error_msg}")
+                raise Exception(error_msg)
+            elif final_count < 4:
+                logger.warning(f"⚠️  WARNING: Pool has {final_count} questions (less than 4). This may cause issues.")
+        else:
+            logger.info(f"✅ Today's pool already has {today_pool_count} questions (sufficient)")
         
     except Exception as e:
         db.rollback()
-        print(f"Error cleaning up questions: {e}")
+        logger.error(f"❌ ERROR cleaning up questions: {e}", exc_info=True)
         raise
     finally:
         db.close()
