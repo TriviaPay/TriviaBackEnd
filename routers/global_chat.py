@@ -18,6 +18,10 @@ from config import (
 )
 from utils.pusher_client import publish_chat_message_sync
 from utils.message_sanitizer import sanitize_message
+from utils.chat_helpers import get_user_chat_profile_data
+from utils.onesignal_client import send_push_notification_async, should_send_push, get_user_player_ids
+from utils.chat_mute import is_chat_muted
+from models import OneSignalPlayer
 import logging
 
 logger = logging.getLogger(__name__)
@@ -39,8 +43,9 @@ def get_display_username(user: User) -> str:
     return f"User{user.account_id}"
 
 
-def publish_to_pusher_global(message_id: int, user_id: int, username: str, profile_pic: Optional[str], 
-                             message: str, created_at: datetime, is_from_trivia_live: bool):
+def publish_to_pusher_global(message_id: int, user_id: int, username: str, profile_pic: Optional[str],
+                             avatar_url: Optional[str], frame_url: Optional[str], badge: Optional[dict],
+                             message: str, created_at: datetime):
     """Background task to publish to Pusher"""
     try:
         publish_chat_message_sync(
@@ -51,13 +56,97 @@ def publish_to_pusher_global(message_id: int, user_id: int, username: str, profi
                 "user_id": user_id,
                 "username": username,
                 "profile_pic": profile_pic,
+                "avatar_url": avatar_url,
+                "frame_url": frame_url,
+                "badge": badge,
                 "message": message,
-                "created_at": created_at.isoformat(),
-                "is_from_trivia_live": is_from_trivia_live
+                "created_at": created_at.isoformat()
             }
         )
     except Exception as e:
         logger.error(f"Failed to publish global chat message to Pusher: {e}")
+
+
+def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_username: str, message: str, created_at: datetime):
+    """Background task to send push notifications for global chat to all users (except sender)"""
+    import asyncio
+    from db import get_db
+    
+    db = next(get_db())
+    try:
+        # Get all users with OneSignal players (except sender)
+        all_players = db.query(OneSignalPlayer).filter(
+            OneSignalPlayer.user_id != sender_id,
+            OneSignalPlayer.is_valid == True
+        ).all()
+        
+        if not all_players:
+            logger.debug("No OneSignal players found for global chat push")
+            return
+        
+        # Batch player IDs (OneSignal supports up to 2000 per request)
+        BATCH_SIZE = 2000
+        player_batches = []
+        current_batch = []
+        
+        for player in all_players:
+            user_id = player.user_id
+            
+            # Check if user is active (skip if active)
+            if not should_send_push(user_id, db):
+                continue
+            
+            # Check if user has muted global chat
+            if is_chat_muted(user_id, 'global', db):
+                continue
+            
+            current_batch.append(player.player_id)
+            
+            if len(current_batch) >= BATCH_SIZE:
+                player_batches.append(current_batch)
+                current_batch = []
+        
+        if current_batch:
+            player_batches.append(current_batch)
+        
+        if not player_batches:
+            logger.debug("No eligible users for global chat push (all muted or active)")
+            return
+        
+        # Send push notifications in batches
+        heading = "Global Chat"
+        content = f"{sender_username}: {message[:100]}"  # Truncate for notification
+        data = {
+            "type": "global_chat",
+            "message_id": message_id,
+            "sender_id": sender_id,
+            "sender_username": sender_username,
+            "message": message,
+            "created_at": created_at.isoformat()
+        }
+        
+        # Run async function in event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        for batch in player_batches:
+            loop.run_until_complete(
+                send_push_notification_async(
+                    player_ids=batch,
+                    heading=heading,
+                    content=content,
+                    data=data
+                )
+            )
+        
+        logger.info(f"Sent global chat push notifications to {sum(len(b) for b in player_batches)} players")
+    except Exception as e:
+        logger.error(f"Failed to send push notifications for global chat: {e}")
+    finally:
+        db.close()
 
 
 @router.post("/send")
@@ -121,7 +210,6 @@ async def send_global_message(
     new_message = GlobalChatMessage(
         user_id=current_user.account_id,
         message=message_text,
-        is_from_trivia_live=False,
         client_message_id=request.client_message_id
     )
     
@@ -144,6 +232,9 @@ async def send_global_message(
     db.commit()
     db.refresh(new_message)
     
+    # Get user profile data (avatar, frame)
+    profile_data = get_user_chat_profile_data(current_user, db)
+    
     # Publish to Pusher in background
     username = get_display_username(current_user)
     background_tasks.add_task(
@@ -151,10 +242,22 @@ async def send_global_message(
         new_message.id,
         current_user.account_id,
         username,
-        current_user.profile_pic_url,
+        profile_data["profile_pic_url"],
+        profile_data["avatar_url"],
+        profile_data["frame_url"],
+        profile_data["badge"],
         new_message.message,
-        new_message.created_at,
-        False
+        new_message.created_at
+    )
+    
+    # Send push notifications in background (to all users except sender)
+    background_tasks.add_task(
+        send_push_for_global_chat_sync,
+        new_message.id,
+        current_user.account_id,
+        username,
+        new_message.message,
+        new_message.created_at
     )
     
     return {
@@ -205,19 +308,24 @@ async def get_global_messages(
         GlobalChatViewer.last_seen >= cutoff_time
     ).count()
     
+    # Get profile data for all message senders
+    result_messages = []
+    for msg in reversed(messages):
+        profile_data = get_user_chat_profile_data(msg.user, db)
+        result_messages.append({
+            "id": msg.id,
+            "user_id": msg.user_id,
+            "username": get_display_username(msg.user),
+            "profile_pic": profile_data["profile_pic_url"],
+            "avatar_url": profile_data["avatar_url"],
+            "frame_url": profile_data["frame_url"],
+            "badge": profile_data["badge"],
+            "message": msg.message,
+            "created_at": msg.created_at.isoformat()
+        })
+    
     return {
-        "messages": [
-            {
-                "id": msg.id,
-                "user_id": msg.user_id,
-                "username": get_display_username(msg.user),
-                "profile_pic": msg.user.profile_pic_url,
-                "message": msg.message,
-                "created_at": msg.created_at.isoformat(),
-                "is_from_trivia_live": msg.is_from_trivia_live
-            }
-            for msg in reversed(messages)
-        ],
+        "messages": result_messages,
         "online_count": online_count
     }
 

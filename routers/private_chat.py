@@ -25,7 +25,9 @@ from utils.onesignal_client import (
     should_send_push,
     get_user_player_ids
 )
+from utils.chat_mute import is_user_muted_for_private_chat
 from utils.message_sanitizer import sanitize_message
+from utils.chat_helpers import get_user_chat_profile_data
 import logging
 
 logger = logging.getLogger(__name__)
@@ -69,7 +71,9 @@ def get_display_username(user: User) -> str:
 
 
 def publish_to_pusher_private(conversation_id: int, message_id: int, sender_id: int, 
-                               sender_username: str, message: str, created_at: datetime,
+                               sender_username: str, profile_pic_url: Optional[str],
+                               avatar_url: Optional[str], frame_url: Optional[str], badge: Optional[dict],
+                               message: str, created_at: datetime,
                                is_new_conversation: bool):
     """Background task to publish to Pusher"""
     try:
@@ -82,6 +86,10 @@ def publish_to_pusher_private(conversation_id: int, message_id: int, sender_id: 
                 "message_id": message_id,
                 "sender_id": sender_id,
                 "sender_username": sender_username,
+                "profile_pic": profile_pic_url,
+                "avatar_url": avatar_url,
+                "frame_url": frame_url,
+                "badge": badge,
                 "message": message,
                 "created_at": created_at.isoformat(),
                 "is_new_conversation": is_new_conversation
@@ -99,6 +107,11 @@ def send_push_if_needed_sync(recipient_id: int, conversation_id: int, sender_id:
     
     db = next(get_db())
     try:
+        # Check if sender is muted by recipient
+        if is_user_muted_for_private_chat(sender_id, recipient_id, db):
+            logger.debug(f"User {sender_id} is muted by {recipient_id}, skipping push notification")
+            return
+        
         # Check if user is active (should not send push)
         if not should_send_push(recipient_id, db):
             logger.debug(f"User {recipient_id} is active, skipping push notification")
@@ -285,6 +298,9 @@ async def send_private_message(
     db.commit()
     db.refresh(new_message)
     
+    # Get user profile data (avatar, frame)
+    profile_data = get_user_chat_profile_data(current_user, db)
+    
     # Publish to Pusher in background
     username = get_display_username(current_user)
     background_tasks.add_task(
@@ -293,6 +309,10 @@ async def send_private_message(
         new_message.id,
         current_user.account_id,
         username,
+        profile_data["profile_pic_url"],
+        profile_data["avatar_url"],
+        profile_data["frame_url"],
+        profile_data["badge"],
         new_message.message,
         new_message.created_at,
         is_new_conversation
@@ -451,11 +471,17 @@ async def list_private_conversations(
             if share_last_seen in ["everyone", "contacts"]:
                 peer_last_seen = peer_presence.last_seen_at.isoformat() if peer_presence.last_seen_at else None
         
+        # Get peer user's profile data (avatar, frame)
+        peer_profile_data = get_user_chat_profile_data(peer_user, db)
+        
         result.append({
             "conversation_id": conv.id,
             "peer_user_id": peer_id,
             "peer_username": get_display_username(peer_user),
-            "peer_profile_pic": peer_user.profile_pic_url,
+            "peer_profile_pic": peer_profile_data["profile_pic_url"],
+            "peer_avatar_url": peer_profile_data["avatar_url"],
+            "peer_frame_url": peer_profile_data["frame_url"],
+            "peer_badge": peer_profile_data["badge"],
             "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
             "unread_count": unread_count,
             "peer_online": peer_online,
@@ -525,20 +551,29 @@ async def get_private_messages(
         if share_last_seen in ["everyone", "contacts"]:
             peer_last_seen = peer_presence.last_seen_at.isoformat() if peer_presence.last_seen_at else None
     
+    # Get profile data for all message senders
+    result_messages = []
+    for msg in reversed(messages):
+        sender_profile_data = get_user_chat_profile_data(msg.sender, db)
+        is_read = last_read_id is not None and msg.id <= last_read_id if msg.sender_id != current_user.account_id else None
+        
+        result_messages.append({
+            "id": msg.id,
+            "sender_id": msg.sender_id,
+            "sender_username": get_display_username(msg.sender),
+            "sender_profile_pic": sender_profile_data["profile_pic_url"],
+            "sender_avatar_url": sender_profile_data["avatar_url"],
+            "sender_frame_url": sender_profile_data["frame_url"],
+            "sender_badge": sender_profile_data["badge"],
+            "message": msg.message,
+            "status": msg.status,
+            "created_at": msg.created_at.isoformat(),
+            "delivered_at": msg.delivered_at.isoformat() if msg.delivered_at else None,
+            "is_read": is_read
+        })
+    
     return {
-        "messages": [
-            {
-                "id": msg.id,
-                "sender_id": msg.sender_id,
-                "sender_username": get_display_username(msg.sender),
-                "message": msg.message,
-                "status": msg.status,
-                "created_at": msg.created_at.isoformat(),
-                "delivered_at": msg.delivered_at.isoformat() if msg.delivered_at else None,
-                "is_read": last_read_id is not None and msg.id <= last_read_id if msg.sender_id != current_user.account_id else None
-            }
-            for msg in reversed(messages)
-        ],
+        "messages": result_messages,
         "peer_online": peer_online,
         "peer_last_seen": peer_last_seen
     }
@@ -651,11 +686,21 @@ async def get_conversation(
         if share_last_seen in ["everyone", "contacts"]:
             peer_last_seen = peer_presence.last_seen_at.isoformat() if peer_presence.last_seen_at else None
     
+    # Get peer user's profile data (avatar, frame)
+    peer_profile_data = get_user_chat_profile_data(peer_user, db) if peer_user else {
+        "profile_pic_url": None,
+        "avatar_url": None,
+        "frame_url": None
+    }
+    
     return {
         "conversation_id": conversation.id,
         "peer_user_id": peer_id,
         "peer_username": get_display_username(peer_user) if peer_user else None,
-        "peer_profile_pic": peer_user.profile_pic_url if peer_user else None,
+        "peer_profile_pic": peer_profile_data["profile_pic_url"],
+        "peer_avatar_url": peer_profile_data["avatar_url"],
+        "peer_frame_url": peer_profile_data["frame_url"],
+        "peer_badge": peer_profile_data["badge"],
         "status": conversation.status,
         "created_at": conversation.created_at.isoformat(),
         "peer_online": peer_online,

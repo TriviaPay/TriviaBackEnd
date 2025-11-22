@@ -116,7 +116,6 @@ class TestGlobalChat:
             assert message is not None
             assert message.message == "Hello global chat!"
             assert message.user_id == auth_override_user1.account_id
-            assert message.is_from_trivia_live == False
     
     def test_send_global_message_idempotency(self, test_db, auth_override_user1):
         """Test idempotency with duplicate client_message_id"""
@@ -156,8 +155,7 @@ class TestGlobalChat:
         for i in range(5):
             msg = GlobalChatMessage(
                 user_id=test_user2.account_id if i % 2 == 0 else auth_override_user1.account_id,
-                message=f"Test message {i}",
-                is_from_trivia_live=False
+                message=f"Test message {i}"
             )
             test_db.add(msg)
         test_db.commit()
@@ -481,7 +479,6 @@ class TestTriviaLiveChat:
             assert response.status_code == 200
             data = response.json()
             assert "message_id" in data
-            assert "global_message_id" in data
             assert data["duplicate"] == False
             
             # Verify trivia message was saved
@@ -491,12 +488,11 @@ class TestTriviaLiveChat:
             assert trivia_msg is not None
             assert trivia_msg.message == "Trivia chat message!"
             
-            # Verify global message was also created
+            # Verify global message was NOT created (trivia and global are now separate)
             global_msg = test_db.query(GlobalChatMessage).filter(
-                GlobalChatMessage.id == data["global_message_id"]
+                GlobalChatMessage.message == "Trivia chat message!"
             ).first()
-            assert global_msg is not None
-            assert global_msg.is_from_trivia_live == True
+            assert global_msg is None  # Should not exist
     
     @patch('routers.trivia_live_chat.is_trivia_live_chat_active')
     def test_trivia_live_chat_inactive(self, mock_active, test_db, auth_override_user1):
@@ -702,8 +698,8 @@ class TestPusherAuth:
 class TestChatIntegration:
     """Integration tests for chat system"""
     
-    def test_trivia_message_appears_in_global(self, test_db, auth_override_user1):
-        """Test that trivia live chat messages appear in global chat"""
+    def test_trivia_message_separate_from_global(self, test_db, auth_override_user1):
+        """Test that trivia live chat messages are separate from global chat"""
         with patch('routers.trivia_live_chat.is_trivia_live_chat_active', return_value=True), \
              patch('routers.trivia_live_chat.publish_chat_message_sync'):
             
@@ -713,17 +709,16 @@ class TestChatIntegration:
             )
             
             assert response.status_code == 200
-            global_msg_id = response.json()["global_message_id"]
+            trivia_msg_id = response.json()["message_id"]
             
-            # Check global chat
+            # Check global chat - trivia messages should NOT appear in global chat
             response = client.get("/global-chat/messages")
             assert response.status_code == 200
             messages = response.json()["messages"]
             
-            # Find the message
-            trivia_msg = next((m for m in messages if m["id"] == global_msg_id), None)
-            assert trivia_msg is not None
-            assert trivia_msg["is_from_trivia_live"] == True
+            # Verify trivia message is NOT in global chat (they are now separate)
+            trivia_msg_in_global = next((m for m in messages if m.get("id") == trivia_msg_id), None)
+            assert trivia_msg_in_global is None  # Should not exist in global chat
     
     def test_private_chat_unread_count(self, test_db, auth_override_user1, test_user2):
         """Test unread count calculation"""

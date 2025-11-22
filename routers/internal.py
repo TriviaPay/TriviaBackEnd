@@ -8,6 +8,7 @@ import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
 from models import GlobalChatMessage, User
 from utils.pusher_client import publish_chat_message_sync
+from utils.chat_helpers import get_user_chat_profile_data
 from config import GLOBAL_CHAT_ENABLED
 
 router = APIRouter(prefix="/internal", tags=["Internal"])
@@ -89,7 +90,6 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
         user_id=system_user_id,
         message=message,
         message_type="system",  # Mark as system message
-        is_from_trivia_live=False,
         client_message_id=f"winner_announcement_{draw_date.isoformat()}"  # Unique ID for idempotency
     )
     
@@ -101,6 +101,13 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
     system_user = db.query(User).filter(User.account_id == system_user_id).first()
     username = get_display_username(system_user) if system_user else "System"
     
+    # Get system user's profile data (avatar, frame)
+    profile_data = get_user_chat_profile_data(system_user, db) if system_user else {
+        "profile_pic_url": None,
+        "avatar_url": None,
+        "frame_url": None
+    }
+    
     # Publish to Pusher
     try:
         publish_chat_message_sync(
@@ -110,10 +117,12 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
                 "id": system_message.id,
                 "user_id": system_user_id,
                 "username": username,
-                "profile_pic": system_user.profile_pic_url if system_user else None,
+                "profile_pic": profile_data["profile_pic_url"],
+                "avatar_url": profile_data["avatar_url"],
+                "frame_url": profile_data["frame_url"],
+                "badge": profile_data["badge"],
                 "message": message,
                 "created_at": system_message.created_at.isoformat(),
-                "is_from_trivia_live": False,
                 "message_type": "system"
             }
         )
