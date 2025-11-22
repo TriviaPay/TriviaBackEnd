@@ -23,7 +23,8 @@ from utils.pusher_client import publish_chat_message_sync
 from utils.onesignal_client import (
     send_push_notification_async,
     should_send_push,
-    get_user_player_ids
+    get_user_player_ids,
+    is_user_active
 )
 from utils.chat_mute import is_user_muted_for_private_chat
 from utils.message_sanitizer import sanitize_message
@@ -101,7 +102,7 @@ def publish_to_pusher_private(conversation_id: int, message_id: int, sender_id: 
 
 def send_push_if_needed_sync(recipient_id: int, conversation_id: int, sender_id: int,
                               sender_username: str, message: str, is_new_conversation: bool):
-    """Background task wrapper to send push notification if user is not active"""
+    """Background task wrapper to send push notification (in-app if active, system if inactive)"""
     import asyncio
     from db import get_db
     
@@ -112,16 +113,14 @@ def send_push_if_needed_sync(recipient_id: int, conversation_id: int, sender_id:
             logger.debug(f"User {sender_id} is muted by {recipient_id}, skipping push notification")
             return
         
-        # Check if user is active (should not send push)
-        if not should_send_push(recipient_id, db):
-            logger.debug(f"User {recipient_id} is active, skipping push notification")
-            return
-        
         # Get player IDs
         player_ids = get_user_player_ids(recipient_id, db, valid_only=True)
         if not player_ids:
             logger.debug(f"No valid OneSignal players for user {recipient_id}")
             return
+        
+        # Check if user is active (determines in-app vs system notification)
+        is_active = is_user_active(recipient_id, db)
         
         if is_new_conversation:
             heading = "New Chat Request"
@@ -152,9 +151,13 @@ def send_push_if_needed_sync(recipient_id: int, conversation_id: int, sender_id:
                 player_ids=player_ids,
                 heading=heading,
                 content=content,
-                data=data
+                data=data,
+                is_in_app_notification=is_active
             )
         )
+        
+        notification_type = "in-app" if is_active else "system"
+        logger.debug(f"Sent {notification_type} push notification to user {recipient_id}")
     except Exception as e:
         logger.error(f"Failed to send push notification: {e}")
     finally:

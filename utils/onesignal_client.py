@@ -17,10 +17,19 @@ async def send_push_notification_async(
     heading: str,
     content: str,
     data: Optional[Dict[str, Any]] = None,
-    url: Optional[str] = None
+    url: Optional[str] = None,
+    is_in_app_notification: bool = False
 ) -> bool:
     """
     Send push notification via OneSignal asynchronously.
+    
+    Args:
+        player_ids: List of OneSignal player IDs to send to
+        heading: Notification heading/title
+        content: Notification content/message
+        data: Optional data payload to include
+        url: Optional URL to open when notification is clicked
+        is_in_app_notification: If True, adds show_as_in_app flag for frontend to display as in-app notification
     """
     if not ONESIGNAL_ENABLED:
         logger.debug("OneSignal not enabled, notification not sent")
@@ -33,6 +42,11 @@ async def send_push_notification_async(
         logger.warning("OneSignal credentials not fully configured")
         return False
     
+    # Prepare data payload with in-app notification flag
+    notification_data = data.copy() if data else {}
+    if is_in_app_notification:
+        notification_data["show_as_in_app"] = True
+    
     payload = {
         "app_id": ONESIGNAL_APP_ID,
         "include_player_ids": player_ids,
@@ -40,8 +54,8 @@ async def send_push_notification_async(
         "contents": {"en": content},
     }
     
-    if data:
-        payload["data"] = data
+    if notification_data:
+        payload["data"] = notification_data
     
     if url:
         payload["url"] = url
@@ -91,6 +105,15 @@ def should_send_push(user_id: int, db: Session) -> bool:
         return False
     
     return True
+
+
+def is_user_active(user_id: int, db: Session) -> bool:
+    """
+    Check if user is active (recent activity within threshold).
+    Returns True if user is active, False otherwise.
+    This is the inverse of should_send_push().
+    """
+    return not should_send_push(user_id, db)
 
 
 def mark_player_invalid(player_id: str, db: Session) -> None:

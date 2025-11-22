@@ -23,7 +23,7 @@ from utils.draw_calculations import get_next_draw_time
 from utils.pusher_client import publish_chat_message_sync
 from utils.message_sanitizer import sanitize_message
 from utils.chat_helpers import get_user_chat_profile_data
-from utils.onesignal_client import send_push_notification_async, should_send_push, get_user_player_ids
+from utils.onesignal_client import send_push_notification_async, should_send_push, get_user_player_ids, is_user_active
 from utils.chat_mute import is_chat_muted
 from models import OneSignalPlayer
 import logging
@@ -127,36 +127,43 @@ def send_push_for_trivia_live_chat_sync(message_id: int, sender_id: int, sender_
             logger.debug("No OneSignal players found for trivia live chat push")
             return
         
-        # Batch player IDs (OneSignal supports up to 2000 per request)
+        # Batch player IDs separately for active (in-app) and inactive (system) users
         BATCH_SIZE = 2000
-        player_batches = []
-        current_batch = []
+        active_player_batches = []  # In-app notifications
+        inactive_player_batches = []  # System push notifications
+        active_current_batch = []
+        inactive_current_batch = []
         
         for player in all_players:
             user_id = player.user_id
-            
-            # Check if user is active (skip if active)
-            if not should_send_push(user_id, db):
-                continue
             
             # Check if user has muted trivia live chat
             if is_chat_muted(user_id, 'trivia_live', db):
                 continue
             
-            current_batch.append(player.player_id)
+            # Check if user is active
+            is_active = is_user_active(user_id, db)
             
-            if len(current_batch) >= BATCH_SIZE:
-                player_batches.append(current_batch)
-                current_batch = []
+            if is_active:
+                # Active user: in-app notification
+                active_current_batch.append(player.player_id)
+                if len(active_current_batch) >= BATCH_SIZE:
+                    active_player_batches.append(active_current_batch)
+                    active_current_batch = []
+            else:
+                # Inactive user: system push notification
+                inactive_current_batch.append(player.player_id)
+                if len(inactive_current_batch) >= BATCH_SIZE:
+                    inactive_player_batches.append(inactive_current_batch)
+                    inactive_current_batch = []
         
-        if current_batch:
-            player_batches.append(current_batch)
+        # Add remaining batches
+        if active_current_batch:
+            active_player_batches.append(active_current_batch)
+        if inactive_current_batch:
+            inactive_player_batches.append(inactive_current_batch)
         
-        if not player_batches:
-            logger.debug("No eligible users for trivia live chat push (all muted or active)")
-            return
-        
-        # Send push notifications in batches
+        # Prepare notification data
         heading = "Trivia Live Chat"
         content = f"{sender_username}: {message[:100]}"  # Truncate for notification
         data = {
@@ -176,17 +183,33 @@ def send_push_for_trivia_live_chat_sync(message_id: int, sender_id: int, sender_
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
-        for batch in player_batches:
+        # Send in-app notifications to active users
+        for batch in active_player_batches:
             loop.run_until_complete(
                 send_push_notification_async(
                     player_ids=batch,
                     heading=heading,
                     content=content,
-                    data=data
+                    data=data,
+                    is_in_app_notification=True
                 )
             )
         
-        logger.info(f"Sent trivia live chat push notifications to {sum(len(b) for b in player_batches)} players")
+        # Send system push notifications to inactive users
+        for batch in inactive_player_batches:
+            loop.run_until_complete(
+                send_push_notification_async(
+                    player_ids=batch,
+                    heading=heading,
+                    content=content,
+                    data=data,
+                    is_in_app_notification=False
+                )
+            )
+        
+        total_active = sum(len(b) for b in active_player_batches)
+        total_inactive = sum(len(b) for b in inactive_player_batches)
+        logger.info(f"Sent trivia live chat push notifications: {total_active} in-app, {total_inactive} system")
     except Exception as e:
         logger.error(f"Failed to send push notifications for trivia live chat: {e}")
     finally:
