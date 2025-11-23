@@ -5,6 +5,7 @@ import logging
 import stripe
 import os
 from typing import Optional, Dict
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -190,4 +191,134 @@ def get_publishable_key() -> str:
         Publishable key or empty string if not set
     """
     return STRIPE_PUBLISHABLE_KEY
+
+
+async def get_or_create_stripe_customer_for_user(user: User, db: AsyncSession) -> str:
+    """
+    Get or create Stripe customer for a user.
+    
+    If user.stripe_customer_id exists, return it.
+    Else create a Stripe customer with email=user.email and metadata={"account_id": user.account_id},
+    save stripe_customer_id on user and commit, then return customer.id.
+    
+    Args:
+        user: User model instance
+        db: Async database session
+        
+    Returns:
+        Stripe customer ID (cus_*)
+        
+    Raises:
+        StripeError: If customer creation fails
+    """
+    # If user already has a customer ID, return it
+    if user.stripe_customer_id:
+        return user.stripe_customer_id
+    
+    try:
+        # Create Stripe customer
+        customer = stripe.Customer.create(
+            email=user.email,
+            metadata={
+                "account_id": str(user.account_id)
+            }
+        )
+        
+        customer_id = customer.id
+        logger.info(f"Created Stripe customer {customer_id} for user {user.account_id}")
+        
+        # Save customer ID to user
+        user.stripe_customer_id = customer_id
+        await db.commit()
+        await db.refresh(user)
+        
+        return customer_id
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Failed to create Stripe customer for user {user.account_id}: {str(e)}")
+        raise StripeError(f"Failed to create Stripe customer: {str(e)}")
+
+
+def create_ephemeral_key_for_customer(customer_id: str, stripe_api_version: str = "2023-10-16") -> stripe.EphemeralKey:
+    """
+    Create ephemeral key for a Stripe customer.
+    
+    Ephemeral keys are used by mobile apps to securely make API calls to Stripe
+    on behalf of the customer without exposing the secret key.
+    
+    Args:
+        customer_id: Stripe customer ID
+        stripe_api_version: Stripe API version to use (default: "2023-10-16")
+        
+    Returns:
+        Stripe EphemeralKey object
+        
+    Raises:
+        StripeError: If ephemeral key creation fails
+    """
+    try:
+        ephemeral_key = stripe.EphemeralKey.create(
+            customer=customer_id,
+            stripe_version=stripe_api_version,
+        )
+        
+        logger.info(f"Created ephemeral key for customer {customer_id}")
+        return ephemeral_key
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Failed to create ephemeral key for customer {customer_id}: {str(e)}")
+        raise StripeError(f"Failed to create ephemeral key: {str(e)}")
+
+
+def create_payment_intent_for_topup(
+    amount_minor: int,
+    currency: str,
+    user: User,
+    topup_type: str,
+    product_id: Optional[str] = None
+) -> stripe.PaymentIntent:
+    """
+    Create a PaymentIntent for wallet top-up or product purchase.
+    
+    Uses automatic_payment_methods.enabled=True to support cards, Apple Pay, and Google Pay
+    automatically if enabled in Stripe Dashboard and frontend integration.
+    
+    Args:
+        amount_minor: Amount in minor units (cents)
+        currency: Currency code (e.g., 'usd')
+        user: User model instance
+        topup_type: Type of top-up ('wallet_topup' or 'product')
+        product_id: Optional product ID for product purchases
+        
+    Returns:
+        Stripe PaymentIntent object
+        
+    Raises:
+        StripeError: If payment intent creation fails
+    """
+    try:
+        payment_intent = stripe.PaymentIntent.create(
+            amount=amount_minor,
+            currency=currency,
+            automatic_payment_methods={
+                "enabled": True,
+            },
+            metadata={
+                "account_id": str(user.account_id),
+                "topup_type": topup_type,
+                "product_id": product_id or "",
+                "source": "app_payments"
+            }
+        )
+        
+        logger.info(
+            f"Created PaymentIntent {payment_intent.id} for user {user.account_id}, "
+            f"amount: {amount_minor} {currency}, type: {topup_type}"
+        )
+        
+        return payment_intent
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Failed to create PaymentIntent for user {user.account_id}: {str(e)}")
+        raise StripeError(f"Failed to create PaymentIntent: {str(e)}")
 

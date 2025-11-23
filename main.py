@@ -49,7 +49,7 @@ logging.getLogger('uvicorn.error').setLevel(log_level)
 logging.getLogger('uvicorn.access').setLevel(logging.WARNING)  # Suppress access logs unless needed
 
 # Import async wallet routers
-from app.routers import wallet, stripe_connect, admin_withdrawals, iap, stripe_webhook
+from app.routers import wallet, stripe_connect, admin_withdrawals, iap, stripe_webhook, payments
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -266,3 +266,4 @@ app.include_router(stripe_connect.router, prefix="/api/v1")
 app.include_router(admin_withdrawals.router, prefix="/api/v1")
 app.include_router(iap.router, prefix="/api/v1")
 app.include_router(stripe_webhook.router, prefix="/api/v1")
+app.include_router(payments.router, prefix="/api/v1")

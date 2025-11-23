@@ -9,6 +9,7 @@ from datetime import datetime
 from app.db import get_async_db
 from app.services.stripe_service import verify_webhook_signature
 from app.models.wallet import WalletTransaction
+from app.models.user import User
 from app.services.wallet_service import adjust_wallet_balance
 import logging
 
@@ -95,6 +96,152 @@ async def stripe_webhook(
             
             # TODO: Find withdrawal request by transfer_id and refund wallet
             logger.warning(f"Transfer/Payout failed: {transfer_id}, amount: {amount}")
+        
+        elif event_type == "payment_intent.succeeded":
+            # Handle successful payment intents for wallet top-ups and product purchases
+            pi = event['data']['object']
+            payment_intent_id = pi['id']
+            amount_minor = pi['amount']
+            currency = pi['currency']
+            metadata = pi.get('metadata', {})
+            account_id_str = metadata.get('account_id')
+            topup_type = metadata.get('topup_type')
+            product_id = metadata.get('product_id', '')
+            
+            if not account_id_str:
+                logger.warning(f"PaymentIntent {payment_intent_id} missing account_id in metadata, skipping")
+                # Still record event for idempotency
+                transaction = WalletTransaction(
+                    user_id=0,
+                    amount_minor=0,
+                    currency=currency,
+                    kind='webhook_event',
+                    external_ref_type='stripe_payment_intent',
+                    external_ref_id=payment_intent_id,
+                    event_id=event_id,
+                    livemode=livemode,
+                    created_at=datetime.utcnow()
+                )
+                db.add(transaction)
+                await db.commit()
+                return {"received": True, "status": "skipped_no_account_id"}
+            
+            try:
+                account_id = int(account_id_str)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid account_id in PaymentIntent {payment_intent_id}: {account_id_str}")
+                return {"received": True, "status": "skipped_invalid_account_id"}
+            
+            # Find user by account_id
+            user_stmt = select(User).where(User.account_id == account_id)
+            user_result = await db.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+            
+            if not user:
+                logger.warning(f"User {account_id} not found for PaymentIntent {payment_intent_id}, skipping")
+                # Still record event for idempotency
+                transaction = WalletTransaction(
+                    user_id=0,
+                    amount_minor=0,
+                    currency=currency,
+                    kind='webhook_event',
+                    external_ref_type='stripe_payment_intent',
+                    external_ref_id=payment_intent_id,
+                    event_id=event_id,
+                    livemode=livemode,
+                    created_at=datetime.utcnow()
+                )
+                db.add(transaction)
+                await db.commit()
+                return {"received": True, "status": "skipped_user_not_found"}
+            
+            # Check idempotency by payment_intent_id to prevent duplicate credits
+            # (event_id is already checked at top level)
+            pi_stmt = select(WalletTransaction).where(
+                WalletTransaction.external_ref_type == "stripe_payment_intent",
+                WalletTransaction.external_ref_id == payment_intent_id
+            )
+            pi_result = await db.execute(pi_stmt)
+            existing_pi = pi_result.scalar_one_or_none()
+            
+            if existing_pi:
+                logger.info(f"PaymentIntent {payment_intent_id} already processed, skipping")
+                # Still record webhook event for idempotency (event_id check at top level will catch future retries)
+                transaction = WalletTransaction(
+                    user_id=0,
+                    amount_minor=0,
+                    currency=currency,
+                    kind='webhook_event',
+                    external_ref_type='stripe_webhook',
+                    external_ref_id=event_id,
+                    event_id=event_id,
+                    livemode=livemode,
+                    created_at=datetime.utcnow()
+                )
+                db.add(transaction)
+                await db.commit()
+                return {"status": "already_processed", "event_id": event_id, "payment_intent_id": payment_intent_id}
+            
+            # Determine transaction kind based on topup_type
+            if topup_type == "wallet_topup":
+                kind = "deposit"
+            elif topup_type == "product":
+                kind = "product_purchase_credit"
+            else:
+                # Default to deposit if topup_type is missing or unknown
+                kind = "deposit"
+                logger.warning(f"Unknown topup_type '{topup_type}' for PaymentIntent {payment_intent_id}, using 'deposit'")
+            
+            # Credit wallet
+            try:
+                new_balance = await adjust_wallet_balance(
+                    db=db,
+                    user_id=user.account_id,
+                    currency=currency,
+                    delta_minor=amount_minor,
+                    kind=kind,
+                    external_ref_type="stripe_payment_intent",
+                    external_ref_id=payment_intent_id,
+                    event_id=payment_intent_id,
+                    livemode=livemode
+                )
+                
+                logger.info(
+                    f"Credited wallet for PaymentIntent {payment_intent_id}: "
+                    f"user={user.account_id}, amount={amount_minor} {currency}, "
+                    f"new_balance={new_balance}, kind={kind}, product_id={product_id or 'N/A'}"
+                )
+                
+                await db.commit()
+                
+                return {
+                    "received": True,
+                    "status": "processed",
+                    "event_id": event_id,
+                    "payment_intent_id": payment_intent_id,
+                    "user_id": user.account_id,
+                    "amount_minor": amount_minor,
+                    "new_balance_minor": new_balance
+                }
+                
+            except ValueError as e:
+                logger.error(f"Failed to adjust wallet balance for PaymentIntent {payment_intent_id}: {str(e)}")
+                await db.rollback()
+                # Still record event to prevent retry loops
+                transaction = WalletTransaction(
+                    user_id=user.account_id,
+                    amount_minor=0,
+                    currency=currency,
+                    kind='webhook_event',
+                    external_ref_type='stripe_payment_intent',
+                    external_ref_id=payment_intent_id,
+                    event_id=event_id,
+                    livemode=livemode,
+                    created_at=datetime.utcnow()
+                )
+                db.add(transaction)
+                await db.commit()
+                return {"received": True, "status": "error", "error": str(e)}
             
         else:
             logger.info(f"Unhandled event type: {event_type}")
