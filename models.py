@@ -72,6 +72,9 @@ class User(Base):
 
     # Stripe integration fields
     stripe_customer_id = Column(String, nullable=True, index=True)  # Stripe customer ID for payment methods
+    stripe_connect_account_id = Column(String(255), nullable=True)  # Stripe Connect account ID
+    instant_withdrawal_enabled = Column(Boolean, default=True, nullable=False)  # Enable instant withdrawals
+    instant_withdrawal_daily_limit_minor = Column(BigInteger, default=100000, nullable=False)  # Daily limit in cents ($1000)
     
     # Cosmetic selections
     selected_avatar_id = Column(String, nullable=True)  # Currently selected avatar ID
@@ -79,14 +82,12 @@ class User(Base):
 
     # Relationships
     entries = relationship("TriviaQuestionsEntries", back_populates="user")
-    payments = relationship("Payment", back_populates="user")
     badge_info = relationship("Badge", back_populates="users")
-    payment_transactions = relationship("PaymentTransaction", back_populates="user")
-    bank_accounts = relationship("UserBankAccount", back_populates="user")
     subscriptions = relationship("UserSubscription", back_populates="user")
     live_chat_messages = relationship("LiveChatMessage", back_populates="user")
-    # You could add a relationship for Comments, Chats, or Withdrawals if needed
-    # (depending on whether they link to a user table).
+    wallet_transactions = relationship("WalletTransaction", back_populates="user")
+    withdrawal_requests = relationship("WithdrawalRequest", foreign_keys="[WithdrawalRequest.user_id]", back_populates="user")
+    iap_receipts = relationship("IapReceipt", back_populates="user")
 
 # =================================
 #  Entries Table
@@ -102,42 +103,6 @@ class TriviaQuestionsEntries(Base):
 
     # Relationship
     user = relationship("User", back_populates="entries")
-
-
-# =================================
-#  Payment Table
-# =================================
-class Payment(Base):
-    __tablename__ = "payment"
-
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
-    bank_account_number = Column(String, nullable=False)
-    routing_number = Column(String, nullable=False)
-    card_number = Column(String, nullable=False)
-    expiration_date = Column(String, nullable=False)
-    cvv = Column(String, nullable=False)
-    autopayment = Column(Boolean, default=False)
-
-    first_name_on_card = Column(String, nullable=True)
-    last_name_on_card = Column(String, nullable=True)
-
-    # Additional billing fields from the diagram
-    billing_street_1 = Column(String, nullable=True)
-    billing_street_2 = Column(String, nullable=True)
-    billing_suite_or_apt_num = Column(String, nullable=True)
-    billing_city = Column(String, nullable=True)
-    billing_state = Column(String, nullable=True)
-    billing_country = Column(String, nullable=True)
-    billing_zip = Column(String, nullable=True)
-
-    # Payment tracking
-    payment_history = Column(String, nullable=True)  # CSV of dates or JSON
-    subscription_date = Column(DateTime, nullable=True)
-    six_months_subscription = Column(Boolean, default=False)
-    twelve_months_subscription = Column(Boolean, default=False)
-
-    # Relationship
-    user = relationship("User", back_populates="payments")
 
 
 # =================================
@@ -365,9 +330,17 @@ class Avatar(Base):
     object_key = Column(String, nullable=True)  # Private storage key
     mime_type = Column(String, nullable=True)  # e.g., image/png, application/json
     price_gems = Column(Integer, nullable=True)  # Price in gems (if purchasable with gems)
-    price_usd = Column(Float, nullable=True)  # Price in USD (if purchasable with real money)
+    product_id = Column(String(5), unique=True, nullable=True)  # Unique product ID (e.g., AV001)
+    price_minor = Column(BigInteger, nullable=True)  # Price in minor units (cents)
     is_premium = Column(Boolean, default=False)  # Whether it's a premium avatar
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When the avatar was added
+    
+    @property
+    def price_usd(self):
+        """Compute price_usd from price_minor"""
+        if self.price_minor is not None:
+            return self.price_minor / 100.0
+        return None
     
     # Relationships
     users = relationship("UserAvatar", back_populates="avatar")
@@ -386,9 +359,17 @@ class Frame(Base):
     object_key = Column(String, nullable=True)  # Private storage key
     mime_type = Column(String, nullable=True)  # e.g., image/png, application/json
     price_gems = Column(Integer, nullable=True)  # Price in gems (if purchasable with gems)
-    price_usd = Column(Float, nullable=True)  # Price in USD (if purchasable with real money)
+    product_id = Column(String(5), unique=True, nullable=True)  # Unique product ID (e.g., FR001)
+    price_minor = Column(BigInteger, nullable=True)  # Price in minor units (cents)
     is_premium = Column(Boolean, default=False)  # Whether it's a premium frame
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When the frame was added
+    
+    @property
+    def price_usd(self):
+        """Compute price_usd from price_minor"""
+        if self.price_minor is not None:
+            return self.price_minor / 100.0
+        return None
     
     # Relationships
     users = relationship("UserFrame", back_populates="frame")
@@ -455,7 +436,16 @@ class Badge(Base):
     description = Column(String, nullable=True)  # Description of the badge
     image_url = Column(String, nullable=False)  # Public S3 URL to the badge image (not presigned)
     level = Column(Integer, nullable=False)  # Numeric level (for ordering, e.g., 1 for bronze, 2 for silver)
+    product_id = Column(String(5), unique=True, nullable=True)  # Unique product ID (e.g., BD001)
+    price_minor = Column(BigInteger, nullable=True)  # Price in minor units (cents)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When the badge was added
+    
+    @property
+    def price_usd(self):
+        """Compute price_usd from price_minor"""
+        if self.price_minor is not None:
+            return self.price_minor / 100.0
+        return None
     
     # Relationships
     users = relationship("User", back_populates="badge_info")
@@ -500,7 +490,8 @@ class GemPackageConfig(Base):
     __tablename__ = "gem_package_config"
     
     id = Column(Integer, primary_key=True, index=True)
-    price_usd = Column(Float, nullable=False)
+    product_id = Column(String(5), unique=True, nullable=True)  # Unique product ID (e.g., GP001)
+    price_minor = Column(BigInteger, nullable=True)  # Price in minor units (cents)
     gems_amount = Column(Integer, nullable=False)
     is_one_time = Column(Boolean, default=False)  # For one-time offers
     description = Column(String, nullable=True)
@@ -509,6 +500,13 @@ class GemPackageConfig(Base):
     mime_type = Column(String, nullable=True)  # MIME type (e.g., image/png, image/jpeg)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    @property
+    def price_usd(self):
+        """Compute price_usd from price_minor"""
+        if self.price_minor is not None:
+            return self.price_minor / 100.0
+        return None
 
 
 # =================================
@@ -563,66 +561,6 @@ class CountryCode(Base):
     flag_url = Column(String, nullable=True)  # URL to the country flag image
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# =================================
-#  Payment Transaction Table
-# =================================
-class PaymentTransaction(Base):
-    __tablename__ = "payment_transactions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    payment_intent_id = Column(String, unique=True, nullable=True, index=True)  # Changed to nullable for withdrawals without intent IDs
-    amount = Column(Float, nullable=False)  # Deprecated: use amount_minor instead
-    amount_minor = Column(BigInteger, nullable=True)  # Amount in minor units (cents)
-    currency = Column(String, nullable=False)
-    status = Column(String, nullable=False)  # 'succeeded', 'failed', 'processing', 'pending', etc.
-    payment_method = Column(String, nullable=True)
-    payment_method_type = Column(String, nullable=True)  # 'card', 'bank_transfer', 'standard', 'instant', etc.
-    last_error = Column(String, nullable=True)
-    payment_metadata = Column(String, nullable=True)  # JSON string of metadata
-    admin_notes = Column(String, nullable=True)  # Notes added by admins during processing
-    livemode = Column(Boolean, default=False, nullable=False)
-    stripe_customer_id = Column(String, nullable=True)
-    charge_id = Column(String, nullable=True)
-    refund_id = Column(String, nullable=True)
-    balance_transaction_id = Column(String, nullable=True)
-    event_id = Column(String, nullable=True, index=True)
-    idempotency_key = Column(String, nullable=True, index=True)
-    direction = Column(String, nullable=True)  # 'inbound', 'outbound', 'subscription'
-    funding_source = Column(String, nullable=True)  # 'card', 'ach_debit', 'apple_pay', 'google_pay', 'bank_account', 'internal'
-    failure_code = Column(String, nullable=True)
-    failure_message = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
-    # Relationships
-    user = relationship("User", back_populates="payment_transactions")
-
-# =================================
-#  UserBankAccount Table
-# =================================
-class UserBankAccount(Base):
-    __tablename__ = "user_bank_accounts"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    account_name = Column(String, nullable=False)
-    account_number_last4 = Column(String(4), nullable=False)  # Last 4 digits only for security
-    account_number_encrypted = Column(String, nullable=True)  # Deprecated: use Stripe Financial Connections instead
-    routing_number_encrypted = Column(String, nullable=True)  # Deprecated: use Stripe Financial Connections instead
-    bank_name = Column(String, nullable=False)
-    is_default = Column(Boolean, default=False)
-    is_verified = Column(Boolean, default=False)
-    stripe_bank_account_id = Column(String, nullable=True)  # ID from Stripe for bank account
-    financial_connections_account_id = Column(String, nullable=True)  # Stripe Financial Connections account ID
-    external_account_id = Column(String, nullable=True)  # External account ID from Stripe
-    fingerprint = Column(String, nullable=True)  # Account fingerprint from Stripe
-    livemode = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
-    # Relationship - Changed from backref to back_populates
-    user = relationship("User", back_populates="bank_accounts")
 
 # =================================
 #  SubscriptionPlan Table
@@ -1096,27 +1034,6 @@ class UserPresence(Base):
     user = relationship("User", backref="presence", uselist=False)
 
 
-# =================================
-#  Wallet Ledger Table
-# =================================
-class WalletLedger(Base):
-    __tablename__ = "wallet_ledger"
-    
-    id = Column(BigInteger, primary_key=True, index=True)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    currency = Column(String, nullable=False)
-    delta_minor = Column(BigInteger, nullable=False)  # Can be negative
-    balance_after_minor = Column(BigInteger, nullable=False)
-    kind = Column(String, nullable=False)  # deposit/withdraw/refund/fee/adjustment/dispute_hold/dispute_release
-    external_ref_type = Column(String, nullable=True)  # payment_intent/charge/refund/transfer/payout/balance_transaction/event
-    external_ref_id = Column(String, nullable=True)
-    event_id = Column(String, nullable=True, unique=True)
-    idempotency_key = Column(String, nullable=True, unique=True)
-    livemode = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
-    # Relationships
-    user = relationship("User", backref="wallet_ledger_entries")
 
 
 # =================================
@@ -1134,68 +1051,6 @@ class StripeWebhookEvent(Base):
     last_error = Column(String, nullable=True)
 
 
-# =================================
-#  Withdrawal Requests Table
-# =================================
-class WithdrawalRequest(Base):
-    __tablename__ = "withdrawal_requests"
-    
-    id = Column(BigInteger, primary_key=True, index=True)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    amount_minor = Column(BigInteger, nullable=False)
-    currency = Column(String, nullable=False)
-    method = Column(String, nullable=False)  # standard/instant
-    fee_minor = Column(BigInteger, default=0, nullable=False)
-    status = Column(String, nullable=False)  # pending/approved/processing/paid/failed/canceled
-    requested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    processed_at = Column(DateTime, nullable=True)
-    admin_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=True)
-    admin_notes = Column(Text, nullable=True)
-    stripe_transfer_id = Column(String, nullable=True)
-    stripe_payout_id = Column(String, nullable=True)
-    stripe_balance_txn_id = Column(String, nullable=True)
-    event_id = Column(String, nullable=True)
-    livemode = Column(Boolean, default=False, nullable=False)
-    
-    # Relationships
-    user = relationship("User", foreign_keys=[user_id], backref="withdrawal_requests")
-    admin = relationship("User", foreign_keys=[admin_id])
-
-
-# =================================
-#  Stripe Connected Accounts Table
-# =================================
-class StripeConnectedAccount(Base):
-    __tablename__ = "stripe_connected_accounts"
-    
-    id = Column(BigInteger, primary_key=True, index=True)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, unique=True)
-    account_id = Column(String, nullable=False)  # acct_*
-    charges_enabled = Column(Boolean, default=False, nullable=False)
-    payouts_enabled = Column(Boolean, default=False, nullable=False)
-    details_submitted = Column(Boolean, default=False, nullable=False)
-    requirements = Column(JSONB, nullable=True)
-    livemode = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
-    # Relationships
-    user = relationship("User", backref="stripe_connected_account")
-
-
-# =================================
-#  User Wallet Balances Table
-# =================================
-class UserWalletBalance(Base):
-    __tablename__ = "user_wallet_balances"
-    
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
-    currency = Column(String, nullable=False, primary_key=True)
-    balance_minor = Column(BigInteger, default=0, nullable=False)
-    last_recalculated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
-    # Relationships
-    user = relationship("User", backref="wallet_balances")
 
 
 # =================================
@@ -1378,6 +1233,78 @@ class OneSignalPlayer(Base):
     
     # Relationships
     user = relationship("User", backref="onesignal_players")
+
+
+# =================================
+#  Wallet Transaction Table
+# =================================
+class WalletTransaction(Base):
+    __tablename__ = "wallet_transactions"
+    
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    amount_minor = Column(BigInteger, nullable=False)  # Amount in minor units (can be negative)
+    currency = Column(String, nullable=False)
+    kind = Column(String, nullable=False)  # deposit, withdraw, refund, fee, adjustment, etc.
+    external_ref_type = Column(String, nullable=True)  # payment_intent, charge, refund, payout, etc.
+    external_ref_id = Column(String, nullable=True)
+    event_id = Column(String, nullable=True)
+    idempotency_key = Column(String, nullable=True)
+    livemode = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", back_populates="wallet_transactions")
+
+
+# =================================
+#  Withdrawal Request Table
+# =================================
+class WithdrawalRequest(Base):
+    __tablename__ = "withdrawal_requests"
+    
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    amount_minor = Column(BigInteger, nullable=False)
+    currency = Column(String, nullable=False)
+    type = Column(String, nullable=False)  # standard or instant
+    status = Column(String, nullable=False)  # pending_review, processing, paid, failed, rejected
+    fee_minor = Column(BigInteger, default=0, nullable=False)
+    stripe_payout_id = Column(String, nullable=True)
+    requested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    processed_at = Column(DateTime, nullable=True)
+    admin_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=True)
+    admin_notes = Column(Text, nullable=True)
+    livemode = Column(Boolean, default=False, nullable=False)
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id], back_populates="withdrawal_requests")
+    admin = relationship("User", foreign_keys=[admin_id])
+
+
+# =================================
+#  IAP Receipt Table
+# =================================
+class IapReceipt(Base):
+    __tablename__ = "iap_receipts"
+    
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    platform = Column(String, nullable=False)  # apple or google
+    transaction_id = Column(String, nullable=False)
+    product_id = Column(String, nullable=False)
+    receipt_data = Column(Text, nullable=True)
+    status = Column(String, nullable=False)  # verified, failed, consumed
+    credited_amount_minor = Column(BigInteger, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", back_populates="iap_receipts")
+    
+    __table_args__ = (
+        UniqueConstraint('platform', 'transaction_id', name='uq_iap_receipts_platform_transaction'),
+    )
 
 
 # =================================

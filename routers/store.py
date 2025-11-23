@@ -100,9 +100,9 @@ class BuyGemsRequest(BaseModel):
 
 class GemPackageRequest(BaseModel):
     """Model for creating/updating a gem package"""
-    price_usd: float = Field(
+    price_minor: int = Field(
         ...,
-        description="Price in USD"
+        description="Price in minor units (cents)"
     )
     gems_amount: int = Field(
         ...,
@@ -132,7 +132,7 @@ class GemPackageRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "price_usd": 0.99,
+                "price_minor": 99,
                 "gems_amount": 150,
                 "is_one_time": False,
                 "description": "Great value!"
@@ -488,11 +488,17 @@ async def buy_gems_with_wallet(
     if not gem_package:
         raise HTTPException(status_code=404, detail=f"Gem package with ID {request.package_id} not found")
     
-    # Check if user has enough wallet balance
-    if user.wallet_balance < gem_package.price_usd:
+    # Get price in minor units
+    price_minor = gem_package.price_minor if gem_package.price_minor is not None else 0
+    price_usd_display = price_minor / 100.0
+    
+    # Check wallet balance (use wallet_balance_minor if available)
+    wallet_balance_minor = user.wallet_balance_minor if user.wallet_balance_minor is not None else int((user.wallet_balance or 0) * 100)
+    
+    if wallet_balance_minor < price_minor:
         raise HTTPException(
             status_code=400, 
-            detail=f"Insufficient wallet balance. You have ${user.wallet_balance}, but this package costs ${gem_package.price_usd}"
+            detail=f"Insufficient wallet balance. You have ${wallet_balance_minor / 100.0:.2f}, but this package costs ${price_usd_display:.2f}"
         )
     
     # Check if this is a one-time offer that the user has already purchased
@@ -510,7 +516,13 @@ async def buy_gems_with_wallet(
             )
     
     # Deduct from wallet and add gems
-    user.wallet_balance -= gem_package.price_usd
+    # Update wallet_balance_minor if available, otherwise use wallet_balance
+    if user.wallet_balance_minor is not None:
+        user.wallet_balance_minor -= price_minor
+        user.wallet_balance = user.wallet_balance_minor / 100.0  # Keep in sync
+    else:
+        user.wallet_balance = (wallet_balance_minor - price_minor) / 100.0
+    
     user.gems += gem_package.gems_amount
     user.last_wallet_update = datetime.utcnow()
     
@@ -518,18 +530,20 @@ async def buy_gems_with_wallet(
     purchase_record = UserGemPurchase(
         user_id=user.account_id,
         package_id=gem_package.id,
-        price_paid=gem_package.price_usd,
+        price_paid=price_usd_display,
         gems_received=gem_package.gems_amount
     )
     db.add(purchase_record)
     
     db.commit()
     
+    remaining_balance = user.wallet_balance_minor / 100.0 if user.wallet_balance_minor is not None else user.wallet_balance
+    
     return PurchaseResponse(
         success=True,
         remaining_gems=user.gems,
-        remaining_balance=user.wallet_balance,
-        message=f"Successfully purchased {gem_package.gems_amount} gems for ${gem_package.price_usd}"
+        remaining_balance=remaining_balance,
+        message=f"Successfully purchased {gem_package.gems_amount} gems for ${price_usd_display:.2f}"
     )
 
 @router.get("/gem-packages", response_model=List[GemPackageResponse])
@@ -553,9 +567,15 @@ async def get_gem_packages(
         else:
             logging.debug(f"Gem package {pkg.id} missing bucket/object_key: bucket={pkg.bucket}, object_key={pkg.object_key}")
         
+        # Use price_minor if available, otherwise fall back to price_usd
+        price_minor = pkg.price_minor if pkg.price_minor is not None else 0
+        price_usd_display = price_minor / 100.0 if price_minor else 0.0
+        
         result.append(GemPackageResponse(
             id=pkg.id,
-            price_usd=pkg.price_usd,
+            product_id=getattr(pkg, 'product_id', None),
+            price_usd=price_usd_display,
+            price_minor=price_minor,
             gems_amount=pkg.gems_amount,
             is_one_time=pkg.is_one_time,
             description=pkg.description,
@@ -629,7 +649,7 @@ async def update_gem_package(
         raise HTTPException(status_code=404, detail=f"Gem package with ID {package_id} not found")
     
     # Update fields
-    db_package.price_usd = package.price_usd
+    db_package.price_minor = package.price_minor
     db_package.gems_amount = package.gems_amount
     db_package.is_one_time = package.is_one_time
     db_package.description = package.description

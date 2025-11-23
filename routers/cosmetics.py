@@ -31,7 +31,7 @@ class CosmeticBase(BaseModel):
     name: str
     description: Optional[str] = None
     price_gems: Optional[int] = None
-    price_usd: Optional[float] = None
+    price_minor: Optional[int] = None  # Price in minor units (cents)
     is_premium: bool = False
     bucket: Optional[str] = None  # S3 bucket name
     object_key: Optional[str] = None  # S3 object key
@@ -260,7 +260,7 @@ async def buy_avatar(
     
     elif payment_method == "usd":
         # Check if the avatar can be purchased with USD
-        if avatar.price_usd is None:
+        if avatar.price_minor is None or avatar.price_minor == 0:
             raise HTTPException(
                 status_code=400,
                 detail=f"Avatar '{avatar.name}' cannot be purchased with USD"
@@ -284,7 +284,7 @@ async def buy_avatar(
                 message=f"Successfully purchased avatar '{avatar.name}' for ${avatar.price_usd}",
                 item_id=avatar_id,
                 purchase_date=new_ownership.purchase_date,
-                usd_spent=avatar.price_usd
+                usd_spent=avatar.price_usd  # Use computed property
             )
         except IntegrityError:
             # Idempotent buy: ownership already exists (from unique constraint)
@@ -417,7 +417,7 @@ async def update_avatar(
     avatar.name = avatar_update.name
     avatar.description = avatar_update.description
     avatar.price_gems = avatar_update.price_gems
-    avatar.price_usd = avatar_update.price_usd
+    avatar.price_minor = avatar_update.price_minor
     avatar.is_premium = avatar_update.is_premium
     avatar.bucket = avatar_update.bucket
     avatar.object_key = avatar_update.object_key
@@ -617,7 +617,7 @@ async def buy_frame(
     
     elif payment_method == "usd":
         # Check if the frame can be purchased with USD
-        if frame.price_usd is None:
+        if frame.price_minor is None or frame.price_minor == 0:
             raise HTTPException(
                 status_code=400,
                 detail=f"Frame '{frame.name}' cannot be purchased with USD"
@@ -770,7 +770,7 @@ async def update_frame(
     frame.name = frame_update.name
     frame.description = frame_update.description
     frame.price_gems = frame_update.price_gems
-    frame.price_usd = frame_update.price_usd
+    frame.price_minor = frame_update.price_minor
     frame.is_premium = frame_update.is_premium
     frame.bucket = frame_update.bucket
     frame.object_key = frame_update.object_key

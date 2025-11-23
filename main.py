@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, updates, trivia, entries, login, refresh, wallet, store, profile, cosmetics, badges, rewards, admin, stripe, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute
+from routers import draw, updates, trivia, entries, login, refresh, store, profile, cosmetics, badges, rewards, admin, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute
 from config import E2EE_DM_ENABLED, GROUPS_ENABLED, STATUS_ENABLED, PRESENCE_ENABLED
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -47,6 +47,9 @@ logging.getLogger('httpcore').setLevel(logging.WARNING)
 logging.getLogger('uvicorn').setLevel(log_level)
 logging.getLogger('uvicorn.error').setLevel(log_level)
 logging.getLogger('uvicorn.access').setLevel(logging.WARNING)  # Suppress access logs unless needed
+
+# Import async wallet routers
+from app.routers import wallet, stripe_connect, admin_withdrawals, iap, stripe_webhook
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -156,14 +159,12 @@ app.include_router(login.router)     # Auth0 login
 app.include_router(refresh.router)   # Token refresh
 app.include_router(draw.router)      # Draw-related endpoints
 app.include_router(trivia.router)    # Trivia questions and lifelines
-app.include_router(wallet.router)    # Wallet-related endpoints
 app.include_router(store.router)     # Store and purchases
 app.include_router(profile.router)   # User profile management
 app.include_router(cosmetics.router) # Avatars and Frames management
 app.include_router(badges.router)    # Badges management
 app.include_router(rewards.router)   # Rewards system
 app.include_router(admin.router)     # Admin controls
-app.include_router(stripe.router)    # Stripe-related endpoints
 app.include_router(updates.router)   # Live updates
 app.include_router(entries.router)   # Entries management
 app.include_router(internal.router)  # Internal endpoints for external cron
@@ -258,3 +259,10 @@ async def health_check():
     Health check endpoint for monitoring.
     """
     return {"status": "healthy"}
+
+# Include async wallet routers with /api/v1 prefix
+app.include_router(wallet.router, prefix="/api/v1")
+app.include_router(stripe_connect.router, prefix="/api/v1")
+app.include_router(admin_withdrawals.router, prefix="/api/v1")
+app.include_router(iap.router, prefix="/api/v1")
+app.include_router(stripe_webhook.router, prefix="/api/v1")
