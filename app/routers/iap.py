@@ -3,43 +3,47 @@ IAP Router - In-App Purchase verification for Apple and Google
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
 from pydantic import BaseModel, Field
-from typing import Optional
-from datetime import datetime
+from typing import Optional, Literal
+import config
 from app.db import get_async_db
 from app.models.user import User
-from app.models.wallet import IapReceipt
 from app.dependencies import get_current_user
-from app.services.iap_service import (
-    verify_apple_receipt,
-    verify_google_purchase,
-    get_product_credit_amount
-)
-from app.services.wallet_service import adjust_wallet_balance
+from app.services.apple_iap_service import process_apple_iap
+from app.services.google_iap_service import process_google_iap
 
 router = APIRouter(prefix="/iap", tags=["IAP"])
 
 
 class AppleVerifyRequest(BaseModel):
-    receipt_data: str = Field(..., description="Base64-encoded receipt data")
-    product_id: str = Field(..., description="Product ID from the receipt")
-    environment: str = Field(default="production", pattern="^(production|sandbox)$")
+    receipt_data: str = Field(..., description="Base64-encoded receipt data from StoreKit")
+    product_id: str = Field(..., description="Product ID from the receipt (e.g., GP001, AV001)")
+    environment: Optional[Literal["sandbox", "production"]] = Field(
+        default="production",
+        description="Environment: 'sandbox' for testing, 'production' for live purchases"
+    )
 
 
 class GoogleVerifyRequest(BaseModel):
-    package_name: str = Field(..., description="Android app package name")
-    product_id: str = Field(..., description="Product ID from the purchase")
-    purchase_token: str = Field(..., description="Purchase token from Google Play")
+    package_name: Optional[str] = Field(
+        default=None,
+        description="Android app package name (defaults to GOOGLE_IAP_PACKAGE_NAME from config)"
+    )
+    product_id: str = Field(..., description="Product ID from the purchase (e.g., GP001, AV001)")
+    purchase_token: str = Field(..., description="Purchase token from Google Play Billing")
 
 
 class IapVerifyResponse(BaseModel):
     success: bool
+    platform: str
     transaction_id: str
     product_id: str
     credited_amount_minor: Optional[int]
     credited_amount_usd: Optional[float]
+    new_balance_minor: Optional[int]
+    new_balance_usd: Optional[float]
     receipt_id: int
+    already_processed: Optional[bool] = False
 
 
 @router.post("/apple/verify", response_model=IapVerifyResponse)
@@ -51,106 +55,45 @@ async def verify_apple_purchase(
     """
     Verify Apple receipt and credit wallet if valid.
     
-    Handles idempotency - if receipt already verified, returns existing receipt.
+    Uses Apple's verifyReceipt API to validate the receipt, then credits the user's wallet
+    with the product price from the database.
+    
+    **Testing with iOS Sandbox:**
+    1. Create a sandbox tester Apple ID in App Store Connect
+    2. Sign out of your Apple ID on the test device
+    3. Use StoreKit/react-native-iap with environment='sandbox'
+    4. After purchase, call this endpoint with the base64 receipt data
+    5. Expect wallet balance to increase by the product's price_minor
+    
+    **Idempotency:**
+    - If the same receipt is verified multiple times, the wallet is only credited once
+    - Returns existing receipt details if already processed
+    
+    **Product IDs:**
+    - Must match a product in the database (avatars, frames, gem packages, or badges)
+    - Format: AV001, FR001, GP001, BD001, etc.
+    - Price is always looked up from the database, never trusted from client
     """
-    # Verify receipt
-    verification_result = await verify_apple_receipt(
+    result = await process_apple_iap(
+        db=db,
+        user=user,
         receipt_data=request.receipt_data,
         product_id=request.product_id,
-        environment=request.environment
+        environment=request.environment or "production"
     )
     
-    if not verification_result.get('verified'):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Receipt verification failed: {verification_result.get('error', 'Unknown error')}"
-        )
-    
-    transaction_id = verification_result.get('transaction_id')
-    if not transaction_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Transaction ID not found in receipt"
-        )
-    
-    # Check idempotency
-    stmt = select(IapReceipt).where(
-        and_(
-            IapReceipt.platform == 'apple',
-            IapReceipt.transaction_id == transaction_id
-        )
+    return IapVerifyResponse(
+        success=result["success"],
+        platform=result["platform"],
+        transaction_id=result["transaction_id"],
+        product_id=result["product_id"],
+        credited_amount_minor=result["credited_amount_minor"],
+        credited_amount_usd=result["credited_amount_minor"] / 100.0 if result["credited_amount_minor"] else None,
+        new_balance_minor=result["new_balance_minor"],
+        new_balance_usd=result["new_balance_minor"] / 100.0 if result["new_balance_minor"] else None,
+        receipt_id=result["receipt_id"],
+        already_processed=result.get("already_processed", False)
     )
-    result = await db.execute(stmt)
-    existing_receipt = result.scalar_one_or_none()
-    
-    if existing_receipt:
-        # Already processed
-        return IapVerifyResponse(
-            success=True,
-            transaction_id=transaction_id,
-            product_id=existing_receipt.product_id,
-            credited_amount_minor=existing_receipt.credited_amount_minor,
-            credited_amount_usd=existing_receipt.credited_amount_minor / 100.0 if existing_receipt.credited_amount_minor else None,
-            receipt_id=existing_receipt.id
-        )
-    
-    # Get credit amount for product from database
-    credit_amount_minor = await get_product_credit_amount(db, request.product_id, platform='apple')
-    if credit_amount_minor is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Product ID {request.product_id} not found in product tables or price_minor is not set"
-        )
-    
-    # Create receipt record
-    receipt = IapReceipt(
-        user_id=user.account_id,
-        platform='apple',
-        transaction_id=transaction_id,
-        product_id=request.product_id,
-        receipt_data=request.receipt_data,
-        status='verified',
-        credited_amount_minor=None,  # Will be set after wallet credit
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
-    )
-    db.add(receipt)
-    await db.flush()
-    
-    # Credit wallet
-    try:
-        new_balance = await adjust_wallet_balance(
-            db=db,
-            user_id=user.account_id,
-            currency='usd',
-            delta_minor=credit_amount_minor,
-            kind='deposit',
-            external_ref_type='iap_apple',
-            external_ref_id=transaction_id,
-            livemode=False
-        )
-        
-        receipt.credited_amount_minor = credit_amount_minor
-        receipt.status = 'consumed'
-        receipt.updated_at = datetime.utcnow()
-        
-        await db.commit()
-        
-        return IapVerifyResponse(
-            success=True,
-            transaction_id=transaction_id,
-            product_id=request.product_id,
-            credited_amount_minor=credit_amount_minor,
-            credited_amount_usd=credit_amount_minor / 100.0,
-            receipt_id=receipt.id
-        )
-        
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to credit wallet: {str(e)}"
-        )
 
 
 @router.post("/google/verify", response_model=IapVerifyResponse)
@@ -162,106 +105,57 @@ async def verify_google_purchase(
     """
     Verify Google Play purchase and credit wallet if valid.
     
-    Handles idempotency - if purchase already verified, returns existing receipt.
+    Uses Google Play Developer API to validate the purchase token, then credits the user's wallet
+    with the product price from the database.
+    
+    **Testing with Android:**
+    1. Upload your app to Google Play Console (internal testing or closed testing track)
+    2. Add test accounts in Google Play Console
+    3. Purchase productId via Play Billing Library
+    4. Send purchaseToken to this endpoint
+    5. Expect wallet balance to increase by the product's price_minor
+    
+    **Idempotency:**
+    - If the same purchase token is verified multiple times, the wallet is only credited once
+    - Returns existing receipt details if already processed
+    
+    **Product IDs:**
+    - Must match a product in the database (avatars, frames, gem packages, or badges)
+    - Format: AV001, FR001, GP001, BD001, etc.
+    - Price is always looked up from the database, never trusted from client
+    
+    **Package Name:**
+    - Defaults to GOOGLE_IAP_PACKAGE_NAME from environment variables
+    - Can be overridden in the request if needed
     """
-    # Verify purchase
-    verification_result = await verify_google_purchase(
-        package_name=request.package_name,
+    package_name = request.package_name or config.GOOGLE_IAP_PACKAGE_NAME
+    
+    if not package_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="package_name is required (either in request or GOOGLE_IAP_PACKAGE_NAME env var)"
+        )
+    
+    result = await process_google_iap(
+        db=db,
+        user=user,
+        package_name=package_name,
         product_id=request.product_id,
         purchase_token=request.purchase_token
     )
     
-    if not verification_result.get('verified'):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Purchase verification failed: {verification_result.get('error', 'Unknown error')}"
-        )
-    
-    transaction_id = verification_result.get('transaction_id')
-    if not transaction_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Transaction ID not found in purchase"
-        )
-    
-    # Check idempotency
-    stmt = select(IapReceipt).where(
-        and_(
-            IapReceipt.platform == 'google',
-            IapReceipt.transaction_id == transaction_id
-        )
+    return IapVerifyResponse(
+        success=result["success"],
+        platform=result["platform"],
+        transaction_id=result["transaction_id"],
+        product_id=result["product_id"],
+        credited_amount_minor=result["credited_amount_minor"],
+        credited_amount_usd=result["credited_amount_minor"] / 100.0 if result["credited_amount_minor"] else None,
+        new_balance_minor=result["new_balance_minor"],
+        new_balance_usd=result["new_balance_minor"] / 100.0 if result["new_balance_minor"] else None,
+        receipt_id=result["receipt_id"],
+        already_processed=result.get("already_processed", False)
     )
-    result = await db.execute(stmt)
-    existing_receipt = result.scalar_one_or_none()
-    
-    if existing_receipt:
-        # Already processed
-        return IapVerifyResponse(
-            success=True,
-            transaction_id=transaction_id,
-            product_id=existing_receipt.product_id,
-            credited_amount_minor=existing_receipt.credited_amount_minor,
-            credited_amount_usd=existing_receipt.credited_amount_minor / 100.0 if existing_receipt.credited_amount_minor else None,
-            receipt_id=existing_receipt.id
-        )
-    
-    # Get credit amount for product from database
-    credit_amount_minor = await get_product_credit_amount(db, request.product_id, platform='google')
-    if credit_amount_minor is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Product ID {request.product_id} not found in product tables or price_minor is not set"
-        )
-    
-    # Create receipt record
-    receipt = IapReceipt(
-        user_id=user.account_id,
-        platform='google',
-        transaction_id=transaction_id,
-        product_id=request.product_id,
-        receipt_data=request.purchase_token,  # Store token as receipt data
-        status='verified',
-        credited_amount_minor=None,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
-    )
-    db.add(receipt)
-    await db.flush()
-    
-    # Credit wallet
-    try:
-        new_balance = await adjust_wallet_balance(
-            db=db,
-            user_id=user.account_id,
-            currency='usd',
-            delta_minor=credit_amount_minor,
-            kind='deposit',
-            external_ref_type='iap_google',
-            external_ref_id=transaction_id,
-            livemode=False
-        )
-        
-        receipt.credited_amount_minor = credit_amount_minor
-        receipt.status = 'consumed'
-        receipt.updated_at = datetime.utcnow()
-        
-        await db.commit()
-        
-        return IapVerifyResponse(
-            success=True,
-            transaction_id=transaction_id,
-            product_id=request.product_id,
-            credited_amount_minor=credit_amount_minor,
-            credited_amount_usd=credit_amount_minor / 100.0,
-            receipt_id=receipt.id
-        )
-        
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to credit wallet: {str(e)}"
-        )
 
 
 @router.post("/apple/webhook")

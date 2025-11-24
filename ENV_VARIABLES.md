@@ -42,6 +42,45 @@
    - Where users are redirected if onboarding link expires
    - Override if your app URL differs
 
+## IAP (In-App Purchase) Configuration
+
+### Apple IAP
+
+7. **APPLE_IAP_SHARED_SECRET** (Required for Apple IAP)
+   - App-specific shared secret from App Store Connect
+   - Format: A long alphanumeric string
+   - Used for: Verifying Apple App Store receipts
+   - Get from: [App Store Connect → Your App → App Information → App-Specific Shared Secret](https://appstoreconnect.apple.com)
+   - Note: This is different from the receipt validation shared secret
+
+8. **APPLE_IAP_USE_SANDBOX** (Optional)
+   - Default: `false`
+   - Set to `true` to force sandbox environment for testing
+   - Used for: Overriding environment when testing Apple IAP
+   - Format: `true` or `false` (case-insensitive)
+
+### Google Play IAP
+
+9. **GOOGLE_IAP_SERVICE_ACCOUNT_JSON** (Required for Google IAP)
+   - Google Cloud service account JSON credentials
+   - Can be either:
+     - Path to a JSON key file: `/path/to/service-account-key.json`
+     - Raw JSON content as a string
+   - Used for: Authenticating with Google Play Developer API
+   - Get from: [Google Cloud Console → IAM & Admin → Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts)
+   - Required scope: `https://www.googleapis.com/auth/androidpublisher`
+   - Instructions:
+     1. Create a service account in Google Cloud Console
+     2. Grant it access to your Google Play Console project
+     3. Download the JSON key file
+     4. Either set the path or paste the JSON content as this variable
+
+10. **GOOGLE_IAP_PACKAGE_NAME** (Required for Google IAP)
+    - Default: `com.triviapay.app`
+    - Android app package name (e.g., `com.triviapay.app`)
+    - Used for: Identifying your app in Google Play Developer API calls
+    - Must match the package name in your Google Play Console
+
 ## IAP Products
 
 **Note:** IAP products are looked up directly from product tables (`avatars`, `frames`, `gem_package_config`, `badges`) using the `product_id` field. The `price_minor` field in these tables determines the amount credited to the wallet when a user completes an IAP purchase.
@@ -68,6 +107,17 @@ DATABASE_URL=postgresql://user:password@host:5432/dbname
 # Optional Stripe Connect URLs
 STRIPE_CONNECT_RETURN_URL=https://your-app.com/onboarding/return
 STRIPE_CONNECT_REFRESH_URL=https://your-app.com/onboarding/refresh
+
+# Apple IAP Configuration
+APPLE_IAP_SHARED_SECRET=your_app_specific_shared_secret_here
+APPLE_IAP_USE_SANDBOX=false
+
+# Google Play IAP Configuration
+# Option 1: Path to service account JSON file
+GOOGLE_IAP_SERVICE_ACCOUNT_JSON=/path/to/service-account-key.json
+# Option 2: Raw JSON content (escape quotes properly)
+# GOOGLE_IAP_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
+GOOGLE_IAP_PACKAGE_NAME=com.triviapay.app
 ```
 
 ## Testing with Stripe CLI

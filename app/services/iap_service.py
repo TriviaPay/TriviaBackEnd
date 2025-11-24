@@ -1,11 +1,18 @@
 """
 IAP Service - Handles In-App Purchase verification for Apple and Google
+
+NOTE: This module is maintained for backward compatibility.
+New implementations should use:
+- app.services.apple_iap_service.process_apple_iap
+- app.services.google_iap_service.process_google_iap
+- app.services.product_pricing.get_price_minor_for_product_id
 """
 import logging
 from typing import Dict, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
-from app.models.products import Avatar, Frame, GemPackageConfig, Badge
+from app.services.product_pricing import get_price_minor_for_product_id
+from app.services.apple_iap_service import process_apple_iap
+from app.services.google_iap_service import process_google_iap
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +25,8 @@ async def verify_apple_receipt(
     """
     Verify Apple receipt and return transaction details.
     
-    TODO: Implement actual Apple receipt verification API integration.
-    Currently returns a skeleton response.
+    DEPRECATED: Use app.services.apple_iap_service.process_apple_iap instead.
+    This function is maintained for backward compatibility.
     
     Args:
         receipt_data: Base64-encoded receipt data
@@ -36,20 +43,19 @@ async def verify_apple_receipt(
             'environment': str
         }
     """
-    # TODO: Implement actual Apple receipt verification
-    # This should call Apple's verifyReceipt API:
-    # https://developer.apple.com/documentation/appstorereceipts/verifyreceipt
+    logger.warning(
+        "verify_apple_receipt is deprecated. Use app.services.apple_iap_service.process_apple_iap instead."
+    )
     
-    logger.warning("Apple receipt verification not yet implemented - returning mock response")
-    
-    # Mock response structure
+    # Return mock response for backward compatibility
+    # Real implementation should use process_apple_iap
     return {
-        "verified": False,  # Set to True when real implementation is added
-        "transaction_id": "",  # Extract from receipt
+        "verified": False,
+        "transaction_id": "",
         "product_id": product_id,
         "purchase_date": None,
         "environment": environment,
-        "error": "Apple receipt verification not implemented"
+        "error": "This function is deprecated. Use process_apple_iap instead."
     }
 
 
@@ -61,8 +67,8 @@ async def verify_google_purchase(
     """
     Verify Google Play purchase and return transaction details.
     
-    TODO: Implement actual Google Play purchase verification API integration.
-    Currently returns a skeleton response.
+    DEPRECATED: Use app.services.google_iap_service.process_google_iap instead.
+    This function is maintained for backward compatibility.
     
     Args:
         package_name: Android app package name
@@ -79,20 +85,19 @@ async def verify_google_purchase(
             'purchase_state': int
         }
     """
-    # TODO: Implement actual Google Play purchase verification
-    # This should call Google Play Developer API:
-    # https://developers.google.com/android-publisher/api-ref/rest/v3/purchases.products
+    logger.warning(
+        "verify_google_purchase is deprecated. Use app.services.google_iap_service.process_google_iap instead."
+    )
     
-    logger.warning("Google purchase verification not yet implemented - returning mock response")
-    
-    # Mock response structure
+    # Return mock response for backward compatibility
+    # Real implementation should use process_google_iap
     return {
-        "verified": False,  # Set to True when real implementation is added
-        "transaction_id": "",  # Extract from purchase
+        "verified": False,
+        "transaction_id": "",
         "product_id": product_id,
         "purchase_time": None,
         "purchase_state": None,
-        "error": "Google purchase verification not implemented"
+        "error": "This function is deprecated. Use process_google_iap instead."
     }
 
 
@@ -104,78 +109,24 @@ async def get_product_credit_amount(
     """
     Get credited amount in minor units for a product ID from product tables.
     
-    Looks up the product in avatars, frames, gem_package_config, or badges tables
-    and returns the price_minor value (which is the amount to credit to wallet).
+    DEPRECATED: Use app.services.product_pricing.get_price_minor_for_product_id instead.
+    This function is maintained for backward compatibility.
     
     Args:
         db: Async database session
         product_id: Product ID (e.g., "AV001", "GP001", "FR001", "BD001")
-        platform: Optional platform filter (currently unused, kept for API compatibility)
+        platform: Optional platform filter (unused, kept for API compatibility)
         
     Returns:
         Amount in minor units (cents) or None if not found
+        
+    Note:
+        This function now delegates to get_price_minor_for_product_id.
+        It returns None instead of raising HTTPException for backward compatibility.
     """
-    # Try to find product in avatars (AV prefix)
-    if product_id.startswith('AV'):
-        stmt = select(Avatar).where(Avatar.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-    
-    # Try to find product in frames (FR prefix)
-    elif product_id.startswith('FR'):
-        stmt = select(Frame).where(Frame.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-    
-    # Try to find product in gem_package_config (GP prefix)
-    elif product_id.startswith('GP'):
-        stmt = select(GemPackageConfig).where(GemPackageConfig.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-    
-    # Try to find product in badges (BD prefix)
-    elif product_id.startswith('BD'):
-        stmt = select(Badge).where(Badge.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-    
-    # If no prefix matches, try all tables (fallback)
-    else:
-        # Try avatars
-        stmt = select(Avatar).where(Avatar.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-        
-        # Try frames
-        stmt = select(Frame).where(Frame.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-        
-        # Try gem_package_config
-        stmt = select(GemPackageConfig).where(GemPackageConfig.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-        
-        # Try badges
-        stmt = select(Badge).where(Badge.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-    
-    return None
+    try:
+        return await get_price_minor_for_product_id(db, product_id)
+    except Exception:
+        # Return None for backward compatibility (old code expected None, not exception)
+        return None
 
