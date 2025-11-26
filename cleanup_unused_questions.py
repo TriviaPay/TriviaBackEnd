@@ -2,9 +2,15 @@
 """
 Clean up unused daily questions and refresh daily question pool.
 New logic:
-1. Delete rows from trivia_questions_daily where date=yesterday AND is_used=false
+1. Delete rows from trivia_questions_daily where date=previous_draw_date AND is_used=false
 2. Reset those questions in trivia table
-3. Check today's pool count, add questions if < 4
+3. Check next draw's pool count, add questions if < 4
+
+Timing:
+- Draw happens at 6:00 PM EST
+- Question reset happens at 6:01 PM EST
+- After 6:01 PM on Day 1 until 5:59 PM on Day 2, users work on the "next draw" (Day 2's draw)
+- So when reset runs at 6:01 PM, it populates the next draw's pool
 """
 
 import sys
@@ -50,8 +56,16 @@ def get_date_range_for_query(target_date: date):
 
 def cleanup_unused_questions():
     """
-    Clean up unused daily questions and refresh the pool for today.
-    This should be run daily (e.g., after draw) to manage question allocation.
+    Clean up unused daily questions and refresh the pool for the next draw.
+    
+    This should be run daily at 6:01 PM EST (after the draw at 6:00 PM).
+    The logic:
+    - Draw happens at 6:00 PM EST
+    - Reset happens at 6:01 PM EST
+    - After 6:01 PM on Day 1 until 5:59 PM on Day 2, users work on the "next draw" (Day 2's draw)
+    - So we populate the next draw's pool so questions are ready for users
+    
+    By populating the next draw's pool, questions are ready when users access them.
     """
     logger.info("=" * 80)
     logger.info("🧹 CLEANUP_UNUSED_QUESTIONS FUNCTION CALLED")
@@ -62,11 +76,12 @@ def cleanup_unused_questions():
     
     try:
         today = get_today_in_app_timezone()
-        yesterday = today - timedelta(days=1)
+        next_draw_date = today + timedelta(days=1)  # Next draw is always tomorrow
+        previous_draw_date = today - timedelta(days=1)  # Previous draw was yesterday
         
-        # Step 1: Delete unused questions from yesterday - use timezone-aware date range
-        start_datetime, end_datetime = get_date_range_for_query(yesterday)
-        yesterday_unused = db.query(TriviaQuestionsDaily).filter(
+        # Step 1: Delete unused questions from previous draw - use timezone-aware date range
+        start_datetime, end_datetime = get_date_range_for_query(previous_draw_date)
+        previous_draw_unused = db.query(TriviaQuestionsDaily).filter(
             TriviaQuestionsDaily.date >= start_datetime,
             TriviaQuestionsDaily.date <= end_datetime,
             TriviaQuestionsDaily.is_used == False
@@ -75,7 +90,7 @@ def cleanup_unused_questions():
         deleted_count = 0
         question_numbers_to_reset = []
         
-        for daily_q in yesterday_unused:
+        for daily_q in previous_draw_unused:
             question_numbers_to_reset.append(daily_q.question_number)
             db.delete(daily_q)
             deleted_count += 1
@@ -91,7 +106,7 @@ def cleanup_unused_questions():
             logger.info(f"Reset {len(question_numbers_to_reset)} questions in trivia table")
         
         db.commit()
-        logger.info(f"Deleted {deleted_count} unused questions from {yesterday}")
+        logger.info(f"Deleted {deleted_count} unused questions from previous draw ({previous_draw_date})")
         
         # Check total questions in database
         total_questions_in_db = db.query(Trivia).count()
@@ -104,30 +119,34 @@ def cleanup_unused_questions():
             logger.error(f"❌ {error_msg}")
             raise Exception(error_msg)
         
-        # Step 3: Check today's pool and add questions if needed - use timezone-aware date range
-        start_datetime, end_datetime = get_date_range_for_query(today)
-        today_pool_count = db.query(TriviaQuestionsDaily).filter(
+        # Step 3: Check next draw's pool and add questions if needed - use timezone-aware date range
+        # We populate the next draw's pool so questions are ready when users access them
+        # After 6:01 PM on Day 1 until 5:59 PM on Day 2, users work on Day 2's draw
+        start_datetime, end_datetime = get_date_range_for_query(next_draw_date)
+        next_pool_count = db.query(TriviaQuestionsDaily).filter(
             TriviaQuestionsDaily.date >= start_datetime,
             TriviaQuestionsDaily.date <= end_datetime
         ).count()
         
-        logger.info(f"Today's pool has {today_pool_count} questions")
+        logger.info(f"Next draw's pool has {next_pool_count} questions")
         logger.info(f"Today in app timezone: {today}")
+        logger.info(f"Next draw date: {next_draw_date}")
+        logger.info(f"Previous draw date: {previous_draw_date}")
         logger.info(f"Date range: {start_datetime} to {end_datetime}")
         
-        # CRITICAL: Always ensure at least 4 questions exist for today
+        # CRITICAL: Always ensure at least 4 questions exist for the next draw
         # If pool is empty or has less than 4, add questions
-        if today_pool_count == 0:
-            logger.warning("⚠️  WARNING: Today's pool is EMPTY! Adding questions immediately...")
-        elif today_pool_count < 4:
-            logger.warning(f"⚠️  Today's pool has only {today_pool_count} questions (need 4). Adding more...")
+        if next_pool_count == 0:
+            logger.warning("⚠️  WARNING: Next draw's pool is EMPTY! Adding questions immediately...")
+        elif next_pool_count < 4:
+            logger.warning(f"⚠️  Next draw's pool has only {next_pool_count} questions (need 4). Adding more...")
         
-        # ALWAYS ensure we have at least 4 questions for today
-        if today_pool_count < 4:
-            questions_needed = 4 - today_pool_count
-            logger.info(f"Need to add {questions_needed} questions to today's pool")
+        # ALWAYS ensure we have at least 4 questions for the next draw
+        if next_pool_count < 4:
+            questions_needed = 4 - next_pool_count
+            logger.info(f"Need to add {questions_needed} questions to next draw's pool")
             
-            # Get existing question numbers in today's pool to avoid duplicates
+            # Get existing question numbers in next draw's pool to avoid duplicates
             existing_numbers = [q.question_number for q in db.query(TriviaQuestionsDaily.question_number).filter(
                 TriviaQuestionsDaily.date >= start_datetime,
                 TriviaQuestionsDaily.date <= end_datetime
@@ -207,10 +226,10 @@ def cleanup_unused_questions():
                     logger.debug(f"Skipping question {q.question_number} - already in pool")
                     continue  # Skip if question already in pool
                 
-                # Create timezone-aware datetime for the date
+                # Create timezone-aware datetime for the next draw's date
                 timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
                 tz = pytz.timezone(timezone_str)
-                date_datetime = tz.localize(datetime.combine(today, datetime.min.time()))
+                date_datetime = tz.localize(datetime.combine(next_draw_date, datetime.min.time()))
                 # Convert to UTC and remove timezone info for database storage
                 date_utc = date_datetime.astimezone(pytz.UTC).replace(tzinfo=None)
                 
@@ -243,7 +262,7 @@ def cleanup_unused_questions():
                 raise Exception(error_msg)
             
             db.commit()
-            logger.info(f"✅ Added {added_count} new questions to today's pool")
+            logger.info(f"✅ Added {added_count} new questions to next draw's pool")
             
             # Verify questions were added
             final_count = db.query(TriviaQuestionsDaily).filter(
@@ -266,7 +285,7 @@ def cleanup_unused_questions():
             elif final_count < 4:
                 logger.warning(f"⚠️  WARNING: Pool has {final_count} questions (less than 4). This may cause issues.")
         else:
-            logger.info(f"✅ Today's pool already has {today_pool_count} questions (sufficient)")
+            logger.info(f"✅ Next draw's pool already has {next_pool_count} questions (sufficient)")
         
     except Exception as e:
         db.rollback()
