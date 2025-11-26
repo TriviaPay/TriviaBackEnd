@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, exc
 from datetime import datetime, timedelta, date
 from typing import Optional, Union
 import pytz
@@ -341,23 +341,38 @@ async def send_trivia_live_message(
     db.add(new_message)
     
     # Update or create viewer tracking (user is active in trivia live chat)
-    from sqlalchemy import and_
-    existing_viewer = db.query(TriviaLiveChatViewer).filter(
-        and_(
-            TriviaLiveChatViewer.user_id == current_user.account_id,
-            TriviaLiveChatViewer.draw_date == draw_date
-        )
-    ).first()
-    
-    if existing_viewer:
-        existing_viewer.last_seen = datetime.utcnow()
-    else:
-        viewer = TriviaLiveChatViewer(
-            user_id=current_user.account_id,
-            draw_date=draw_date,
-            last_seen=datetime.utcnow()
-        )
-        db.add(viewer)
+    # Use upsert pattern to handle race conditions
+    try:
+        existing_viewer = db.query(TriviaLiveChatViewer).filter(
+            and_(
+                TriviaLiveChatViewer.user_id == current_user.account_id,
+                TriviaLiveChatViewer.draw_date == draw_date
+            )
+        ).first()
+        
+        if existing_viewer:
+            existing_viewer.last_seen = datetime.utcnow()
+        else:
+            # Insert new viewer - handle race condition with try/except
+            viewer = TriviaLiveChatViewer(
+                user_id=current_user.account_id,
+                draw_date=draw_date,
+                last_seen=datetime.utcnow()
+            )
+            db.add(viewer)
+            db.flush()  # Flush to trigger the insert and catch any IntegrityError
+    except exc.IntegrityError as e:
+        # Race condition: another request inserted the record between our check and insert
+        # Rollback and update the existing record
+        db.rollback()
+        existing_viewer = db.query(TriviaLiveChatViewer).filter(
+            and_(
+                TriviaLiveChatViewer.user_id == current_user.account_id,
+                TriviaLiveChatViewer.draw_date == draw_date
+            )
+        ).first()
+        if existing_viewer:
+            existing_viewer.last_seen = datetime.utcnow()
     
     db.commit()
     db.refresh(new_message)
@@ -488,23 +503,40 @@ async def get_trivia_live_messages(
     ).order_by(TriviaLiveChatMessage.created_at.desc()).limit(limit).all()
     
     # Update viewer tracking (user is viewing trivia live chat)
-    from sqlalchemy import and_
-    existing_viewer = db.query(TriviaLiveChatViewer).filter(
-        and_(
-            TriviaLiveChatViewer.user_id == current_user.account_id,
-            TriviaLiveChatViewer.draw_date == draw_date
-        )
-    ).first()
+    # Use upsert pattern to handle race conditions
+    try:
+        # Try to update existing viewer first
+        existing_viewer = db.query(TriviaLiveChatViewer).filter(
+            and_(
+                TriviaLiveChatViewer.user_id == current_user.account_id,
+                TriviaLiveChatViewer.draw_date == draw_date
+            )
+        ).first()
+        
+        if existing_viewer:
+            existing_viewer.last_seen = datetime.utcnow()
+        else:
+            # Insert new viewer - handle race condition with try/except
+            viewer = TriviaLiveChatViewer(
+                user_id=current_user.account_id,
+                draw_date=draw_date,
+                last_seen=datetime.utcnow()
+            )
+            db.add(viewer)
+            db.flush()  # Flush to trigger the insert and catch any IntegrityError
+    except exc.IntegrityError as e:
+        # Race condition: another request inserted the record between our check and insert
+        # Rollback and update the existing record
+        db.rollback()
+        existing_viewer = db.query(TriviaLiveChatViewer).filter(
+            and_(
+                TriviaLiveChatViewer.user_id == current_user.account_id,
+                TriviaLiveChatViewer.draw_date == draw_date
+            )
+        ).first()
+        if existing_viewer:
+            existing_viewer.last_seen = datetime.utcnow()
     
-    if existing_viewer:
-        existing_viewer.last_seen = datetime.utcnow()
-    else:
-        viewer = TriviaLiveChatViewer(
-            user_id=current_user.account_id,
-            draw_date=draw_date,
-            last_seen=datetime.utcnow()
-        )
-        db.add(viewer)
     db.commit()
     
     # Get active viewer count (users active within last 5 minutes)
