@@ -15,30 +15,29 @@ from config import GLOBAL_CHAT_ENABLED
 router = APIRouter(prefix="/internal", tags=["Internal"])
 
 
-def get_draw_date_for_today() -> date:
-    """
-    Determine which draw date to use based on current time and configured draw time.
-    
-    Logic:
-    - If called after draw time - 12 AM: trigger draw for today (the draw that happened at draw time today)
-    - If called between 12 AM - draw time: trigger draw for today (today's draw, which will happen at draw time)
-    
-    In both cases, we use today's date as the draw date.
-    Draw time is configured via DRAW_TIME_HOUR and DRAW_TIME_MINUTE environment variables.
-    """
-    # Get draw time settings from environment
-    draw_hour = int(os.getenv("DRAW_TIME_HOUR", "18"))  # Default 6 PM
-    draw_minute = int(os.getenv("DRAW_TIME_MINUTE", "0"))  # Default 0 minutes
+def get_today_in_app_timezone() -> date:
+    """Get today's date in the app's timezone (EST/US Eastern)."""
     timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
-    
     tz = pytz.timezone(timezone_str)
     now = datetime.now(tz)
-    today = now.date()
+    return now.date()
+
+
+def get_draw_date_for_today() -> date:
+    """
+    Determine which draw date to use for the draw.
     
-    # Always use today's date for the draw
-    # The draw happens at the configured draw time daily, so whether we're before or after draw time,
-    # we're always dealing with today's draw
-    return today
+    The draw should check for the "next draw date" - the date that users are currently
+    answering questions for. This matches the active_draw_date where users store their answers.
+    
+    The "next draw" represents the draw happening at today's draw time, but users answer
+    questions for tomorrow's date (the next draw date), so we check for tomorrow's date.
+    """
+    # Import get_active_draw_date from trivia router to use the exact same logic
+    from routers.trivia import get_active_draw_date
+    # Use the same date logic as users when they answer questions
+    # This ensures the draw checks the same date where users stored their answers
+    return get_active_draw_date()
 
 
 def get_display_username(user: User) -> str:
