@@ -13,6 +13,7 @@ from db import get_db
 from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, TriviaUserDaily, UserDailyRewards
 from routers.dependencies import get_current_user
 from pathlib import Path as FilePath
+from utils.draw_calculations import get_next_draw_time
 
 router = APIRouter(prefix="/trivia", tags=["Trivia"])
 
@@ -23,6 +24,23 @@ def get_today_in_app_timezone() -> date:
     tz = pytz.timezone(timezone_str)
     now = datetime.now(tz)
     return now.date()
+
+# Helper function to get the active draw date for questions
+def get_active_draw_date() -> date:
+    """
+    Get the draw date for which users should see questions.
+    
+    Questions are always allocated for the NEXT draw date (tomorrow at 05:00:00 UTC).
+    The logic:
+    - After 6:01 PM on Day 1, users work on Day 2's draw (questions allocated at 6:01 PM)
+    - Before 6:01 PM on Day 1, users also work on Day 2's draw (questions allocated the previous day at 6:01 PM)
+    
+    So we always query for tomorrow's (next draw) questions, as that's where questions are stored.
+    """
+    today = get_today_in_app_timezone()
+    # Questions are always allocated for the next draw date
+    # So we always return tomorrow (next draw date)
+    return today + timedelta(days=1)
 
 # Helper function to get date range for timezone-aware queries
 def get_date_range_for_query(target_date: date):
@@ -62,21 +80,23 @@ async def get_daily_questions(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    today = get_today_in_app_timezone()
+    # Get the active draw date (today or tomorrow depending on draw time)
+    active_draw_date = get_active_draw_date()
+    today = get_today_in_app_timezone()  # Keep for logging
     
-    # Get today's shared pool (0-4 questions) - use timezone-aware date range
-    start_datetime, end_datetime = get_date_range_for_query(today)
+    # Get the shared pool for active draw date - use timezone-aware date range
+    start_datetime, end_datetime = get_date_range_for_query(active_draw_date)
     daily_pool = db.query(TriviaQuestionsDaily).filter(
         TriviaQuestionsDaily.date >= start_datetime,
         TriviaQuestionsDaily.date <= end_datetime
     ).order_by(TriviaQuestionsDaily.question_order).all()
     
-    # Get user's unlocks for today
+    # Get user's unlocks for the active draw date
     user_unlocks = {
         (ud.date, ud.question_order): ud 
         for ud in db.query(TriviaUserDaily).filter(
             TriviaUserDaily.account_id == user.account_id,
-            TriviaUserDaily.date == today
+            TriviaUserDaily.date == active_draw_date
         ).all()
     }
     
@@ -129,24 +149,27 @@ async def get_current_question(
         logging.error("❌ User not found in get_current_question")
         raise HTTPException(status_code=404, detail="User not found")
 
-    today = get_today_in_app_timezone()
+    # Get the active draw date (today or tomorrow depending on draw time)
+    active_draw_date = get_active_draw_date()
+    today = get_today_in_app_timezone()  # Keep for logging
     logging.info(f"📅 Today in app timezone: {today}")
+    logging.info(f"📅 Active draw date for questions: {active_draw_date}")
     
-    # Get today's shared pool - use timezone-aware date range
-    start_datetime, end_datetime = get_date_range_for_query(today)
+    # Get the shared pool for active draw date - use timezone-aware date range
+    start_datetime, end_datetime = get_date_range_for_query(active_draw_date)
     daily_pool = db.query(TriviaQuestionsDaily).filter(
         TriviaQuestionsDaily.date >= start_datetime,
         TriviaQuestionsDaily.date <= end_datetime
     ).order_by(TriviaQuestionsDaily.question_order).all()
     
     if not daily_pool:
-        logging.warning(f"No questions found for today ({today}) in app timezone. Daily pool is empty.")
+        logging.warning(f"No questions found for active draw date ({active_draw_date}) in app timezone. Daily pool is empty.")
         raise HTTPException(status_code=404, detail="No questions available for today")
     
-    # Check if user has answered correctly today
+    # Check if user has answered correctly for the active draw date
     user_correct = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today,
+        TriviaUserDaily.date == active_draw_date,
         TriviaUserDaily.status == 'answered_correct'
     ).first()
     
@@ -185,10 +208,10 @@ async def get_current_question(
             "daily_completed": True
         }
     
-    # Get user's unlocks for today
+    # Get user's unlocks for the active draw date
     user_unlocks = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today
+        TriviaUserDaily.date == active_draw_date
     ).order_by(TriviaUserDaily.question_order).all()
     
     # Determine next allowed question order
@@ -202,7 +225,7 @@ async def get_current_question(
         # Auto-unlock Q1 for free
         user_daily = TriviaUserDaily(
             account_id=user.account_id,
-            date=today,
+            date=active_draw_date,
             question_order=1,
             question_number=q1.question_number,
             unlock_method='free',
@@ -231,7 +254,7 @@ async def get_current_question(
             # Should have been unlocked above, but just in case
             user_daily = TriviaUserDaily(
                 account_id=user.account_id,
-                date=today,
+                date=active_draw_date,
                 question_order=1,
                 question_number=current_dq.question_number,
                 unlock_method='free',
