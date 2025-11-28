@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 import re
 from passlib.context import CryptContext
 import os
+from utils.referrals import get_unique_referral_code
 
 router = APIRouter()
 # Use management key for admin operations
@@ -515,6 +516,7 @@ async def bind_password(
                 notification_on=True,
                 gems=0,
                 referral_count=0,
+                referral_code=get_unique_referral_code(db),
                 is_admin=False,
                 username_updated=False,
                 subscription_flag=False,

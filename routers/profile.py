@@ -1,11 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Body, Path, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from datetime import datetime, date
-import random
-import string
 import uuid
 import os
 from db import get_db
@@ -15,7 +13,14 @@ from routers.dependencies import get_current_user
 import logging
 from utils import get_letter_profile_pic
 from descope import DescopeClient
-from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, AWS_PROFILE_PIC_BUCKET
+from config import (
+    DESCOPE_PROJECT_ID,
+    DESCOPE_MANAGEMENT_KEY,
+    DESCOPE_JWT_LEEWAY,
+    AWS_PROFILE_PIC_BUCKET,
+    REFERRAL_APP_LINK,
+)
+from utils.referrals import get_unique_referral_code
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
@@ -47,11 +52,6 @@ def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
         "name": badge.name,
         "image_url": badge.image_url  # Public URL, no presigning needed
     }
-
-def generate_referral_code():
-    """Generate a unique 5-digit referral code"""
-    return ''.join(random.choices(string.digits, k=5))
-
 
 # Badge related models
 class BadgeAssignment(BaseModel):
@@ -214,6 +214,7 @@ class ExtendedProfileUpdate(BaseModel):
     state: Optional[str] = None
     zip: Optional[str] = None
     country: Optional[str] = None
+
 
 @router.post("/extended-update", status_code=200)
 async def update_extended_profile(
@@ -529,6 +530,48 @@ async def get_profile_summary(
             "message": f"An unexpected error occurred: {str(e)}",
             "code": "UNEXPECTED_ERROR",
         }
+
+
+@router.post("/send-referral", status_code=200)
+async def send_referral(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return the user's referral code and a simple shareable message.
+    """
+    try:
+        user = db.query(User).filter(User.account_id == current_user.account_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if not user.referral_code:
+            user.referral_code = get_unique_referral_code(db)
+            db.commit()
+            db.refresh(user)
+
+        share_text = f"Send code {user.referral_code} to friends so they can join TriviaPay."
+        logging.info(
+            f"[REFERRAL] Sharing code {user.referral_code} for user {user.account_id} ({user.email})"
+        )
+
+        return {
+            "status": "success",
+            "message": "Referral code ready to share",
+            "data": {
+                "referral_code": user.referral_code,
+                "share_text": share_text,
+                "app_link": REFERRAL_APP_LINK,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error preparing referral invite: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to prepare referral invite. Please try again later.",
+        )
 
 @router.post("/upload-profile-pic", status_code=200)
 async def upload_profile_picture(
