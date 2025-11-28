@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from datetime import date, timedelta, datetime
 import os
+import pytz
 from db import get_db
 from rewards_logic import perform_draw, reset_monthly_subscriptions, reset_weekly_daily_rewards
 import logging
@@ -12,6 +13,32 @@ from utils.chat_helpers import get_user_chat_profile_data
 from config import GLOBAL_CHAT_ENABLED
 
 router = APIRouter(prefix="/internal", tags=["Internal"])
+
+
+def get_draw_date_for_today() -> date:
+    """
+    Determine which draw date to use based on current time and configured draw time.
+    
+    Logic:
+    - If called after draw time - 12 AM: trigger draw for today (the draw that happened at draw time today)
+    - If called between 12 AM - draw time: trigger draw for today (today's draw, which will happen at draw time)
+    
+    In both cases, we use today's date as the draw date.
+    Draw time is configured via DRAW_TIME_HOUR and DRAW_TIME_MINUTE environment variables.
+    """
+    # Get draw time settings from environment
+    draw_hour = int(os.getenv("DRAW_TIME_HOUR", "18"))  # Default 6 PM
+    draw_minute = int(os.getenv("DRAW_TIME_MINUTE", "0"))  # Default 0 minutes
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    today = now.date()
+    
+    # Always use today's date for the draw
+    # The draw happens at the configured draw time daily, so whether we're before or after draw time,
+    # we're always dealing with today's draw
+    return today
 
 
 def get_display_username(user: User) -> str:
@@ -135,70 +162,85 @@ async def internal_daily_draw(
     db: Session = Depends(get_db)
 ):
     """
-    Internal endpoint for daily draw triggered by external cron (cron-job.org).
+    Internal endpoint for daily draw triggered by external cron.
     
-    This endpoint:
-    1. Gets detailed metrics for yesterday's draw date
-    2. Performs the draw using get_eligible_participants() which queries TriviaUserDaily directly
-    3. Returns comprehensive results including diagnostics
+    Determines draw date based on current time and configured draw time:
+    - If called after draw time - 12 AM: triggers draw for today (the draw that happened at draw time)
+    - If called between 12 AM - draw time: triggers draw for today (today's draw, which will happen at draw time)
     
-    The eligibility check uses TriviaUserDaily to ensure date-specific accuracy.
+    Draw time is configured via DRAW_TIME_HOUR and DRAW_TIME_MINUTE environment variables.
+    
+    Returns clean response with winner emails.
     """
     if secret != os.getenv("INTERNAL_SECRET"):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
-        # Run daily draw for yesterday
-        yesterday = date.today() - timedelta(days=1)
+        # Determine which draw date to use based on current time
+        draw_date = get_draw_date_for_today()
         
-        logging.info(f"🎯 Starting daily draw for {yesterday} via external cron")
-        
-        # Get detailed metrics before performing draw
-        # This uses the updated get_detailed_draw_metrics() which queries TriviaUserDaily
-        logging.info("📊 Collecting detailed draw metrics...")
-        try:
-            metrics = get_detailed_draw_metrics(db, yesterday)
-            logging.info(f"✅ Metrics collected: {metrics.get('eligible_and_subscribed', 0)} eligible participants")
-            
-            # Check if there's an error in metrics collection
-            if "error" in metrics:
-                logging.error(f"❌ Error in metrics collection: {metrics['error']}")
-                # Continue anyway - metrics error shouldn't block the draw
-        except Exception as metrics_error:
-            logging.error(f"❌ Failed to collect metrics: {str(metrics_error)}", exc_info=True)
-            metrics = {"error": str(metrics_error)}
+        logging.info(f"🎯 Starting daily draw for {draw_date} via external cron")
         
         # Perform the draw
-        # This uses get_eligible_participants() which queries TriviaUserDaily directly
         logging.info("🎲 Performing draw...")
-        try:
-            result = perform_draw(db, yesterday)
-            logging.info(f"✅ Draw completed: {result.get('status', 'unknown')} - {result.get('total_participants', 0)} participants, {result.get('total_winners', 0)} winners")
-            
-            # Send winner announcement to global chat if draw was successful
-            if result.get('status') == 'success' and result.get('winners'):
-                try:
-                    send_winner_announcement(db, yesterday, result.get('winners', []))
-                    logging.info("✅ Winner announcement sent to global chat")
-                except Exception as announcement_error:
-                    logging.error(f"❌ Failed to send winner announcement: {str(announcement_error)}", exc_info=True)
-                    # Don't fail the draw if announcement fails
-        except Exception as draw_error:
-            logging.error(f"❌ Failed to perform draw: {str(draw_error)}", exc_info=True)
-            # Re-raise so the error is returned to cron-job.org
-            raise
+        result = perform_draw(db, draw_date)
+        logging.info(f"✅ Draw completed: {result.get('status', 'unknown')} - {result.get('total_participants', 0)} participants, {result.get('total_winners', 0)} winners")
         
+        # Handle different draw result statuses
+        if result.get('status') == 'already_performed':
+            return {
+                "status": "already_performed",
+                "draw_date": draw_date.isoformat(),
+                "message": f"Draw for {draw_date} has already been performed"
+            }
+        
+        if result.get('status') == 'no_participants':
+            return {
+                "status": "no_participants",
+                "draw_date": draw_date.isoformat(),
+                "message": f"No eligible participants for draw on {draw_date}",
+                "total_participants": 0
+            }
+        
+        if result.get('status') != 'success':
+            return {
+                "status": result.get('status', 'error'),
+                "draw_date": draw_date.isoformat(),
+                "message": result.get('message', 'Unknown error')
+            }
+        
+        # Get winner details with emails
+        winners_data = []
+        for winner in result.get('winners', []):
+            user = db.query(User).filter(User.account_id == winner['account_id']).first()
+            if user:
+                winners_data.append({
+                    "position": winner.get('position'),
+                    "username": winner.get('username'),
+                    "email": user.email if user.email else None,
+                    "prize_amount": winner.get('prize_amount', 0)
+                })
+        
+        # Send winner announcement to global chat if draw was successful
+        if winners_data:
+            try:
+                send_winner_announcement(db, draw_date, result.get('winners', []))
+                logging.info("✅ Winner announcement sent to global chat")
+            except Exception as announcement_error:
+                logging.error(f"❌ Failed to send winner announcement: {str(announcement_error)}", exc_info=True)
+                # Don't fail the draw if announcement fails
+        
+        # Return clean, simplified response
         return {
             "status": "success",
-            "triggered_by": "external_cron",
-            "draw_date": yesterday.isoformat(),
-            "detailed_metrics": metrics,
-            "draw_result": result,
-            "timestamp": datetime.now().isoformat()
+            "draw_date": draw_date.isoformat(),
+            "total_participants": result.get('total_participants', 0),
+            "total_winners": result.get('total_winners', 0),
+            "prize_pool": result.get('prize_pool', 0),
+            "winners": winners_data
         }
     except Exception as e:
         logging.error(f"💥 Fatal error in daily draw: {str(e)}", exc_info=True)
-        # Return error details in response so cron-job.org logs show the issue
         raise HTTPException(
             status_code=500,
             detail=f"Error in daily draw: {str(e)}"
