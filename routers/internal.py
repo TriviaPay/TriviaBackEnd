@@ -99,7 +99,7 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
     
     # Get system user for display
     system_user = db.query(User).filter(User.account_id == system_user_id).first()
-    username = get_display_username(system_user) if system_user else "System"
+    username = "admin"  # Always show as "admin" for system announcements
     
     # Get system user's profile data (avatar, frame)
     profile_data = get_user_chat_profile_data(system_user, db) if system_user else {
