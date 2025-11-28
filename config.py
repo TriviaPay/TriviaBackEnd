@@ -60,6 +60,9 @@ AWS_DEFAULT_PROFILE_PIC_BASE_URL = os.getenv("AWS_DEFAULT_PROFILE_PIC_BASE_URL",
 # AWS Profile Picture Upload Settings
 AWS_PROFILE_PIC_BUCKET = os.getenv("AWS_PROFILE_PIC_BUCKET", "triviapics")  # S3 bucket for custom profile pictures
 
+# Referral Settings
+REFERRAL_APP_LINK = os.getenv("REFERRAL_APP_LINK", "https://triviapay.app")  # App download link for referrals
+
 # SSE settings
 SSE_HEARTBEAT_SECONDS = int(os.getenv("SSE_HEARTBEAT_SECONDS", "25"))
 
