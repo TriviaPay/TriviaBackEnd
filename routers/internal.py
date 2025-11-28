@@ -253,35 +253,53 @@ async def internal_question_reset(
         logging.info("🧹 Cleaning up unused questions...")
         cleanup_unused_questions()
         
-        # Verify questions exist after cleanup
+        # After the draw, today's pool is expected to be empty (all questions were used)
+        # We need to verify the NEXT draw's pool has questions instead
+        next_draw_date = today + timedelta(days=1)
+        next_start_datetime, next_end_datetime = get_date_range_for_query(next_draw_date)
+        
+        # Check next draw's pool (this is what matters - cleanup populates this)
+        next_draw_pool_count = db.query(TriviaQuestionsDaily).filter(
+            TriviaQuestionsDaily.date >= next_start_datetime,
+            TriviaQuestionsDaily.date <= next_end_datetime
+        ).count()
+        
+        # Get the actual questions for debugging
+        next_pool_questions = db.query(TriviaQuestionsDaily).filter(
+            TriviaQuestionsDaily.date >= next_start_datetime,
+            TriviaQuestionsDaily.date <= next_end_datetime
+        ).all()
+        
+        # Also check today's pool for informational purposes (expected to be empty after draw)
         today_pool_count = db.query(TriviaQuestionsDaily).filter(
             TriviaQuestionsDaily.date >= start_datetime,
             TriviaQuestionsDaily.date <= end_datetime
         ).count()
         
-        # Get the actual questions for debugging
-        pool_questions = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= start_datetime,
-            TriviaQuestionsDaily.date <= end_datetime
-        ).all()
+        logging.info(f"✅ Next draw's pool after cleanup: {next_draw_pool_count} questions")
+        logging.info(f"📅 Today's pool after cleanup: {today_pool_count} questions (expected to be empty after draw)")
         
-        logging.info(f"✅ Today's pool after cleanup: {today_pool_count} questions")
-        if pool_questions:
-            logging.info(f"Pool questions: {[(q.question_number, q.question_order, q.date) for q in pool_questions]}")
-        else:
-            logging.warning("⚠️  No questions found in pool after cleanup!")
+        if next_pool_questions:
+            logging.info(f"Next draw pool questions: {[(q.question_number, q.question_order, q.date) for q in next_pool_questions]}")
         
+        # Today's pool being empty is expected after the draw - just log it
         if today_pool_count == 0:
-            error_msg = "CRITICAL: Pool is empty after cleanup! This should not happen."
+            logging.info("ℹ️  Today's pool is empty (expected after draw completion)")
+        elif today_pool_count > 0:
+            logging.info(f"ℹ️  Today's pool has {today_pool_count} questions (some may remain unused)")
+        
+        # Verify next draw's pool has questions (this is what matters)
+        if next_draw_pool_count == 0:
+            error_msg = f"CRITICAL: Next draw's pool is empty after cleanup! Next draw date: {next_draw_date}"
             logging.error(f"❌ {error_msg}")
-            logging.error(f"Initial count: {initial_pool_count}, Final count: {today_pool_count}")
-            logging.error(f"Date range used: {start_datetime} to {end_datetime}")
+            logging.error(f"Initial pool count: {initial_pool_count}, Next draw pool count: {next_draw_pool_count}")
+            logging.error(f"Next draw date range: {next_start_datetime} to {next_end_datetime}")
             raise HTTPException(
                 status_code=500,
-                detail=f"{error_msg} Check cleanup_unused_questions() function. Initial count: {initial_pool_count}, Final count: {today_pool_count}, Date range: {start_datetime} to {end_datetime}"
+                detail=f"{error_msg} Check cleanup_unused_questions() function. Next draw date: {next_draw_date}"
             )
-        elif today_pool_count < 4:
-            logging.warning(f"⚠️  WARNING: Pool has only {today_pool_count} questions (should have 4)")
+        elif next_draw_pool_count < 4:
+            logging.warning(f"⚠️  WARNING: Next draw's pool has only {next_draw_pool_count} questions (should have 4)")
         
         # Reset eligibility flags
         logging.info("🔄 Resetting eligibility flags...")
@@ -291,8 +309,10 @@ async def internal_question_reset(
         logging.info("✅ Question reset completed via external cron")
         logging.info(f"📊 Final Results:")
         logging.info(f"   - Initial pool count: {initial_pool_count}")
-        logging.info(f"   - Final pool count: {today_pool_count}")
+        logging.info(f"   - Today's pool count: {today_pool_count} (expected to be empty after draw)")
+        logging.info(f"   - Next draw's pool count: {next_draw_pool_count}")
         logging.info(f"   - Today: {today}")
+        logging.info(f"   - Next draw date: {next_draw_date}")
         logging.info("=" * 80)
         
         return {
@@ -301,8 +321,10 @@ async def internal_question_reset(
             "triggered_by": "external_cron",
             "detailed_metrics": metrics,
             "today_pool_count": today_pool_count,
+            "next_draw_pool_count": next_draw_pool_count,
             "initial_pool_count": initial_pool_count,
             "today": today.isoformat(),
+            "next_draw_date": next_draw_date.isoformat(),
             "timestamp": datetime.now().isoformat()
         }
     except HTTPException:
