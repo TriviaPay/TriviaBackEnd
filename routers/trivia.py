@@ -302,12 +302,14 @@ async def unlock_next_question(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    today = get_today_in_app_timezone()
+    # Get the active draw date (where questions are stored)
+    active_draw_date = get_active_draw_date()
+    today = get_today_in_app_timezone()  # Keep for logging
     
-    # Check if user has answered correctly today
+    # Check if user has answered correctly for the active draw date
     user_correct = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today,
+        TriviaUserDaily.date == active_draw_date,
         TriviaUserDaily.status == 'answered_correct'
     ).first()
     
@@ -320,7 +322,7 @@ async def unlock_next_question(
     # Get user's unlocks to find next order
     user_unlocks = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today,
+        TriviaUserDaily.date == active_draw_date,
         TriviaUserDaily.unlock_method.isnot(None)
     ).order_by(TriviaUserDaily.question_order).all()
     
@@ -333,8 +335,8 @@ async def unlock_next_question(
             detail="All questions are already unlocked"
         )
     
-    # Get next question from today's pool - use timezone-aware date range
-    start_datetime, end_datetime = get_date_range_for_query(today)
+    # Get next question from active draw date pool - use timezone-aware date range
+    start_datetime, end_datetime = get_date_range_for_query(active_draw_date)
     next_daily = db.query(TriviaQuestionsDaily).filter(
         TriviaQuestionsDaily.date >= start_datetime,
         TriviaQuestionsDaily.date <= end_datetime,
@@ -362,7 +364,7 @@ async def unlock_next_question(
     # Create or update user_daily record
     existing = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today,
+        TriviaUserDaily.date == active_draw_date,
         TriviaUserDaily.question_order == next_order
     ).first()
     
@@ -374,7 +376,7 @@ async def unlock_next_question(
     else:
         user_daily = TriviaUserDaily(
             account_id=user.account_id,
-            date=today,
+            date=active_draw_date,
             question_order=next_order,
             question_number=next_daily.question_number,
             unlock_method='gems',
@@ -426,12 +428,14 @@ async def retry_question(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    today = get_today_in_app_timezone()
+    # Get the active draw date (where questions are stored)
+    active_draw_date = get_active_draw_date()
+    today = get_today_in_app_timezone()  # Keep for logging
     
-    # Check if user has answered correctly today
+    # Check if user has answered correctly for the active draw date
     user_correct = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today,
+        TriviaUserDaily.date == active_draw_date,
         TriviaUserDaily.status == 'answered_correct'
     ).first()
     
@@ -441,10 +445,10 @@ async def retry_question(
             detail="You have already answered correctly today. Come back tomorrow!"
         )
     
-    # Find user's row for this question today
+    # Find user's row for this question for the active draw date
     user_daily = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today,
+        TriviaUserDaily.date == active_draw_date,
         TriviaUserDaily.question_number == question_number
     ).first()
     
@@ -489,7 +493,7 @@ async def retry_question(
         raise HTTPException(status_code=404, detail="Question not found")
     
     # Get daily pool info - use timezone-aware date range
-    start_datetime, end_datetime = get_date_range_for_query(today)
+    start_datetime, end_datetime = get_date_range_for_query(active_draw_date)
     daily_q = db.query(TriviaQuestionsDaily).filter(
         TriviaQuestionsDaily.date >= start_datetime,
         TriviaQuestionsDaily.date <= end_datetime,
@@ -532,12 +536,14 @@ async def submit_answer(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    today = get_today_in_app_timezone()
+    # Get the active draw date (where questions are stored)
+    active_draw_date = get_active_draw_date()
+    today = get_today_in_app_timezone()  # Keep for logging
     
-    # Check if user has already answered correctly today
+    # Check if user has already answered correctly for the active draw date
     user_correct = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today,
+        TriviaUserDaily.date == active_draw_date,
         TriviaUserDaily.status == 'answered_correct'
     ).first()
     
@@ -551,16 +557,16 @@ async def submit_answer(
             "daily_completed": True
         }
     
-    # Find user's row for this question today
+    # Find user's row for this question for the active draw date
     user_daily = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today,
+        TriviaUserDaily.date == active_draw_date,
         TriviaUserDaily.question_number == question_number
     ).first()
     
     if not user_daily:
         warning_msg = "Question not found or not unlocked"
-        logging.warning(f"Question {question_number} not found or not unlocked for user {user.account_id} on {today}")
+        logging.warning(f"Question {question_number} not found or not unlocked for user {user.account_id} on {active_draw_date}")
         return {
             "status": "error",
             "message": warning_msg,
@@ -582,7 +588,7 @@ async def submit_answer(
     # Validate sequential answering
     user_unlocks = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
-        TriviaUserDaily.date == today,
+        TriviaUserDaily.date == active_draw_date,
         TriviaUserDaily.unlock_method.isnot(None)
     ).order_by(TriviaUserDaily.question_order).all()
     
@@ -629,10 +635,10 @@ async def submit_answer(
     user_daily.answered_at = datetime.utcnow()
     user_daily.status = 'answered_correct' if is_correct else 'answered_wrong'
     
-    # Update or create entries record
+    # Update or create entries record (use active_draw_date for consistency)
     entry = db.query(TriviaQuestionsEntries).filter(
         TriviaQuestionsEntries.account_id == user.account_id,
-        TriviaQuestionsEntries.date == today
+        TriviaQuestionsEntries.date == active_draw_date
     ).first()
     
     if not entry:
@@ -641,7 +647,7 @@ async def submit_answer(
             ques_attempted=1,
             correct_answers=1 if is_correct else 0,
             wrong_answers=0 if is_correct else 1,
-            date=today
+            date=active_draw_date
         )
         db.add(entry)
     else:
@@ -654,12 +660,12 @@ async def submit_answer(
     # If correct, mark remaining questions as skipped
     if is_correct:
         from rewards_logic import update_user_eligibility
-        update_user_eligibility(db, user.account_id, today)
+        update_user_eligibility(db, user.account_id, active_draw_date)
         
         # Mark all remaining unlocked questions as skipped
         remaining = db.query(TriviaUserDaily).filter(
             TriviaUserDaily.account_id == user.account_id,
-            TriviaUserDaily.date == today,
+            TriviaUserDaily.date == active_draw_date,
             TriviaUserDaily.question_order > user_daily.question_order,
             TriviaUserDaily.status.notin_(['answered_correct', 'answered_wrong'])
         ).all()
@@ -880,12 +886,13 @@ async def get_question_status(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    today = get_today_in_app_timezone()
+    # Get the active draw date (where questions are stored)
+    active_draw_date = get_active_draw_date()
     
     user_daily = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
         TriviaUserDaily.question_number == question_number,
-        TriviaUserDaily.date == today
+        TriviaUserDaily.date == active_draw_date
     ).first()
     
     if not user_daily:
