@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 from db import get_db
-from models import User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsDaily, Trivia, Badge, Avatar, Frame, TriviaQuestionsEntries
+from models import User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsDaily, Trivia, Badge, Avatar, Frame, TriviaQuestionsEntries, TriviaUserDaily, UserSubscription
 from routers.dependencies import get_current_user, get_admin_user
 from utils.storage import presign_get
 from sqlalchemy.sql import extract
@@ -59,6 +59,22 @@ class DrawConfigUpdateRequest(BaseModel):
     draw_time_hour: Optional[int] = Field(None, ge=0, le=23, description="Hour for daily draw (0-23)")
     draw_time_minute: Optional[int] = Field(None, ge=0, le=59, description="Minute for daily draw (0-59)")
     draw_timezone: Optional[str] = Field(None, description="Timezone for daily draw (e.g., 'US/Eastern')")
+
+class WinnerStatusResponse(BaseModel):
+    message: str
+    can_claim_compensation: bool = False
+    compensation_amount: int = 0
+    user_status: str  # "subscribed_correct", "subscribed_wrong", "not_subscribed", "subscribed_correct_winner"
+    draw_date: str
+
+class ClaimCompensationRequest(BaseModel):
+    draw_date: str  # Date in YYYY-MM-DD format
+
+class ClaimCompensationResponse(BaseModel):
+    success: bool
+    message: str
+    gems_added: int
+    new_gem_balance: int
 
 # Import unified functions from rewards_logic
 from rewards_logic import (
@@ -990,4 +1006,156 @@ async def update_draw_config(
         "updated_fields": list(updated_config.keys())
     }
     
-    return current_config 
+    return current_config
+
+@router.get("/winner-status", response_model=WinnerStatusResponse)
+async def get_winner_status(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get user's status for the draw and return appropriate message.
+    
+    Statuses:
+    - subscribed_correct: User is subscribed and answered correctly but didn't win
+    - subscribed_correct_winner: User is subscribed, answered correctly, and won
+    - subscribed_wrong: User is subscribed but answered wrong or didn't answer
+    - not_subscribed: User is not subscribed (regardless of answer status)
+    """
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get yesterday's date (draw processes yesterday's participants)
+    est = pytz.timezone('US/Eastern')
+    today = datetime.now(est).date()
+    draw_date = today - timedelta(days=1)
+    
+    # Check if user is subscribed
+    is_subscribed = user.subscription_flag == True
+    
+    # Also check UserSubscription table for active subscription
+    active_subscription = db.query(UserSubscription).filter(
+        UserSubscription.user_id == user.account_id,
+        UserSubscription.status == 'active'
+    ).first()
+    
+    if active_subscription:
+        is_subscribed = True
+    
+    # Check if user answered correctly for the draw date
+    correct_answer = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == draw_date,
+        TriviaUserDaily.status == 'answered_correct'
+    ).first()
+    
+    answered_correctly = correct_answer is not None
+    
+    # Check if user is in winners list for this draw date
+    is_winner = db.query(TriviaQuestionsWinners).filter(
+        TriviaQuestionsWinners.account_id == user.account_id,
+        TriviaQuestionsWinners.draw_date == draw_date
+    ).first() is not None
+    
+    # Determine status and message
+    if is_subscribed and answered_correctly and is_winner:
+        # Subscribed, answered correctly, and won
+        status = "subscribed_correct_winner"
+        message = "Congratulations! You won in today's draw! Keep up the great work!"
+        can_claim = False
+    elif is_subscribed and answered_correctly and not is_winner:
+        # Subscribed, answered correctly, but didn't win - offer compensation
+        status = "subscribed_correct"
+        message = "Don't worry! You answered correctly and are subscribed, but didn't win this time. We'd like to offer you 10 gems as a token of appreciation. Would you like to claim them?"
+        can_claim = True
+    elif is_subscribed and not answered_correctly:
+        # Subscribed but answered wrong or didn't answer
+        status = "subscribed_wrong"
+        message = "You're subscribed, but you didn't answer correctly for this draw. Try again tomorrow and make sure to answer at least one question correctly!"
+        can_claim = False
+    else:
+        # Not subscribed
+        status = "not_subscribed"
+        message = "To participate in the daily draw, you need to be subscribed. Subscribe now to start winning prizes!"
+        can_claim = False
+    
+    return WinnerStatusResponse(
+        message=message,
+        can_claim_compensation=can_claim,
+        compensation_amount=10 if can_claim else 0,
+        user_status=status,
+        draw_date=draw_date.isoformat()
+    )
+
+@router.post("/claim-compensation", response_model=ClaimCompensationResponse)
+async def claim_compensation(
+    request: ClaimCompensationRequest = Body(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Claim 10 gems compensation for subscribed users who answered correctly but didn't win.
+    """
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Parse draw date
+    try:
+        draw_date = datetime.strptime(request.draw_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Verify user is eligible for compensation
+    # 1. Must be subscribed
+    is_subscribed = user.subscription_flag == True
+    active_subscription = db.query(UserSubscription).filter(
+        UserSubscription.user_id == user.account_id,
+        UserSubscription.status == 'active'
+    ).first()
+    
+    if active_subscription:
+        is_subscribed = True
+    
+    if not is_subscribed:
+        raise HTTPException(
+            status_code=400, 
+            detail="You must be subscribed to claim compensation"
+        )
+    
+    # 2. Must have answered correctly for the draw date
+    correct_answer = db.query(TriviaUserDaily).filter(
+        TriviaUserDaily.account_id == user.account_id,
+        TriviaUserDaily.date == draw_date,
+        TriviaUserDaily.status == 'answered_correct'
+    ).first()
+    
+    if not correct_answer:
+        raise HTTPException(
+            status_code=400,
+            detail="You must have answered correctly for this draw date to claim compensation"
+        )
+    
+    # 3. Must not be a winner for this draw date
+    is_winner = db.query(TriviaQuestionsWinners).filter(
+        TriviaQuestionsWinners.account_id == user.account_id,
+        TriviaQuestionsWinners.draw_date == draw_date
+    ).first() is not None
+    
+    if is_winner:
+        raise HTTPException(
+            status_code=400,
+            detail="Winners cannot claim compensation"
+        )
+    
+    # Add 10 gems to user's account
+    gems_to_add = 10
+    user.gems += gems_to_add
+    db.commit()
+    db.refresh(user)
+    
+    return ClaimCompensationResponse(
+        success=True,
+        message="Compensation claimed successfully! 10 gems have been added to your account.",
+        gems_added=gems_to_add,
+        new_gem_balance=user.gems
+    )
