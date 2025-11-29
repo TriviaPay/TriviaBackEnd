@@ -31,6 +31,7 @@ class SendGroupMessageRequest(BaseModel):
     proto: int = Field(..., description="Protocol type: 10=sender-key msg, 11=sender-key distribution", example=10)
     group_epoch: int = Field(..., description="Group epoch this message belongs to", example=0)
     sender_key_id: Optional[str] = Field(None, description="Sender key ID for this message", example="550e8400-e29b-41d4-a716-446655440000")
+    reply_to_message_id: Optional[str] = Field(None, description="UUID of message being replied to", example="550e8400-e29b-41d4-a716-446655440000")
     
     class Config:
         json_schema_extra = {
@@ -101,7 +102,7 @@ async def get_messages(
     
     result = []
     for msg in messages:
-        result.append({
+        message_data = {
             "id": str(msg.id),
             "sender_user_id": msg.sender_user_id,
             "sender_device_id": str(msg.sender_device_id),
@@ -109,7 +110,11 @@ async def get_messages(
             "proto": msg.proto,
             "group_epoch": msg.group_epoch,
             "created_at": msg.created_at.isoformat() if msg.created_at else None
-        })
+        }
+        # Include reply_to_message_id if this is a reply
+        if msg.reply_to_message_id:
+            message_data["reply_to_message_id"] = str(msg.reply_to_message_id)
+        result.append(message_data)
     
     return {"messages": result}
 
@@ -249,6 +254,23 @@ async def send_message(
             }
         )
     
+    # Validate reply_to_message_id if provided
+    reply_to_message_uuid = None
+    if request.reply_to_message_id:
+        try:
+            reply_to_message_uuid = uuid.UUID(request.reply_to_message_id)
+            reply_to_message = db.query(GroupMessage).filter(
+                GroupMessage.id == reply_to_message_uuid,
+                GroupMessage.group_id == group_uuid
+            ).first()
+            if not reply_to_message:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Message {request.reply_to_message_id} not found in this group"
+                )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid reply_to_message_id format")
+    
     # Create message
     new_message = GroupMessage(
         id=uuid.uuid4(),
@@ -258,7 +280,8 @@ async def send_message(
         ciphertext=ciphertext_bytes,
         proto=request.proto,
         group_epoch=request.group_epoch,
-        client_message_id=request.client_message_id
+        client_message_id=request.client_message_id,
+        reply_to_message_id=reply_to_message_uuid
     )
     db.add(new_message)
     
@@ -298,6 +321,8 @@ async def send_message(
             "group_epoch": request.group_epoch,
             "created_at": new_message.created_at.isoformat() if new_message.created_at else None
         }
+        if new_message.reply_to_message_id:
+            event["reply_to_message_id"] = str(new_message.reply_to_message_id)
         publish_group_message(str(group_uuid), event)
         
         return {

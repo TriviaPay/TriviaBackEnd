@@ -5,6 +5,41 @@ from sqlalchemy import pool
 
 from alembic import context
 
+# Suppress warnings BEFORE importing models (which may load dotenv)
+import warnings
+import sys
+import io
+
+# Suppress ALL dotenv-related warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*dotenv.*")
+warnings.filterwarnings("ignore", message=".*Python-dotenv.*")
+
+# Create a filter for stderr that removes dotenv warnings
+class FilteredStderr:
+    def __init__(self, original_stderr):
+        self.original_stderr = original_stderr
+        
+    def write(self, text):
+        # Filter out dotenv-related warnings (check if it's a dotenv warning)
+        if text:
+            text_lower = text.lower()
+            # Only filter if it's a dotenv warning
+            if 'dotenv' in text_lower or 'python-dotenv' in text_lower:
+                return  # Skip dotenv warnings
+            self.original_stderr.write(text)
+            
+    def flush(self):
+        self.original_stderr.flush()
+        
+    def __getattr__(self, name):
+        return getattr(self.original_stderr, name)
+
+# Redirect stderr to filter out dotenv warnings (only if not already filtered)
+if not isinstance(sys.stderr, FilteredStderr):
+    _filtered_stderr = FilteredStderr(sys.stderr)
+    sys.stderr = _filtered_stderr
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -16,7 +51,6 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

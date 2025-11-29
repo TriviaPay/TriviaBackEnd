@@ -33,6 +33,7 @@ router = APIRouter(prefix="/global-chat", tags=["Global Chat"])
 class SendMessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=GLOBAL_CHAT_MAX_MESSAGE_LENGTH)
     client_message_id: Optional[str] = Field(None, description="Client-provided ID for idempotency")
+    reply_to_message_id: Optional[int] = Field(None, description="ID of message being replied to")
 
 
 def get_display_username(user: User) -> str:
@@ -55,25 +56,24 @@ def _ensure_datetime(value: Union[datetime, str]) -> datetime:
 
 def publish_to_pusher_global(message_id: int, user_id: int, username: str, profile_pic: Optional[str],
                              avatar_url: Optional[str], frame_url: Optional[str], badge: Optional[dict],
-                             message: str, created_at: Union[datetime, str]):
+                             message: str, created_at: Union[datetime, str], reply_to: Optional[dict] = None):
     """Background task to publish to Pusher"""
     try:
         created_at_dt = _ensure_datetime(created_at)
-        publish_chat_message_sync(
-            "global-chat",
-            "new-message",
-            {
-                "id": message_id,
-                "user_id": user_id,
-                "username": username,
-                "profile_pic": profile_pic,
-                "avatar_url": avatar_url,
-                "frame_url": frame_url,
-                "badge": badge,
-                "message": message,
-                "created_at": created_at_dt.isoformat()
-            }
-        )
+        event_data = {
+            "id": message_id,
+            "user_id": user_id,
+            "username": username,
+            "profile_pic": profile_pic,
+            "avatar_url": avatar_url,
+            "frame_url": frame_url,
+            "badge": badge,
+            "message": message,
+            "created_at": created_at_dt.isoformat()
+        }
+        if reply_to:
+            event_data["reply_to"] = reply_to
+        publish_chat_message_sync("global-chat", "new-message", event_data)
     except Exception as e:
         logger.error(f"Failed to publish global chat message to Pusher: {e}")
 
@@ -266,11 +266,24 @@ async def send_global_message(
                 detail=f"Rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
             )
     
+    # Validate reply_to_message_id if provided
+    reply_to_message = None
+    if request.reply_to_message_id:
+        reply_to_message = db.query(GlobalChatMessage).filter(
+            GlobalChatMessage.id == request.reply_to_message_id
+        ).first()
+        if not reply_to_message:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Message {request.reply_to_message_id} not found"
+            )
+    
     # Create message
     new_message = GlobalChatMessage(
         user_id=current_user.account_id,
         message=message_text,
-        client_message_id=request.client_message_id
+        client_message_id=request.client_message_id,
+        reply_to_message_id=request.reply_to_message_id if reply_to_message else None
     )
     
     db.add(new_message)
@@ -295,6 +308,22 @@ async def send_global_message(
     # Get user profile data (avatar, frame)
     profile_data = get_user_chat_profile_data(current_user, db)
     
+    # Get reply information if this is a reply
+    reply_info = None
+    if reply_to_message:
+        replied_sender_profile = get_user_chat_profile_data(reply_to_message.user, db)
+        reply_info = {
+            "message_id": reply_to_message.id,
+            "sender_id": reply_to_message.user_id,
+            "sender_username": get_display_username(reply_to_message.user),
+            "message": reply_to_message.message,
+            "sender_profile_pic": replied_sender_profile["profile_pic_url"],
+            "sender_avatar_url": replied_sender_profile["avatar_url"],
+            "sender_frame_url": replied_sender_profile["frame_url"],
+            "sender_badge": replied_sender_profile["badge"],
+            "created_at": reply_to_message.created_at.isoformat()
+        }
+    
     # Publish to Pusher via Redis queue (fallback to inline background tasks)
     username = get_display_username(current_user)
     event_enqueued = await enqueue_chat_event(
@@ -309,7 +338,8 @@ async def send_global_message(
                 "frame_url": profile_data["frame_url"],
                 "badge": profile_data["badge"],
                 "message": new_message.message,
-                "created_at": new_message.created_at.isoformat()
+                "created_at": new_message.created_at.isoformat(),
+                "reply_to": reply_info
             },
             "push_args": {
                 "message_id": new_message.id,
@@ -332,7 +362,8 @@ async def send_global_message(
             profile_data["frame_url"],
             profile_data["badge"],
             new_message.message,
-            new_message.created_at
+            new_message.created_at,
+            reply_info
         )
         background_tasks.add_task(
             send_push_for_global_chat_sync,
@@ -395,6 +426,27 @@ async def get_global_messages(
     result_messages = []
     for msg in reversed(messages):
         profile_data = get_user_chat_profile_data(msg.user, db)
+        
+        # Get reply information if this message is a reply
+        reply_info = None
+        if msg.reply_to_message_id:
+            replied_msg = db.query(GlobalChatMessage).filter(
+                GlobalChatMessage.id == msg.reply_to_message_id
+            ).first()
+            if replied_msg:
+                replied_sender_profile = get_user_chat_profile_data(replied_msg.user, db)
+                reply_info = {
+                    "message_id": replied_msg.id,
+                    "sender_id": replied_msg.user_id,
+                    "sender_username": get_display_username(replied_msg.user),
+                    "message": replied_msg.message,
+                    "sender_profile_pic": replied_sender_profile["profile_pic_url"],
+                    "sender_avatar_url": replied_sender_profile["avatar_url"],
+                    "sender_frame_url": replied_sender_profile["frame_url"],
+                    "sender_badge": replied_sender_profile["badge"],
+                    "created_at": replied_msg.created_at.isoformat()
+                }
+        
         result_messages.append({
             "id": msg.id,
             "user_id": msg.user_id,
@@ -404,7 +456,8 @@ async def get_global_messages(
             "frame_url": profile_data["frame_url"],
             "badge": profile_data["badge"],
             "message": msg.message,
-            "created_at": msg.created_at.isoformat()
+            "created_at": msg.created_at.isoformat(),
+            "reply_to": reply_info
         })
     
     return {

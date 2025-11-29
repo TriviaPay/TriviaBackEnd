@@ -917,12 +917,14 @@ class GroupMessage(Base):
     group_epoch = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     client_message_id = Column(String, unique=True, nullable=True)
+    reply_to_message_id = Column(UUID(as_uuid=True), ForeignKey("z_group_messages.id"), nullable=True, index=True)  # Reply to another message
     
     # Relationships
     group = relationship("Group", back_populates="messages")
     sender = relationship("User", foreign_keys=[sender_user_id], backref="group_messages_sent")
     sender_device = relationship("E2EEDevice", foreign_keys=[sender_device_id])
     delivery_records = relationship("GroupDelivery", back_populates="message")
+    reply_to_message = relationship("GroupMessage", remote_side=[id], backref="replies")
 
 
 class GroupDelivery(Base):
@@ -1095,9 +1097,11 @@ class GlobalChatMessage(Base):
     message_type = Column(String, default="text")  # "text", "system"
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     client_message_id = Column(String, nullable=True)  # For idempotency
+    reply_to_message_id = Column(Integer, ForeignKey("global_chat_messages.id"), nullable=True, index=True)  # Reply to another message
     
     # Relationships
     user = relationship("User", backref="global_chat_messages")
+    reply_to_message = relationship("GlobalChatMessage", remote_side=[id], backref="replies")
     
     __table_args__ = (
         # Unique constraint for idempotency (only when client_message_id is provided)
@@ -1145,10 +1149,12 @@ class PrivateChatMessage(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     delivered_at = Column(DateTime, nullable=True)
     client_message_id = Column(String, nullable=True)  # For idempotency
+    reply_to_message_id = Column(Integer, ForeignKey("private_chat_messages.id"), nullable=True, index=True)  # Reply to another message
     
     # Relationships
     conversation = relationship("PrivateChatConversation", backref="messages")
     sender = relationship("User", backref="private_chat_messages_sent")
+    reply_to_message = relationship("PrivateChatMessage", remote_side=[id], backref="replies")
     
     __table_args__ = (
         # Unique constraint for idempotency (only when client_message_id is provided)
@@ -1167,9 +1173,11 @@ class TriviaLiveChatMessage(Base):
     draw_date = Column(Date, nullable=False, index=True)  # Use Date instead of DateTime for stability
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     client_message_id = Column(String, nullable=True)  # For idempotency
+    reply_to_message_id = Column(Integer, ForeignKey("trivia_live_chat_messages.id"), nullable=True, index=True)  # Reply to another message
     
     # Relationships
     user = relationship("User", backref="trivia_live_chat_messages")
+    reply_to_message = relationship("TriviaLiveChatMessage", remote_side=[id], backref="replies")
 
 # =================================
 #  Global Chat Viewers Table

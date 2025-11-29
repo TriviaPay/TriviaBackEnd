@@ -48,6 +48,7 @@ class SendMessageRequest(BaseModel):
     recipient_id: int = Field(..., description="User ID of recipient")
     message: str = Field(..., min_length=1, max_length=PRIVATE_CHAT_MAX_MESSAGE_LENGTH)
     client_message_id: Optional[str] = Field(None, description="Client-provided ID for idempotency")
+    reply_to_message_id: Optional[int] = Field(None, description="ID of message being replied to")
 
 
 class AcceptRejectRequest(BaseModel):
@@ -158,28 +159,27 @@ def publish_to_pusher_private(conversation_id: int, message_id: int, sender_id: 
                                sender_username: str, profile_pic_url: Optional[str],
                                avatar_url: Optional[str], frame_url: Optional[str], badge: Optional[dict],
                                message: str, created_at: Union[datetime, str],
-                               is_new_conversation: bool):
+                               is_new_conversation: bool, reply_to: Optional[dict] = None):
     """Background task to publish to Pusher"""
     try:
         created_at_dt = _ensure_datetime(created_at)
         channel = f"private-conversation-{conversation_id}"
-        publish_chat_message_sync(
-            channel,
-            "new-message",
-            {
-                "conversation_id": conversation_id,
-                "message_id": message_id,
-                "sender_id": sender_id,
-                "sender_username": sender_username,
-                "profile_pic": profile_pic_url,
-                "avatar_url": avatar_url,
-                "frame_url": frame_url,
-                "badge": badge,
-                "message": message,
-                "created_at": created_at_dt.isoformat(),
-                "is_new_conversation": is_new_conversation
-            }
-        )
+        event_data = {
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "sender_id": sender_id,
+            "sender_username": sender_username,
+            "profile_pic": profile_pic_url,
+            "avatar_url": avatar_url,
+            "frame_url": frame_url,
+            "badge": badge,
+            "message": message,
+            "created_at": created_at_dt.isoformat(),
+            "is_new_conversation": is_new_conversation
+        }
+        if reply_to:
+            event_data["reply_to"] = reply_to
+        publish_chat_message_sync(channel, "new-message", event_data)
     except Exception as e:
         logger.error(f"Failed to publish private chat message to Pusher: {e}")
 
@@ -395,13 +395,27 @@ async def send_private_message(
                 detail=f"Rate limit exceeded. Maximum {PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
             )
     
+    # Validate reply_to_message_id if provided
+    reply_to_message = None
+    if request.reply_to_message_id:
+        reply_to_message = db.query(PrivateChatMessage).filter(
+            PrivateChatMessage.id == request.reply_to_message_id,
+            PrivateChatMessage.conversation_id == conversation.id
+        ).first()
+        if not reply_to_message:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Message {request.reply_to_message_id} not found in this conversation"
+            )
+    
     # Create message
     new_message = PrivateChatMessage(
         conversation_id=conversation.id,
         sender_id=current_user.account_id,
         message=sanitized_message,
         status='sent',
-        client_message_id=request.client_message_id
+        client_message_id=request.client_message_id,
+        reply_to_message_id=request.reply_to_message_id if reply_to_message else None
     )
     
     db.add(new_message)
@@ -433,6 +447,22 @@ async def send_private_message(
     # Get user profile data (avatar, frame)
     profile_data = get_user_chat_profile_data(current_user, db)
     
+    # Get reply information if this is a reply
+    reply_info = None
+    if reply_to_message:
+        replied_sender_profile = get_user_chat_profile_data(reply_to_message.sender, db)
+        reply_info = {
+            "message_id": reply_to_message.id,
+            "sender_id": reply_to_message.sender_id,
+            "sender_username": get_display_username(reply_to_message.sender),
+            "message": reply_to_message.message,
+            "sender_profile_pic": replied_sender_profile["profile_pic_url"],
+            "sender_avatar_url": replied_sender_profile["avatar_url"],
+            "sender_frame_url": replied_sender_profile["frame_url"],
+            "sender_badge": replied_sender_profile["badge"],
+            "created_at": reply_to_message.created_at.isoformat()
+        }
+    
     # Publish to Pusher via Redis queue (fallback to inline background tasks)
     username = get_display_username(current_user)
     event_enqueued = await enqueue_chat_event(
@@ -449,7 +479,8 @@ async def send_private_message(
                 "badge": profile_data["badge"],
                 "message": new_message.message,
                 "created_at": new_message.created_at.isoformat(),
-                "is_new_conversation": is_new_conversation
+                "is_new_conversation": is_new_conversation,
+                "reply_to": reply_info
             },
             "push_args": {
                 "recipient_id": request.recipient_id,
@@ -475,7 +506,8 @@ async def send_private_message(
             profile_data["badge"],
             new_message.message,
             new_message.created_at,
-            is_new_conversation
+            is_new_conversation,
+            reply_info
         )
         background_tasks.add_task(
             send_push_if_needed_sync,
@@ -677,6 +709,26 @@ async def get_private_messages(
         sender_profile_data = get_user_chat_profile_data(msg.sender, db)
         is_read = last_read_id is not None and msg.id <= last_read_id if msg.sender_id != current_user.account_id else None
         
+        # Get reply information if this message is a reply
+        reply_info = None
+        if msg.reply_to_message_id:
+            replied_msg = db.query(PrivateChatMessage).filter(
+                PrivateChatMessage.id == msg.reply_to_message_id
+            ).first()
+            if replied_msg:
+                replied_sender_profile = get_user_chat_profile_data(replied_msg.sender, db)
+                reply_info = {
+                    "message_id": replied_msg.id,
+                    "sender_id": replied_msg.sender_id,
+                    "sender_username": get_display_username(replied_msg.sender),
+                    "message": replied_msg.message,
+                    "sender_profile_pic": replied_sender_profile["profile_pic_url"],
+                    "sender_avatar_url": replied_sender_profile["avatar_url"],
+                    "sender_frame_url": replied_sender_profile["frame_url"],
+                    "sender_badge": replied_sender_profile["badge"],
+                    "created_at": replied_msg.created_at.isoformat()
+                }
+        
         result_messages.append({
             "id": msg.id,
             "sender_id": msg.sender_id,
@@ -689,7 +741,8 @@ async def get_private_messages(
             "status": msg.status,
             "created_at": msg.created_at.isoformat(),
             "delivered_at": msg.delivered_at.isoformat() if msg.delivered_at else None,
-            "is_read": is_read
+            "is_read": is_read,
+            "reply_to": reply_info
         })
     
     return {
