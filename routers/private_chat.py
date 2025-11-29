@@ -206,6 +206,12 @@ def send_push_if_needed_sync(recipient_id: int, conversation_id: int, sender_id:
         # Check if user is active (determines in-app vs system notification)
         is_active = is_user_active(recipient_id, db)
         
+        logger.info(
+            f"Preparing push notification | recipient_id={recipient_id} | sender_id={sender_id} | "
+            f"is_active={is_active} | is_new_conversation={is_new_conversation} | "
+            f"player_count={len(player_ids)}"
+        )
+        
         if is_new_conversation:
             heading = "New Chat Request"
             content = f"{sender_username} wants to chat with you"
@@ -241,7 +247,10 @@ def send_push_if_needed_sync(recipient_id: int, conversation_id: int, sender_id:
         )
         
         notification_type = "in-app" if is_active else "system"
-        logger.debug(f"Sent {notification_type} push notification to user {recipient_id}")
+        logger.info(
+            f"Sent {notification_type} push notification | recipient_id={recipient_id} | "
+            f"sender_id={sender_id} | is_in_app={is_active} | player_count={len(player_ids)}"
+        )
     except Exception as e:
         logger.error(f"Failed to send push notification: {e}")
     finally:

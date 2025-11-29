@@ -154,6 +154,7 @@ def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_usern
         
         # Send in-app notifications to active users
         for batch in active_player_batches:
+            logger.debug(f"Sending in-app notification batch: {len(batch)} players")
             loop.run_until_complete(
                 send_push_notification_async(
                     player_ids=batch,
@@ -166,6 +167,7 @@ def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_usern
         
         # Send system push notifications to inactive users
         for batch in inactive_player_batches:
+            logger.debug(f"Sending system push notification batch: {len(batch)} players")
             loop.run_until_complete(
                 send_push_notification_async(
                     player_ids=batch,
@@ -178,7 +180,10 @@ def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_usern
         
         total_active = sum(len(b) for b in active_player_batches)
         total_inactive = sum(len(b) for b in inactive_player_batches)
-        logger.info(f"Sent global chat push notifications: {total_active} in-app, {total_inactive} system")
+        logger.info(
+            f"Sent global chat push notifications | in-app={total_active} | system={total_inactive} | "
+            f"sender_id={sender_id} | message_id={message_id}"
+        )
     except Exception as e:
         logger.error(f"Failed to send push notifications for global chat: {e}")
     finally:

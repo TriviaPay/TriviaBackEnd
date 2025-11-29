@@ -80,6 +80,9 @@ async def send_push_notification_async(
     notification_data = data.copy() if data else {}
     if is_in_app_notification:
         notification_data["show_as_in_app"] = True
+        # For in-app notifications, we also need to ensure OneSignal doesn't suppress them
+        # when app is in foreground. We'll use content_available and set send_after to now
+        logger.debug(f"In-app notification flag set: show_as_in_app=True for {len(player_ids)} players")
     
     payload = {
         "app_id": ONESIGNAL_APP_ID,
@@ -87,6 +90,13 @@ async def send_push_notification_async(
         "headings": {"en": heading},
         "contents": {"en": content},
     }
+    
+    # For in-app notifications, add content_available to ensure delivery even when app is in foreground
+    if is_in_app_notification:
+        payload["content_available"] = True
+        # iOS requires this for background notifications
+        payload["ios_badgeType"] = "None"  # Don't update badge for in-app
+        payload["ios_badgeCount"] = 0
     
     if notification_data:
         payload["data"] = notification_data
@@ -123,9 +133,18 @@ async def send_push_notification_async(
                 logger.warning(f"OneSignal reported invalid player IDs: {result['invalid_player_ids']}")
                 # Note: We could mark these as invalid here, but we'll do it in a separate cleanup task
             
-            logger.info(f"✅ OneSignal notification sent successfully to {len(player_ids)} players")
+            notification_type = "in-app" if is_in_app_notification else "system"
+            logger.info(
+                f"✅ OneSignal {notification_type} notification sent successfully to {len(player_ids)} players | "
+                f"show_as_in_app={is_in_app_notification} | notification_id={result.get('id', 'N/A')}"
+            )
             if "id" in result:
                 logger.debug(f"OneSignal notification ID: {result['id']}")
+            
+            # Log the data payload to verify show_as_in_app flag is included
+            if is_in_app_notification and notification_data:
+                logger.debug(f"In-app notification payload includes: show_as_in_app={notification_data.get('show_as_in_app', False)}")
+            
             return True
     except httpx.HTTPStatusError as e:
         # Log full error details for debugging
