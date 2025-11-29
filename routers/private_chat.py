@@ -79,11 +79,12 @@ def get_display_username(user: User) -> str:
     return f"User{user.account_id}"
 
 
-def get_user_presence_info(db: Session, user_id: int, viewer_id: int) -> Tuple[bool, Optional[str]]:
+def get_user_presence_info(db: Session, user_id: int, viewer_id: int, conversation_id: Optional[int] = None) -> Tuple[bool, Optional[str]]:
     """
     Get user's online status and last seen time, respecting privacy settings.
     Returns (is_online, last_seen_at_iso) tuple.
     Creates default presence if it doesn't exist.
+    Falls back to last message time if last_seen_at is None.
     """
     if not PRESENCE_ENABLED:
         return False, None
@@ -122,7 +123,24 @@ def get_user_presence_info(db: Session, user_id: int, viewer_id: int) -> Tuple[b
         is_online = presence.device_online
     
     if share_last_seen in ["everyone", "contacts"]:
-        last_seen = presence.last_seen_at.isoformat() if presence.last_seen_at else None
+        if presence.last_seen_at:
+            last_seen = presence.last_seen_at.isoformat()
+        else:
+            # Fallback: use last message time if last_seen_at is None
+            if conversation_id:
+                last_message = db.query(PrivateChatMessage).filter(
+                    PrivateChatMessage.conversation_id == conversation_id,
+                    PrivateChatMessage.sender_id == user_id
+                ).order_by(PrivateChatMessage.created_at.desc()).first()
+                if last_message:
+                    last_seen = last_message.created_at.isoformat()
+            else:
+                # Try to find any recent message from this user
+                last_message = db.query(PrivateChatMessage).filter(
+                    PrivateChatMessage.sender_id == user_id
+                ).order_by(PrivateChatMessage.created_at.desc()).first()
+                if last_message:
+                    last_seen = last_message.created_at.isoformat()
     
     return is_online, last_seen
 
@@ -590,7 +608,7 @@ async def list_private_conversations(
             ).count()
         
         # Get peer user's presence (last seen and online status)
-        peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id)
+        peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id, conv.id)
         
         # Get peer user's profile data (avatar, frame)
         peer_profile_data = get_user_chat_profile_data(peer_user, db)
@@ -651,7 +669,7 @@ async def get_private_messages(
     
     # Get peer user's presence (last seen and online status)
     peer_id = conversation.user2_id if conversation.user1_id == current_user.account_id else conversation.user1_id
-    peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id)
+    peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id, conversation_id)
     
     # Get profile data for all message senders
     result_messages = []
@@ -766,8 +784,29 @@ async def get_conversation(
     peer_id = conversation.user2_id if conversation.user1_id == current_user.account_id else conversation.user1_id
     peer_user = db.query(User).filter(User.account_id == peer_id).first()
     
+    # Update current user's presence when they view a conversation
+    if PRESENCE_ENABLED:
+        current_user_presence = db.query(UserPresence).filter(
+            UserPresence.user_id == current_user.account_id
+        ).first()
+        if current_user_presence:
+            current_user_presence.last_seen_at = datetime.utcnow()
+        else:
+            current_user_presence = UserPresence(
+                user_id=current_user.account_id,
+                last_seen_at=datetime.utcnow(),
+                device_online=False,
+                privacy_settings={
+                    "share_last_seen": "contacts",
+                    "share_online": True,
+                    "read_receipts": True
+                }
+            )
+            db.add(current_user_presence)
+        db.commit()
+    
     # Get peer user's presence (last seen and online status)
-    peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id)
+    peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id, conversation_id)
     
     # Get peer user's profile data (avatar, frame)
     peer_profile_data = get_user_chat_profile_data(peer_user, db) if peer_user else {
