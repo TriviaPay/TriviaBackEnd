@@ -13,6 +13,7 @@ import os
 from db import get_db
 from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, GemPackageConfig, BoostConfig, UserGemPurchase, TriviaUserDaily
 from routers.dependencies import get_current_user, get_admin_user
+from routers.trivia import get_active_draw_date
 from utils.storage import presign_get
 from utils.logging_helpers import log_info, log_warning, log_error, log_debug
 import logging
@@ -281,16 +282,21 @@ async def use_gameplay_boost(
         raise HTTPException(status_code=404, detail="Question not found")
 
     # Get user's daily question unlock/attempt
-    today = get_today_in_app_timezone()
+    # Use active_draw_date (tomorrow) where questions are actually stored, not today
+    active_draw_date = get_active_draw_date()
+    today = get_today_in_app_timezone()  # Keep for logging reference
+    
     user_daily = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
         TriviaUserDaily.question_number == request.question_number,
-        TriviaUserDaily.date == today
+        TriviaUserDaily.date == active_draw_date  # Use active_draw_date, not today
     ).first()
 
     if not user_daily or user_daily.unlock_method is None:
-        log_warning(logger, f"Question not unlocked for today", user_id=user_id, 
-                   question_number=request.question_number, today=str(today),
+        log_warning(logger, f"Question not unlocked", user_id=user_id, 
+                   question_number=request.question_number, 
+                   active_draw_date=str(active_draw_date),
+                   today=str(today),
                    user_daily_id=user_daily.id if user_daily else None,
                    unlock_method=user_daily.unlock_method if user_daily else None)
         raise HTTPException(status_code=400, detail="Question not unlocked for today")
@@ -307,9 +313,9 @@ async def use_gameplay_boost(
     # Process boost
     response = {}
     
-    # Get daily pool question for reference
+    # Get daily pool question for reference (use active_draw_date where questions are stored)
     daily_pool_q = db.query(TriviaQuestionsDaily).filter(
-        func.date(TriviaQuestionsDaily.date) == today,
+        func.date(TriviaQuestionsDaily.date) == active_draw_date,
         TriviaQuestionsDaily.question_number == request.question_number
     ).first()
     

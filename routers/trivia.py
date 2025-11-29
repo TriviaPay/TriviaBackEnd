@@ -14,7 +14,9 @@ from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, T
 from routers.dependencies import get_current_user
 from pathlib import Path as FilePath
 from utils.draw_calculations import get_next_draw_time
+from utils.logging_helpers import log_info, log_warning, log_error
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/trivia", tags=["Trivia"])
 
 # Helper function to get today's date in the app timezone (EST/US Eastern)
@@ -157,13 +159,20 @@ async def get_current_question(
     
     # Get the shared pool for active draw date - use timezone-aware date range
     start_datetime, end_datetime = get_date_range_for_query(active_draw_date)
+    logging.info(f"🔍 Querying pool for date range: {start_datetime} to {end_datetime} (UTC)")
+    
     daily_pool = db.query(TriviaQuestionsDaily).filter(
         TriviaQuestionsDaily.date >= start_datetime,
         TriviaQuestionsDaily.date <= end_datetime
     ).order_by(TriviaQuestionsDaily.question_order).all()
     
+    # Debug: Check what dates actually exist in the database
+    all_dates = db.query(TriviaQuestionsDaily.date).distinct().all()
+    logging.info(f"📊 All dates in trivia_questions_daily table: {[str(d[0]) for d in all_dates[:10]]}")
+    
     if not daily_pool:
         logging.warning(f"No questions found for active draw date ({active_draw_date}) in app timezone. Daily pool is empty.")
+        logging.warning(f"Query range was: {start_datetime} to {end_datetime} (UTC)")
         raise HTTPException(status_code=404, detail="No questions available for today")
     
     # Check if user has answered correctly for the active draw date
@@ -883,11 +892,18 @@ async def get_question_status(
     db: Session = Depends(get_db)
 ):
     """Get the status of a specific question for the current user"""
+    user_id = user.account_id if user else None
+    
     if not user:
+        log_warning(logger, "Question status request failed: User not found", user_id=user_id, question_number=question_number)
         raise HTTPException(status_code=404, detail="User not found")
     
     # Get the active draw date (where questions are stored)
     active_draw_date = get_active_draw_date()
+    today = get_today_in_app_timezone()
+    
+    log_info(logger, "Question status request", user_id=user_id, question_number=question_number, 
+             active_draw_date=str(active_draw_date), today=str(today))
     
     user_daily = db.query(TriviaUserDaily).filter(
         TriviaUserDaily.account_id == user.account_id,
@@ -896,10 +912,13 @@ async def get_question_status(
     ).first()
     
     if not user_daily:
+        log_warning(logger, "Question not found or not unlocked", user_id=user_id, 
+                   question_number=question_number, active_draw_date=str(active_draw_date))
         raise HTTPException(status_code=404, detail="Question not found or not unlocked")
     
     question = db.query(Trivia).filter(Trivia.question_number == question_number).first()
     if not question:
+        log_warning(logger, "Question not found in Trivia table", user_id=user_id, question_number=question_number)
         raise HTTPException(status_code=404, detail="Question not found")
     
     return {

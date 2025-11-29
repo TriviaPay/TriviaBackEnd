@@ -295,4 +295,9 @@ def cleanup_unused_questions():
         db.close()
 
 if __name__ == "__main__":
+    # Configure logging when run directly
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     cleanup_unused_questions()
