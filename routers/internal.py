@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, BackgroundTasks
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from datetime import date, timedelta, datetime
 import os
@@ -7,10 +8,11 @@ from db import get_db
 from rewards_logic import perform_draw, reset_monthly_subscriptions, reset_weekly_daily_rewards
 import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
-from models import GlobalChatMessage, User
+from models import GlobalChatMessage, User, OneSignalPlayer, TriviaUserDaily
 from utils.pusher_client import publish_chat_message_sync
 from utils.chat_helpers import get_user_chat_profile_data
-from config import GLOBAL_CHAT_ENABLED
+from utils.onesignal_client import send_push_notification_async
+from config import GLOBAL_CHAT_ENABLED, ONESIGNAL_ENABLED
 
 router = APIRouter(prefix="/internal", tags=["Internal"])
 
@@ -102,23 +104,36 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
     
     message = "\n".join(message_lines)
     
-    # Get or create a system user for sending announcements
-    system_user_id = int(os.getenv("SYSTEM_USER_ID", "0"))
+    # Get system user from ADMIN_EMAIL environment variable
+    admin_email = os.getenv("ADMIN_EMAIL")
     
-    if system_user_id == 0:
-        # Try to find a system/admin user first
-        system_user = db.query(User).filter(User.is_admin == True).first()
+    if admin_email:
+        # Find user by ADMIN_EMAIL
+        system_user = db.query(User).filter(User.email == admin_email).first()
         if system_user:
             system_user_id = system_user.account_id
-            logging.info(f"Using admin user (account_id={system_user_id}) for winner announcement")
+            logging.info(f"Using admin user from ADMIN_EMAIL (account_id={system_user_id}, email={admin_email}) for winner announcement")
         else:
-            # Fallback: use the first user in the database
-            first_user = db.query(User).order_by(User.account_id).first()
-            if first_user:
-                system_user_id = first_user.account_id
-                logging.warning(f"No admin user found. Using first user (account_id={system_user_id}) as system user for announcement")
+            logging.error(f"User with ADMIN_EMAIL={admin_email} not found in database. Cannot send winner announcement.")
+            return
+    else:
+        # Fallback: try SYSTEM_USER_ID if ADMIN_EMAIL not set
+        system_user_id = int(os.getenv("SYSTEM_USER_ID", "0"))
+        if system_user_id > 0:
+            system_user = db.query(User).filter(User.account_id == system_user_id).first()
+            if system_user:
+                logging.info(f"Using system user from SYSTEM_USER_ID (account_id={system_user_id}) for winner announcement")
             else:
-                logging.error("No users found in database. Cannot send winner announcement.")
+                logging.error(f"User with SYSTEM_USER_ID={system_user_id} not found in database. Cannot send winner announcement.")
+                return
+        else:
+            # Final fallback: try to find any admin user
+            system_user = db.query(User).filter(User.is_admin == True).first()
+            if system_user:
+                system_user_id = system_user.account_id
+                logging.warning(f"ADMIN_EMAIL not set. Using admin user (account_id={system_user_id}) for winner announcement")
+            else:
+                logging.error("ADMIN_EMAIL not set and no admin user found. Cannot send winner announcement.")
                 return
     
     # Create the message
@@ -260,6 +275,138 @@ async def internal_daily_draw(
             status_code=500,
             detail=f"Error in daily draw: {str(e)}"
         )
+
+
+class TriviaReminderRequest(BaseModel):
+    """
+    Request body for trivia reminder notifications.
+
+    This is a generic app notification (not chat) that reminds users
+    to complete today's trivia before the draw.
+    """
+
+    heading: str = Field(
+        default="Trivia Reminder",
+        description="Notification title shown in the push notification",
+    )
+    message: str = Field(
+        default="You still haven't completed today's trivia! Answer now to enter the draw. 🎯",
+        description="Notification message body",
+    )
+    only_incomplete_users: bool = Field(
+        default=True,
+        description="If true, send only to users who have NOT answered correctly for today's draw date",
+    )
+
+
+@router.post("/trivia-reminder")
+async def send_trivia_reminder(
+    request: TriviaReminderRequest,
+    secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
+    db: Session = Depends(get_db),
+):
+    """
+    Internal endpoint to send a push notification reminder for daily trivia.
+
+    - Intended to be called ~1 hour before the draw time by an external cron or scheduler.
+    - Sends a OneSignal push notification to:
+        * All users with valid OneSignal players, OR
+        * Only users who have NOT answered correctly today (default).
+    - This is an app-level notification, not tied to chat.
+    """
+    if secret != os.getenv("INTERNAL_SECRET"):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if not ONESIGNAL_ENABLED:
+        raise HTTPException(status_code=403, detail="OneSignal is disabled")
+
+    try:
+        # Import here to avoid circular imports
+        from routers.trivia import get_active_draw_date
+
+        # Determine active draw date (the date for which answers are stored)
+        active_draw_date = get_active_draw_date()
+        logging.info(f"📣 Trivia reminder triggered for draw date: {active_draw_date}")
+
+        # Find users who have answered correctly for the active draw date
+        q_correct_users = db.query(TriviaUserDaily.account_id).filter(
+            TriviaUserDaily.date == active_draw_date,
+            TriviaUserDaily.status == "answered_correct",
+        ).distinct()
+
+        correct_user_ids = {row[0] for row in q_correct_users}
+        logging.info(
+            f"📊 Users who already answered correctly for {active_draw_date}: {len(correct_user_ids)}"
+        )
+
+        # Base query: all valid OneSignal players
+        players_q = db.query(OneSignalPlayer).filter(OneSignalPlayer.is_valid == True)
+
+        if request.only_incomplete_users and correct_user_ids:
+            # Exclude users who have already answered correctly
+            players_q = players_q.filter(~OneSignalPlayer.user_id.in_(correct_user_ids))
+
+        players = players_q.all()
+        player_ids = [p.player_id for p in players]
+
+        if not player_ids:
+            logging.warning(
+                f"⚠️ No OneSignal players found for trivia reminder on {active_draw_date} "
+                f"(only_incomplete_users={request.only_incomplete_users})"
+            )
+            return {
+                "status": "no_players",
+                "sent_to": 0,
+                "draw_date": active_draw_date.isoformat(),
+                "only_incomplete_users": request.only_incomplete_users,
+            }
+
+        # Batch player IDs (OneSignal supports up to ~2000 per request)
+        BATCH_SIZE = 2000
+        total_sent = 0
+
+        heading = request.heading
+        content = request.message
+        data = {
+            "type": "trivia_reminder",
+            "draw_date": active_draw_date.isoformat(),
+        }
+
+        # IMPORTANT: This is an app-level reminder, not chat.
+        # We DO NOT use the 30-second "active user" suppression here.
+        # All targeted users get a normal push notification, even if they're active.
+
+        for i in range(0, len(player_ids), BATCH_SIZE):
+            batch = player_ids[i : i + BATCH_SIZE]
+            # Normal system push (not in-app), so is_in_app_notification=False
+            ok = await send_push_notification_async(
+                player_ids=batch,
+                heading=heading,
+                content=content,
+                data=data,
+                is_in_app_notification=False,
+            )
+            if ok:
+                total_sent += len(batch)
+
+        logging.info(
+            f"✅ Trivia reminder push sent to {total_sent} players "
+            f"(targeted={len(player_ids)}, only_incomplete_users={request.only_incomplete_users})"
+        )
+
+        return {
+            "status": "success",
+            "sent_to": total_sent,
+            "targeted_players": len(player_ids),
+            "draw_date": active_draw_date.isoformat(),
+            "only_incomplete_users": request.only_incomplete_users,
+        }
+    except HTTPException:
+        # Pass through HTTP errors unchanged
+        raise
+    except Exception as e:
+        logging.error(f"❌ Error in trivia reminder: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/question-reset")
 async def internal_question_reset(
