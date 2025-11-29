@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 from datetime import datetime, timedelta
-from typing import Optional, Union
+from typing import Optional, Union, Tuple
 
 from db import get_db
 from models import (
@@ -17,7 +17,8 @@ from config import (
     PRIVATE_CHAT_MAX_MESSAGE_LENGTH,
     PRIVATE_CHAT_MAX_MESSAGES_PER_BURST,
     PRIVATE_CHAT_BURST_WINDOW_SECONDS,
-    TYPING_TIMEOUT_SECONDS
+    TYPING_TIMEOUT_SECONDS,
+    PRESENCE_ENABLED
 )
 from utils.pusher_client import publish_chat_message_sync
 from utils.onesignal_client import (
@@ -76,6 +77,54 @@ def get_display_username(user: User) -> str:
     if user.email:
         return user.email.split('@')[0]
     return f"User{user.account_id}"
+
+
+def get_user_presence_info(db: Session, user_id: int, viewer_id: int) -> Tuple[bool, Optional[str]]:
+    """
+    Get user's online status and last seen time, respecting privacy settings.
+    Returns (is_online, last_seen_at_iso) tuple.
+    Creates default presence if it doesn't exist.
+    """
+    if not PRESENCE_ENABLED:
+        return False, None
+    
+    presence = db.query(UserPresence).filter(
+        UserPresence.user_id == user_id
+    ).first()
+    
+    # Create default presence if it doesn't exist
+    if not presence:
+        presence = UserPresence(
+            user_id=user_id,
+            privacy_settings={
+                "share_last_seen": "contacts",
+                "share_online": True,
+                "read_receipts": True
+            },
+            device_online=False,
+            last_seen_at=None
+        )
+        db.add(presence)
+        db.commit()
+        db.refresh(presence)
+    
+    # Check privacy settings
+    privacy = presence.privacy_settings or {}
+    share_online = privacy.get("share_online", True)
+    share_last_seen = privacy.get("share_last_seen", "contacts")
+    
+    # For now, assume if user is in conversation, they're a contact
+    # TODO: Implement proper contact/friend checking
+    is_online = False
+    last_seen = None
+    
+    if share_online:
+        is_online = presence.device_online
+    
+    if share_last_seen in ["everyone", "contacts"]:
+        last_seen = presence.last_seen_at.isoformat() if presence.last_seen_at else None
+    
+    return is_online, last_seen
 
 
 def _ensure_datetime(value: Union[datetime, str]) -> datetime:
@@ -339,6 +388,27 @@ async def send_private_message(
     
     db.add(new_message)
     conversation.last_message_at = datetime.utcnow()
+    
+    # Update sender's presence (last_seen_at) when they send a message
+    if PRESENCE_ENABLED:
+        sender_presence = db.query(UserPresence).filter(
+            UserPresence.user_id == current_user.account_id
+        ).first()
+        if sender_presence:
+            sender_presence.last_seen_at = datetime.utcnow()
+        else:
+            sender_presence = UserPresence(
+                user_id=current_user.account_id,
+                last_seen_at=datetime.utcnow(),
+                device_online=False,
+                privacy_settings={
+                    "share_last_seen": "contacts",
+                    "share_online": True,
+                    "read_receipts": True
+                }
+            )
+            db.add(sender_presence)
+    
     db.commit()
     db.refresh(new_message)
     
@@ -520,26 +590,7 @@ async def list_private_conversations(
             ).count()
         
         # Get peer user's presence (last seen and online status)
-        peer_presence = db.query(UserPresence).filter(
-            UserPresence.user_id == peer_id
-        ).first()
-        
-        # Check privacy settings (simplified - respect share_online and share_last_seen)
-        peer_online = False
-        peer_last_seen = None
-        
-        if peer_presence:
-            privacy = peer_presence.privacy_settings or {}
-            share_online = privacy.get("share_online", True)
-            share_last_seen = privacy.get("share_last_seen", "contacts")
-            
-            # For now, assume if user is in conversation, they're a contact
-            # TODO: Implement proper contact/friend checking
-            if share_online:
-                peer_online = peer_presence.device_online
-            
-            if share_last_seen in ["everyone", "contacts"]:
-                peer_last_seen = peer_presence.last_seen_at.isoformat() if peer_presence.last_seen_at else None
+        peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id)
         
         # Get peer user's profile data (avatar, frame)
         peer_profile_data = get_user_chat_profile_data(peer_user, db)
@@ -600,26 +651,7 @@ async def get_private_messages(
     
     # Get peer user's presence (last seen and online status)
     peer_id = conversation.user2_id if conversation.user1_id == current_user.account_id else conversation.user1_id
-    peer_presence = db.query(UserPresence).filter(
-        UserPresence.user_id == peer_id
-    ).first()
-    
-    # Check privacy settings (simplified - respect share_online and share_last_seen)
-    peer_online = False
-    peer_last_seen = None
-    
-    if peer_presence:
-        privacy = peer_presence.privacy_settings or {}
-        share_online = privacy.get("share_online", True)
-        share_last_seen = privacy.get("share_last_seen", "contacts")
-        
-        # For now, assume if user is in conversation, they're a contact
-        # TODO: Implement proper contact/friend checking
-        if share_online:
-            peer_online = peer_presence.device_online
-        
-        if share_last_seen in ["everyone", "contacts"]:
-            peer_last_seen = peer_presence.last_seen_at.isoformat() if peer_presence.last_seen_at else None
+    peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id)
     
     # Get profile data for all message senders
     result_messages = []
@@ -735,26 +767,7 @@ async def get_conversation(
     peer_user = db.query(User).filter(User.account_id == peer_id).first()
     
     # Get peer user's presence (last seen and online status)
-    peer_presence = db.query(UserPresence).filter(
-        UserPresence.user_id == peer_id
-    ).first()
-    
-    # Check privacy settings (simplified - respect share_online and share_last_seen)
-    peer_online = False
-    peer_last_seen = None
-    
-    if peer_presence:
-        privacy = peer_presence.privacy_settings or {}
-        share_online = privacy.get("share_online", True)
-        share_last_seen = privacy.get("share_last_seen", "contacts")
-        
-        # For now, assume if user is in conversation, they're a contact
-        # TODO: Implement proper contact/friend checking
-        if share_online:
-            peer_online = peer_presence.device_online
-        
-        if share_last_seen in ["everyone", "contacts"]:
-            peer_last_seen = peer_presence.last_seen_at.isoformat() if peer_presence.last_seen_at else None
+    peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id)
     
     # Get peer user's profile data (avatar, frame)
     peer_profile_data = get_user_chat_profile_data(peer_user, db) if peer_user else {

@@ -5,9 +5,40 @@ import os
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+import warnings
+import sys
+import io
+
+# Suppress ALL warnings from dotenv BEFORE importing it
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*dotenv.*")
+warnings.filterwarnings("ignore", message=".*Python-dotenv.*")
+
+# Create a filter for stderr that removes dotenv warnings
+class FilteredStderr:
+    def __init__(self, original_stderr):
+        self.original_stderr = original_stderr
+        
+    def write(self, text):
+        # Filter out dotenv-related warnings
+        if text and ('dotenv' not in text.lower() and 'Python-dotenv' not in text):
+            self.original_stderr.write(text)
+            
+    def flush(self):
+        self.original_stderr.flush()
+        
+    def __getattr__(self, name):
+        return getattr(self.original_stderr, name)
+
+# Redirect stderr to filter out dotenv warnings (only if not already filtered)
+if not isinstance(sys.stderr, FilteredStderr):
+    _filtered_stderr = FilteredStderr(sys.stderr)
+    sys.stderr = _filtered_stderr
+
 from dotenv import load_dotenv
 
-load_dotenv()
+# Suppress dotenv parsing warnings for malformed lines
+load_dotenv(override=False)
 
 # Get DATABASE_URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL")

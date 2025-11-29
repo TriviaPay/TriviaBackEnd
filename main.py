@@ -11,8 +11,40 @@ import sys
 # Conditional scheduler for local development
 
 
+# Suppress warnings BEFORE loading dotenv
+import warnings
+import sys
+import io
+
+# Suppress ALL dotenv-related warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*dotenv.*")
+warnings.filterwarnings("ignore", message=".*Python-dotenv.*")
+
+# Create a filter for stderr that removes dotenv warnings
+class FilteredStderr:
+    def __init__(self, original_stderr):
+        self.original_stderr = original_stderr
+        
+    def write(self, text):
+        # Filter out dotenv-related warnings
+        if text and ('dotenv' not in text.lower() and 'Python-dotenv' not in text):
+            self.original_stderr.write(text)
+            
+    def flush(self):
+        self.original_stderr.flush()
+        
+    def __getattr__(self, name):
+        return getattr(self.original_stderr, name)
+
+# Redirect stderr to filter out dotenv warnings (only if not already filtered)
+if not isinstance(sys.stderr, FilteredStderr):
+    _filtered_stderr = FilteredStderr(sys.stderr)
+    sys.stderr = _filtered_stderr
+
 # Load environment variables
-load_dotenv()
+from dotenv import load_dotenv
+load_dotenv(override=False)
 
 # Configure logging
 import logging
@@ -42,6 +74,20 @@ if not logger.handlers:
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
+
+# Suppress importlib.metadata warnings (Python 3.9 compatibility)
+warnings.filterwarnings("ignore", message=".*importlib.metadata.*")
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*Python version.*")
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*You are using a Python version.*")
+
+# Suppress importlib.metadata errors by catching AttributeError
+try:
+    import importlib.metadata
+    if not hasattr(importlib.metadata, 'packages_distributions'):
+        # Add a dummy attribute to prevent errors
+        importlib.metadata.packages_distributions = lambda: {}
+except (AttributeError, ImportError):
+    pass
 
 # Configure uvicorn logging to match our log level (prevents duplicate logs)
 logging.getLogger('uvicorn').setLevel(log_level)
