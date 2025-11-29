@@ -8,8 +8,34 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-ONESIGNAL_API_URL = "https://onesignal.com/api/v1/notifications"
+ONESIGNAL_API_URL = "https://api.onesignal.com/notifications"
 ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS = 30  # Don't send push if user was active in last 30 seconds
+
+# Log OneSignal configuration on module import (one-time, at server startup)
+if ONESIGNAL_ENABLED:
+    app_id_len = len(ONESIGNAL_APP_ID) if ONESIGNAL_APP_ID else 0
+    rest_key_len = len(ONESIGNAL_REST_API_KEY) if ONESIGNAL_REST_API_KEY else 0
+    logger.info(
+        f"OneSignal configured: ENABLED=True, "
+        f"APP_ID_SET={bool(ONESIGNAL_APP_ID)} (len={app_id_len}, expected ~36 for UUID), "
+        f"REST_KEY_SET={bool(ONESIGNAL_REST_API_KEY)} (len={rest_key_len}, expected ~40-50 for legacy or ~110 for v2), "
+        f"APP_ID_PREFIX={ONESIGNAL_APP_ID[:8] + '...' if ONESIGNAL_APP_ID and len(ONESIGNAL_APP_ID) > 8 else 'NOT_SET'}, "
+        f"REST_KEY_PREFIX={ONESIGNAL_REST_API_KEY[:8] + '...' if ONESIGNAL_REST_API_KEY and len(ONESIGNAL_REST_API_KEY) > 8 else 'NOT_SET'}"
+    )
+    # Warn if key lengths look suspicious
+    if ONESIGNAL_APP_ID and app_id_len != 36:
+        logger.warning(f"⚠️ OneSignal APP_ID length is {app_id_len}, expected 36 (UUID format). Verify you're using App ID, not REST API Key.")
+    # v2 keys are ~110 chars, legacy keys are ~40-50
+    if ONESIGNAL_REST_API_KEY and rest_key_len < 30:
+        logger.warning(f"⚠️ OneSignal REST_API_KEY length is {rest_key_len}, seems too short. Verify you copied the full key.")
+    # Detect v2 key format (starts with os_v2_app_)
+    is_v2_key = ONESIGNAL_REST_API_KEY and ONESIGNAL_REST_API_KEY.startswith("os_v2_app_")
+    if is_v2_key:
+        logger.info(f"✅ Detected OneSignal v2 App API Key (os_v2_app_...). Using v2 API format (Authorization: Key, URL: api.onesignal.com)")
+    elif ONESIGNAL_REST_API_KEY and rest_key_len > 100:
+        logger.warning(f"⚠️ OneSignal REST_API_KEY length is {rest_key_len} but doesn't start with 'os_v2_app_'. Verify key format.")
+else:
+    logger.info("OneSignal is DISABLED (ONESIGNAL_ENABLED=False)")
 
 
 async def send_push_notification_async(
@@ -42,6 +68,14 @@ async def send_push_notification_async(
         logger.warning("OneSignal credentials not fully configured")
         return False
     
+    # Debug logging: Verify credentials are loaded (but don't log the actual key value)
+    logger.debug(
+        f"OneSignal config check: ENABLED={ONESIGNAL_ENABLED}, "
+        f"APP_ID_SET={bool(ONESIGNAL_APP_ID)}, REST_KEY_SET={bool(ONESIGNAL_REST_API_KEY)}, "
+        f"APP_ID_LEN={len(ONESIGNAL_APP_ID) if ONESIGNAL_APP_ID else 0}, "
+        f"REST_KEY_LEN={len(ONESIGNAL_REST_API_KEY) if ONESIGNAL_REST_API_KEY else 0}"
+    )
+    
     # Prepare data payload with in-app notification flag
     notification_data = data.copy() if data else {}
     if is_in_app_notification:
@@ -62,8 +96,21 @@ async def send_push_notification_async(
     
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Basic {ONESIGNAL_REST_API_KEY}"
+        "Authorization": f"Key {ONESIGNAL_REST_API_KEY}"
     }
+    
+    # Detailed debug logging for auth diagnostics
+    auth_header_prefix = headers["Authorization"].split()[0] if headers["Authorization"] else "MISSING"
+    logger.debug(
+        f"OneSignal request debug: "
+        f"URL={ONESIGNAL_API_URL}, "
+        f"app_id={ONESIGNAL_APP_ID[:8] + '...' if ONESIGNAL_APP_ID and len(ONESIGNAL_APP_ID) > 8 else 'NOT_SET'}, "
+        f"app_id_full_len={len(ONESIGNAL_APP_ID) if ONESIGNAL_APP_ID else 0}, "
+        f"auth_header_prefix={auth_header_prefix}, "
+        f"rest_key_len={len(ONESIGNAL_REST_API_KEY) if ONESIGNAL_REST_API_KEY else 0}, "
+        f"rest_key_first_8={ONESIGNAL_REST_API_KEY[:8] + '...' if ONESIGNAL_REST_API_KEY and len(ONESIGNAL_REST_API_KEY) > 8 else 'NOT_SET'}, "
+        f"player_count={len(player_ids)}"
+    )
     
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -76,10 +123,26 @@ async def send_push_notification_async(
                 logger.warning(f"OneSignal reported invalid player IDs: {result['invalid_player_ids']}")
                 # Note: We could mark these as invalid here, but we'll do it in a separate cleanup task
             
-            logger.info(f"OneSignal notification sent to {len(player_ids)} players")
+            logger.info(f"✅ OneSignal notification sent successfully to {len(player_ids)} players")
+            if "id" in result:
+                logger.debug(f"OneSignal notification ID: {result['id']}")
             return True
     except httpx.HTTPStatusError as e:
-        logger.error(f"OneSignal API error: {e.response.status_code} - {e.response.text}")
+        # Log full error details for debugging
+        error_detail = e.response.text
+        auth_header_prefix = headers["Authorization"].split()[0] if headers["Authorization"] else "MISSING"
+        logger.error(
+            f"❌ OneSignal API error: {e.response.status_code} - {error_detail}. "
+            f"Requested {len(player_ids)} players. "
+            f"Auth diagnostics: "
+            f"APP_ID={ONESIGNAL_APP_ID[:8] + '...' if ONESIGNAL_APP_ID and len(ONESIGNAL_APP_ID) > 8 else 'NOT_SET'} "
+            f"(len={len(ONESIGNAL_APP_ID) if ONESIGNAL_APP_ID else 0}), "
+            f"REST_KEY_SET={bool(ONESIGNAL_REST_API_KEY)} "
+            f"(len={len(ONESIGNAL_REST_API_KEY) if ONESIGNAL_REST_API_KEY else 0}), "
+            f"REST_KEY_PREFIX={ONESIGNAL_REST_API_KEY[:8] + '...' if ONESIGNAL_REST_API_KEY and len(ONESIGNAL_REST_API_KEY) > 8 else 'NOT_SET'}, "
+            f"auth_header_prefix={auth_header_prefix}, "
+            f"URL={ONESIGNAL_API_URL}"
+        )
         return False
     except Exception as e:
         logger.error(f"Failed to send OneSignal notification: {e}")

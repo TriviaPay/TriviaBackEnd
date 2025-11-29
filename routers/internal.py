@@ -376,6 +376,7 @@ async def send_trivia_reminder(
         # We DO NOT use the 30-second "active user" suppression here.
         # All targeted users get a normal push notification, even if they're active.
 
+        failed_batches = 0
         for i in range(0, len(player_ids), BATCH_SIZE):
             batch = player_ids[i : i + BATCH_SIZE]
             # Normal system push (not in-app), so is_in_app_notification=False
@@ -388,11 +389,22 @@ async def send_trivia_reminder(
             )
             if ok:
                 total_sent += len(batch)
+            else:
+                failed_batches += 1
+                logging.warning(f"⚠️ Failed to send trivia reminder to batch of {len(batch)} players")
 
-        logging.info(
-            f"✅ Trivia reminder push sent to {total_sent} players "
-            f"(targeted={len(player_ids)}, only_incomplete_users={request.only_incomplete_users})"
-        )
+        # Only log success if we actually sent to some players
+        if total_sent > 0:
+            logging.info(
+                f"✅ Trivia reminder push sent to {total_sent} players "
+                f"(targeted={len(player_ids)}, only_incomplete_users={request.only_incomplete_users})"
+            )
+        else:
+            logging.error(
+                f"❌ Trivia reminder push FAILED: sent to 0 players "
+                f"(targeted={len(player_ids)}, failed_batches={failed_batches}, only_incomplete_users={request.only_incomplete_users}). "
+                f"Check OneSignal credentials and API configuration."
+            )
 
         return {
             "status": "success",
