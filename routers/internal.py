@@ -58,6 +58,8 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
         draw_date: The date of the draw
         winners: List of winner dictionaries with 'username' and 'position' keys
     """
+    logging.info(f"📢 send_winner_announcement called for draw_date={draw_date}, winners={len(winners) if winners else 0}")
+    
     if not GLOBAL_CHAT_ENABLED:
         logging.warning("Global chat is disabled, skipping winner announcement")
         return
@@ -66,8 +68,10 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
     top_winners = sorted(winners, key=lambda x: x.get('position', 999))[:6]
     
     if not top_winners:
-        logging.warning("No winners to announce")
+        logging.warning(f"No winners to announce (received {len(winners)} winners)")
         return
+    
+    logging.info(f"Announcing {len(top_winners)} winners for draw_date={draw_date}")
     
     # Build the message
     message_lines = [
@@ -98,18 +102,24 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
     
     message = "\n".join(message_lines)
     
-    # Get or create a system user (you might want to use a specific system account_id)
-    # For now, we'll use a special system user ID (you may want to configure this)
-    system_user_id = int(os.getenv("SYSTEM_USER_ID", "0"))  # Default to 0, but should be configured
+    # Get or create a system user for sending announcements
+    system_user_id = int(os.getenv("SYSTEM_USER_ID", "0"))
     
     if system_user_id == 0:
-        # Try to find a system/admin user
+        # Try to find a system/admin user first
         system_user = db.query(User).filter(User.is_admin == True).first()
         if system_user:
             system_user_id = system_user.account_id
+            logging.info(f"Using admin user (account_id={system_user_id}) for winner announcement")
         else:
-            logging.error("No system user found for sending winner announcement")
-            return
+            # Fallback: use the first user in the database
+            first_user = db.query(User).order_by(User.account_id).first()
+            if first_user:
+                system_user_id = first_user.account_id
+                logging.warning(f"No admin user found. Using first user (account_id={system_user_id}) as system user for announcement")
+            else:
+                logging.error("No users found in database. Cannot send winner announcement.")
+                return
     
     # Create the message
     system_message = GlobalChatMessage(
@@ -119,9 +129,15 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
         client_message_id=f"winner_announcement_{draw_date.isoformat()}"  # Unique ID for idempotency
     )
     
-    db.add(system_message)
-    db.commit()
-    db.refresh(system_message)
+    try:
+        db.add(system_message)
+        db.commit()
+        db.refresh(system_message)
+        logging.info(f"✅ Winner announcement message saved to database with ID {system_message.id}")
+    except Exception as db_error:
+        logging.error(f"❌ Failed to save winner announcement to database: {str(db_error)}", exc_info=True)
+        db.rollback()
+        return
     
     # Get system user for display
     system_user = db.query(User).filter(User.account_id == system_user_id).first()
