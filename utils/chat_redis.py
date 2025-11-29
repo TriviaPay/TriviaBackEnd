@@ -4,8 +4,10 @@ import logging
 from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
+from redis.exceptions import ConnectionError, TimeoutError, RedisError
 
 from config import REDIS_URL
+from utils.logging_helpers import log_info, log_warning, log_error, log_debug, get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -16,36 +18,99 @@ _redis_client: Optional[redis.Redis] = None
 _redis_lock = asyncio.Lock()
 
 
+async def _check_connection_health(client: redis.Redis) -> bool:
+    """Check if Redis connection is healthy by sending a ping."""
+    try:
+        await asyncio.wait_for(client.ping(), timeout=2.0)
+        return True
+    except (ConnectionError, TimeoutError, RedisError, asyncio.TimeoutError, OSError) as exc:
+        logger.debug(f"Redis connection health check failed: {exc}")
+        return False
+    except Exception as exc:
+        logger.debug(f"Redis connection health check failed (unexpected): {exc}")
+        return False
+
+
+async def _create_redis_client() -> Optional[redis.Redis]:
+    """Create a new Redis client with connection pool settings."""
+    try:
+        client = redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
+            health_check_interval=30,  # Check connection health every 30 seconds
+            retry_on_error=[ConnectionError, TimeoutError],
+        )
+        # Test the connection
+        await asyncio.wait_for(client.ping(), timeout=2.0)
+        log_info(logger, "Chat Redis client initialized and connected")
+        return client
+    except Exception as exc:
+        log_error(logger, f"Failed to initialize chat Redis client", exc_info=True, error=str(exc))
+        return None
+
+
 async def get_chat_redis() -> Optional[redis.Redis]:
-    """Create or return cached Redis connection for chat features."""
+    """Create or return cached Redis connection for chat features with health checking."""
     global _redis_client
 
+    # Check if we have a cached client and if it's healthy
     if _redis_client:
-        return _redis_client
-
-    async with _redis_lock:
-        if _redis_client:
+        if await _check_connection_health(_redis_client):
             return _redis_client
-        try:
-            _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-            logger.info("Chat Redis client initialized")
-        except Exception as exc:
-            logger.error(f"Failed to initialize chat Redis client: {exc}")
+        else:
+            # Connection is stale, close it and reset
+            log_warning(logger, "Redis connection is stale, reconnecting")
+            try:
+                await _redis_client.aclose()
+            except Exception:
+                pass
             _redis_client = None
-    return _redis_client
+
+    # Create new connection with lock to prevent race conditions
+    async with _redis_lock:
+        # Double-check after acquiring lock
+        if _redis_client and await _check_connection_health(_redis_client):
+            return _redis_client
+        
+        # Create new connection
+        _redis_client = await _create_redis_client()
+        return _redis_client
 
 
 async def _run_pipeline(commands_cb):
-    client = await get_chat_redis()
-    if not client:
-        return None
-    try:
-        pipe = client.pipeline()
-        commands_cb(pipe)
-        return await pipe.execute()
-    except Exception as exc:
-        logger.warning(f"Chat Redis pipeline error: {exc}")
-        return None
+    """Run a Redis pipeline with automatic reconnection on connection errors."""
+    max_retries = 2
+    for attempt in range(max_retries):
+        client = await get_chat_redis()
+        if not client:
+            return None
+        try:
+            pipe = client.pipeline()
+            commands_cb(pipe)
+            return await pipe.execute()
+        except (ConnectionError, TimeoutError, RedisError, OSError) as exc:
+            log_warning(logger, f"Chat Redis pipeline connection error", 
+                       attempt=attempt + 1, max_retries=max_retries, error=str(exc))
+            # Reset client to force reconnection on next attempt
+            global _redis_client
+            async with _redis_lock:
+                if _redis_client == client:
+                    try:
+                        await _redis_client.aclose()
+                    except Exception:
+                        pass
+                    _redis_client = None
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.1)  # Brief delay before retry
+                continue
+            return None
+        except Exception as exc:
+            log_warning(logger, f"Chat Redis pipeline error", error=str(exc), exc_info=True)
+            return None
+    return None
 
 
 async def check_rate_limit(
@@ -99,6 +164,18 @@ async def should_emit_typing_event(
     redis_key = f"chat:typing:{channel_key}:{user_id}"
     try:
         return await client.set(redis_key, "1", px=dedup_ms, nx=True)
+    except (ConnectionError, TimeoutError, RedisError, OSError) as exc:
+        logger.warning(f"Chat Redis typing dedup connection error: {exc}")
+        # Reset client to force reconnection
+        global _redis_client
+        async with _redis_lock:
+            if _redis_client == client:
+                try:
+                    await _redis_client.aclose()
+                except Exception:
+                    pass
+                _redis_client = None
+        return True
     except Exception as exc:
         logger.warning(f"Chat Redis typing dedup error: {exc}")
         return True
@@ -109,22 +186,43 @@ async def enqueue_chat_event(event_type: str, payload: Dict[str, Any]) -> bool:
     Push chat event payload onto Redis queue so a worker can process it.
     Returns False if queueing failed.
     """
-    client = await get_chat_redis()
-    if not client:
-        return False
+    max_retries = 2
+    for attempt in range(max_retries):
+        client = await get_chat_redis()
+        if not client:
+            return False
 
-    try:
-        entry = json.dumps(
-            {
-                "type": event_type,
-                "payload": payload,
-            }
-        )
-        await client.rpush(CHAT_EVENT_QUEUE_KEY, entry)
-        return True
-    except Exception as exc:
-        logger.error(f"Failed to enqueue chat event: {exc}")
-        return False
+        try:
+            entry = json.dumps(
+                {
+                    "type": event_type,
+                    "payload": payload,
+                }
+            )
+            await client.rpush(CHAT_EVENT_QUEUE_KEY, entry)
+            return True
+        except (ConnectionError, TimeoutError, RedisError, OSError) as exc:
+            log_warning(logger, f"Chat Redis connection error during enqueue", 
+                       attempt=attempt + 1, max_retries=max_retries, error=str(exc))
+            # Reset client to force reconnection on next attempt
+            global _redis_client
+            async with _redis_lock:
+                if _redis_client == client:
+                    try:
+                        await _redis_client.aclose()
+                    except Exception:
+                        pass
+                    _redis_client = None
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.1)  # Brief delay before retry
+                continue
+            log_error(logger, f"Failed to enqueue chat event after max retries", 
+                     event_type=event_type, max_retries=max_retries, error=str(exc))
+            return False
+        except Exception as exc:
+            log_error(logger, f"Failed to enqueue chat event", event_type=event_type, error=str(exc), exc_info=True)
+            return False
+    return False
 
 
 async def clear_typing_event(channel_key: str, user_id: Any) -> None:
@@ -135,5 +233,16 @@ async def clear_typing_event(channel_key: str, user_id: Any) -> None:
     redis_key = f"chat:typing:{channel_key}:{user_id}"
     try:
         await client.delete(redis_key)
+    except (ConnectionError, TimeoutError, RedisError, OSError) as exc:
+        logger.debug(f"Chat Redis typing cleanup connection error: {exc}")
+        # Reset client to force reconnection
+        global _redis_client
+        async with _redis_lock:
+            if _redis_client == client:
+                try:
+                    await _redis_client.aclose()
+                except Exception:
+                    pass
+                _redis_client = None
     except Exception as exc:
         logger.debug(f"Chat Redis typing cleanup failed: {exc}")

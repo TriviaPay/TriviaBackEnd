@@ -14,7 +14,10 @@ from db import get_db
 from models import User, Trivia, TriviaQuestionsDaily, TriviaQuestionsEntries, GemPackageConfig, BoostConfig, UserGemPurchase, TriviaUserDaily
 from routers.dependencies import get_current_user, get_admin_user
 from utils.storage import presign_get
+from utils.logging_helpers import log_info, log_warning, log_error, log_debug
 import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/store", tags=["Store"])
 
@@ -219,7 +222,12 @@ async def use_gameplay_boost(
     - Remaining gems after purchase
     - Success confirmation
     """
+    user_id = user.account_id if user else None
+    log_info(logger, f"Gameplay boost request", user_id=user_id, 
+             boost_type=request.boost_type, question_number=request.question_number)
+    
     if not user:
+        log_warning(logger, "Gameplay boost request failed: User not found", user_id=user_id)
         raise HTTPException(status_code=404, detail="User not found")
 
     # Get boost config from database
@@ -228,18 +236,24 @@ async def use_gameplay_boost(
     # If boost config is not in database, use default from config file as fallback
     if not boost_config:
         if request.boost_type not in store_config["gameplay_boosts"]:
+            log_warning(logger, f"Boost type not found in config", user_id=user_id, boost_type=request.boost_type)
             raise HTTPException(status_code=404, detail=f"Boost {request.boost_type} not found")
         
         item = store_config["gameplay_boosts"][request.boost_type]
         if 'gems' not in item:
+            log_warning(logger, f"Boost cannot be purchased with gems", user_id=user_id, boost_type=request.boost_type)
             raise HTTPException(status_code=400, detail="Boost cannot be purchased with gems")
         
         cost = item['gems']
     else:
         cost = boost_config.gems_cost
     
+    log_debug(logger, f"Boost cost calculated", user_id=user_id, cost=cost, user_gems=user.gems)
+    
     # Check if user has enough gems
     if user.gems < cost:
+        log_warning(logger, f"Insufficient gems for boost", user_id=user_id, 
+                   boost_type=request.boost_type, user_gems=user.gems, required_gems=cost)
         raise HTTPException(status_code=400, detail=f"Insufficient gems. You have {user.gems} gems, but this boost costs {cost} gems")
     
     # Deduct gems (will commit after boost is used)
@@ -249,6 +263,7 @@ async def use_gameplay_boost(
     # Note: Streak system has been replaced with weekly daily login system
     # This boost is deprecated but kept for backward compatibility
     if request.boost_type == "streak_saver":
+        log_warning(logger, f"Streak saver boost is deprecated", user_id=user_id)
         raise HTTPException(
             status_code=400, 
             detail="Streak saver is no longer available. The streak system has been replaced with a weekly daily login reward system."
@@ -256,11 +271,13 @@ async def use_gameplay_boost(
 
     # For all other boosts, we need a question number
     if not request.question_number:
+        log_warning(logger, f"Question number required for boost", user_id=user_id, boost_type=request.boost_type)
         raise HTTPException(status_code=400, detail="Question number is required for this boost type")
 
     # Get the question
     question = db.query(Trivia).filter(Trivia.question_number == request.question_number).first()
     if not question:
+        log_warning(logger, f"Question not found", user_id=user_id, question_number=request.question_number)
         raise HTTPException(status_code=404, detail="Question not found")
 
     # Get user's daily question unlock/attempt
@@ -272,9 +289,16 @@ async def use_gameplay_boost(
     ).first()
 
     if not user_daily or user_daily.unlock_method is None:
+        log_warning(logger, f"Question not unlocked for today", user_id=user_id, 
+                   question_number=request.question_number, today=str(today),
+                   user_daily_id=user_daily.id if user_daily else None,
+                   unlock_method=user_daily.unlock_method if user_daily else None)
         raise HTTPException(status_code=400, detail="Question not unlocked for today")
 
     if user_daily.status in ['answered_correct', 'answered_wrong'] and request.boost_type not in ["extra_chance"]:
+        log_warning(logger, f"Question already answered", user_id=user_id,
+                   question_number=request.question_number, status=user_daily.status,
+                   boost_type=request.boost_type)
         if user_daily.status == 'answered_correct':
             raise HTTPException(status_code=400, detail="Question already answered correctly")
         else:

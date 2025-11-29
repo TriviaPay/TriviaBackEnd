@@ -49,21 +49,40 @@ load_dotenv(override=False)
 # Configure logging
 import logging
 import sys
-from config import LOG_LEVEL
+import uuid
+from contextvars import ContextVar
+from config import LOG_LEVEL, ENVIRONMENT
+
+# Request ID context variable for tracking requests across the system
+# This is shared with utils/logging_helpers.py
+request_id_var: ContextVar[str] = ContextVar('request_id', default='')
 
 # Convert string log level to logging constant
 log_level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
 
 # Create a custom logger
 logger = logging.getLogger()
-logger.setLevel(log_level)  # Use LOG_LEVEL from config, not hardcoded DEBUG
+logger.setLevel(log_level)
 
 # Create handlers
-c_handler = logging.StreamHandler(sys.stdout)  # Console handler
-c_handler.setLevel(log_level)  # Use LOG_LEVEL from config
+c_handler = logging.StreamHandler(sys.stdout)
+c_handler.setLevel(log_level)
 
-# Create formatters and add it to handlers
-c_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Improved log format for better readability in production
+# Format: [TIMESTAMP] [LEVEL] [MODULE] [REQUEST_ID] message | context
+if ENVIRONMENT == "production":
+    # Production format: more compact, structured
+    c_format = logging.Formatter(
+        '[%(asctime)s.%(msecs)03d] [%(levelname)-5s] [%(name)-20s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+else:
+    # Development format: more verbose
+    c_format = logging.Formatter(
+        '[%(asctime)s.%(msecs)03d] [%(levelname)-5s] [%(name)-20s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
 c_handler.setFormatter(c_format)
 
 # Add handlers to the logger (only if not already added)
@@ -150,31 +169,64 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-# Request logging middleware
+# Request logging middleware with request ID tracking
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 import time
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # Generate unique request ID for tracking
+        request_id = str(uuid.uuid4())[:8]  # Short ID for readability
+        request_id_var.set(request_id)
+        request.state.request_id = request_id
+        
         start_time = time.time()
         
-        # Log incoming request
-        logger.info(f"📥 {request.method} {request.url.path}")
-        if request.query_params:
-            logger.debug(f"   Query params: {dict(request.query_params)}")
+        # Extract user info if available (from auth header)
+        user_id = None
+        auth_header = request.headers.get('authorization') or request.headers.get('Authorization')
+        if auth_header:
+            try:
+                from auth import validate_descope_jwt
+                token = auth_header.split(' ', 1)[1].strip() if ' ' in auth_header else auth_header
+                user_info = validate_descope_jwt(token)
+                user_id = user_info.get('userId', 'unknown')[:8] if user_info else None
+            except:
+                pass  # Don't fail if we can't extract user ID
+        
+        # Log incoming request with context
+        query_str = f"?{request.url.query}" if request.query_params else ""
+        logger.info(
+            f"REQUEST | id={request_id} | method={request.method} | path={request.url.path}{query_str} | "
+            f"user_id={user_id or 'anonymous'} | ip={request.client.host if request.client else 'unknown'}"
+        )
+        
+        if request.query_params and log_level <= logging.DEBUG:
+            logger.debug(f"QUERY_PARAMS | id={request_id} | params={dict(request.query_params)}")
         
         try:
             response = await call_next(request)
             process_time = time.time() - start_time
             
-            # Log response
-            logger.info(f"📤 {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.3f}s")
+            # Log response with context
+            status_emoji = "✅" if 200 <= response.status_code < 300 else "⚠️" if 300 <= response.status_code < 400 else "❌"
+            logger.info(
+                f"RESPONSE | id={request_id} | method={request.method} | path={request.url.path} | "
+                f"status={response.status_code} | time={process_time:.3f}s | user_id={user_id or 'anonymous'}"
+            )
+            
+            # Add request ID to response headers for client tracking
+            response.headers["X-Request-ID"] = request_id
             
             return response
         except Exception as e:
             process_time = time.time() - start_time
-            logger.error(f"❌ {request.method} {request.url.path} - Error: {str(e)} - Time: {process_time:.3f}s")
+            logger.error(
+                f"ERROR | id={request_id} | method={request.method} | path={request.url.path} | "
+                f"error={type(e).__name__}: {str(e)} | time={process_time:.3f}s | user_id={user_id or 'anonymous'}",
+                exc_info=True
+            )
             raise
 
 # Add request logging middleware (before CORS so it logs all requests)
