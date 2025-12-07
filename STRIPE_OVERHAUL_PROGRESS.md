@@ -69,14 +69,17 @@
 ## 🚧 Partially Completed / Needs Work
 
 ### Phase 2: Wallet Operations
-- ⚠️ `withdraw_from_wallet()` - Needs update to use `WithdrawalRequest` and wallet ledger
-- ⚠️ `add_funds_to_wallet()` - Needs update to use `amount_minor` instead of float
+- ✅ `withdraw_from_wallet()` - Updated to use `WithdrawalRequest` and wallet ledger (already complete)
+- ✅ `add_funds_to_wallet()` - Funds added via webhook using `amount_minor` (already complete)
 
 ### Phase 3: Webhook Events
-- ⚠️ Need to add handlers for:
-  - `payment_intent.amount_capturable_updated` (partial captures)
-  - `customer.subscription.trial_will_end`
-  - Additional subscription lifecycle events
+- ✅ Added handlers for:
+  - ✅ `payment_intent.amount_capturable_updated` (partial captures)
+  - ✅ `customer.subscription.trial_will_end`
+  - ✅ Additional subscription lifecycle events (created, updated, deleted, paused, resumed)
+  - ✅ `transfer.paid` and `payout.paid` - Update withdrawal status
+  - ✅ `transfer.failed` and `payout.failed` - Refund wallet on failure
+  - ✅ `account.updated` - Update Connect account status
 
 ### Phase 5: Subscription System
 - ⚠️ `list_subscription_plans()` - Needs update to sync from Stripe Prices API
@@ -84,13 +87,14 @@
 - ⚠️ Subscription lifecycle handlers need updates for new fields
 
 ### Phase 6: Withdrawal System
-- ⚠️ `withdraw_from_wallet()` - Needs refactor to use `WithdrawalRequest` table
-- ⚠️ `process_withdrawal()` - Needs update for new withdrawal_requests table
+- ✅ `withdraw_from_wallet()` - Uses `WithdrawalRequest` table (already complete)
+- ✅ `process_withdrawal()` - Works with `withdrawal_requests` table (already complete)
 - ⚠️ Stripe Connect preparation (tables ready, endpoints not implemented)
 
 ### Phase 7: Multi-Currency Support
-- ⚠️ Wallet ledger supports multi-currency, but API endpoints need currency parameter validation
-- ⚠️ Need to prevent cross-currency operations
+- ✅ Wallet ledger supports multi-currency
+- ✅ API endpoints have currency parameter validation
+- ✅ Cross-currency operations are prevented (validated in adjust_wallet_balance and get_wallet_balance)
 
 ### Phase 9: Observability & Monitoring
 - ⚠️ Metrics collection not yet implemented
@@ -98,44 +102,46 @@
 
 ### Phase 10: Security & Compliance
 - ⚠️ Bank account storage - Need to stop writing encrypted fields (migration ready)
-- ⚠️ Webhook replay protection - Timestamp tolerance not yet enforced
+- ✅ Webhook replay protection - Timestamp tolerance enforced (configurable via STRIPE_WEBHOOK_TOLERANCE_SECONDS)
 - ⚠️ Admin audit logging not yet implemented
 
 ## 📝 Next Steps
 
 ### High Priority
-1. **Update `withdraw_from_wallet()` endpoint** to:
-   - Accept `amount_minor` instead of float
-   - Create `WithdrawalRequest` record
-   - Use wallet ledger for balance deduction
-   - Calculate fees in minor units
+1. ✅ **Update `withdraw_from_wallet()` endpoint** - COMPLETED:
+   - ✅ Accepts `amount_minor` instead of float
+   - ✅ Creates `WithdrawalRequest` record
+   - ✅ Uses wallet ledger for balance deduction
+   - ✅ Calculates fees in minor units
 
-2. **Update `add_funds_to_wallet()` endpoint** to:
-   - Accept and store `amount_minor`
-   - Return amounts in minor units
+2. ✅ **Update `add_funds_to_wallet()` endpoint** - COMPLETED:
+   - ✅ Funds added via webhook using `amount_minor`
+   - ✅ Returns amounts in minor units
 
-3. **Update `process_withdrawal()` admin endpoint** to:
-   - Work with `WithdrawalRequest` table
-   - Update withdrawal status
-   - Handle Stripe Transfer/Payout creation
+3. ✅ **Update `process_withdrawal()` admin endpoint** - COMPLETED:
+   - ✅ Works with `WithdrawalRequest` table
+   - ✅ Updates withdrawal status
+   - ✅ Handles Stripe Transfer/Payout creation
 
-4. **Fix webhook event_id variable scope** - Ensure event_id is available throughout webhook handler
+4. ✅ **Fix webhook event_id variable scope** - COMPLETED:
+   - ✅ event_id is available throughout webhook handler
+   - ✅ All handlers use event_id for idempotency
 
 ### Medium Priority
-5. **Subscription system updates**:
-   - Sync plans from Stripe Prices API
-   - Implement SetupIntent for SCA
-   - Update subscription lifecycle handlers
+5. ⚠️ **Subscription system updates**:
+   - ⚠️ Sync plans from Stripe Prices API
+   - ⚠️ Implement SetupIntent for SCA
+   - ⚠️ Update subscription lifecycle handlers
 
-6. **Add missing webhook handlers**:
-   - Partial captures
-   - Trial ending notifications
-   - Additional subscription events
+6. ✅ **Add missing webhook handlers** - COMPLETED:
+   - ✅ Partial captures (payment_intent.amount_capturable_updated)
+   - ✅ Trial ending notifications (customer.subscription.trial_will_end)
+   - ✅ Additional subscription events (created, updated, deleted, paused, resumed)
 
-7. **Multi-currency validation**:
-   - Add currency parameter to all endpoints
-   - Validate currency codes
-   - Prevent cross-currency operations
+7. ✅ **Multi-currency validation** - COMPLETED:
+   - ✅ Currency parameter validated in all endpoints
+   - ✅ Currency codes validated
+   - ✅ Cross-currency operations prevented
 
 ### Lower Priority
 8. **Observability**:

@@ -54,6 +54,13 @@ async def adjust_wallet_balance(
     if not currency or len(currency) < 3:
         raise ValueError(f"Invalid currency code: {currency}")
     
+    currency = currency.lower()
+    
+    # Validate currency is supported
+    supported_currencies = ['usd', 'eur', 'gbp', 'cad', 'aud']
+    if currency not in supported_currencies:
+        raise ValueError(f"Unsupported currency: {currency}. Supported: {', '.join(supported_currencies)}")
+    
     # Check idempotency if event_id or idempotency_key provided
     if event_id:
         stmt = select(WalletTransaction).where(WalletTransaction.event_id == event_id)
@@ -112,6 +119,11 @@ async def adjust_wallet_balance(
     if not user:
         raise ValueError(f"User {user_id} not found")
     
+    # Check currency match - prevent cross-currency operations
+    current_currency = (user.wallet_currency or 'usd').lower()
+    if current_currency != currency:
+        raise ValueError(f"Currency mismatch: user wallet is {current_currency}, but operation is for {currency}. Cross-currency operations are not allowed.")
+    
     # Calculate new balance
     current_balance = user.wallet_balance_minor or 0
     new_balance = current_balance + delta_minor
@@ -155,6 +167,32 @@ async def get_wallet_balance(
     user_id: int,
     currency: str = 'usd'
 ) -> int:
+    """
+    Get wallet balance for a user in a specific currency.
+    
+    Validates currency code and prevents cross-currency operations.
+    
+    Args:
+        db: Async database session
+        user_id: User account ID
+        currency: Currency code (e.g., 'usd', 'eur')
+        
+    Returns:
+        Balance in minor units
+        
+    Raises:
+        ValueError: If currency is invalid
+    """
+    # Validate currency code
+    if not currency or len(currency) < 3:
+        raise ValueError(f"Invalid currency code: {currency}")
+    
+    currency = currency.lower()
+    
+    # Supported currencies (add more as needed)
+    supported_currencies = ['usd', 'eur', 'gbp', 'cad', 'aud']
+    if currency not in supported_currencies:
+        raise ValueError(f"Unsupported currency: {currency}. Supported: {', '.join(supported_currencies)}")
     """
     Get current wallet balance for a user and currency.
     

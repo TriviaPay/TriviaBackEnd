@@ -1,4 +1,5 @@
 import logging
+import random
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime, date, timedelta
@@ -8,6 +9,12 @@ from db import SessionLocal
 from rewards_logic import perform_draw, reset_daily_eligibility_flags, reset_weekly_daily_rewards
 from cleanup_unused_questions import cleanup_unused_questions
 from models import User, TriviaQuestionsDaily, TriviaQuestionsWinners, UserSubscription, TriviaUserDaily, TriviaQuestionsEntries
+from models import TriviaModeConfig, TriviaQuestionsFreeMode, TriviaQuestionsFreeModeDaily, TriviaFreeModeWinners
+from utils.free_mode_rewards import (
+    get_eligible_participants_free_mode, rank_participants_by_completion,
+    calculate_reward_distribution, distribute_rewards_to_winners, cleanup_old_leaderboard
+)
+from utils.trivia_mode_service import get_mode_config, get_active_draw_date, get_date_range_for_query
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -327,6 +334,24 @@ def schedule_draws():
         replace_existing=True,
         misfire_grace_time=3600
     )
+    
+    # Schedule free mode draw job (same time as regular draw)
+    scheduler.add_job(
+        run_free_mode_draw,
+        CronTrigger(hour=hour, minute=minute, timezone=timezone),
+        id="free_mode_draw",
+        replace_existing=True,
+        misfire_grace_time=3600
+    )
+    
+    # Schedule free mode question allocation (1 minute after draw, same as regular questions)
+    scheduler.add_job(
+        allocate_free_mode_questions,
+        CronTrigger(hour=hour, minute=minute+1, timezone=timezone),
+        id="free_mode_question_allocation",
+        replace_existing=True,
+        misfire_grace_time=3600
+    )
 
 async def run_daily_draw():
     """
@@ -502,6 +527,162 @@ async def run_weekly_rewards_reset():
         
     except Exception as e:
         logger.error(f"💥 Error resetting weekly daily rewards: {str(e)}")
+
+async def run_free_mode_draw():
+    """
+    Process free mode draw at the configured draw time.
+    Calculates winners, distributes gems, and cleans up old leaderboard.
+    """
+    try:
+        logger.info(f"🎯 Starting free mode draw at {datetime.now()}")
+        db: Session = SessionLocal()
+        
+        try:
+            # Process yesterday's draw
+            yesterday = date.today() - timedelta(days=1)
+            
+            # Check if draw already performed
+            existing_draw = db.query(TriviaFreeModeWinners).filter(
+                TriviaFreeModeWinners.draw_date == yesterday
+            ).first()
+            
+            if existing_draw:
+                logger.info(f"⏭️ Draw for {yesterday} has already been performed, skipping...")
+                return
+            
+            # Get mode config
+            mode_config = get_mode_config(db, 'free_mode')
+            if not mode_config:
+                logger.warning("⚠️ Free mode config not found, skipping draw...")
+                return
+            
+            # Get eligible participants
+            participants = get_eligible_participants_free_mode(db, yesterday)
+            
+            if not participants:
+                logger.info(f"📭 No eligible participants for draw on {yesterday}")
+                return
+            
+            logger.info(f"👥 Found {len(participants)} eligible participants")
+            
+            # Rank participants
+            ranked_participants = rank_participants_by_completion(participants)
+            
+            # Calculate reward distribution
+            reward_info = calculate_reward_distribution(mode_config, len(ranked_participants))
+            winner_count = reward_info['winner_count']
+            gem_amounts = reward_info['gem_amounts']
+            
+            # Select winners
+            if len(ranked_participants) <= winner_count:
+                winners_list = ranked_participants
+            else:
+                winners_list = ranked_participants[:winner_count]
+            
+            # Prepare winners with gem amounts
+            winners = []
+            for i, participant in enumerate(winners_list):
+                winners.append({
+                    'account_id': participant['account_id'],
+                    'username': participant['username'],
+                    'position': i + 1,
+                    'gems_awarded': gem_amounts[i] if i < len(gem_amounts) else 0,
+                    'completed_at': participant['third_question_completed_at']
+                })
+            
+            # Distribute rewards
+            distribution_result = distribute_rewards_to_winners(db, winners, mode_config, yesterday)
+            
+            # Cleanup old leaderboard (previous draw date)
+            previous_draw_date = yesterday - date.resolution
+            cleanup_old_leaderboard(db, previous_draw_date)
+            
+            logger.info("🎉 FREE MODE DRAW COMPLETED SUCCESSFULLY!")
+            logger.info(f"🏆 Winners Selected: {len(winners)}")
+            logger.info(f"👥 Total Participants: {len(ranked_participants)}")
+            logger.info(f"💎 Total Gems Awarded: {distribution_result['total_gems_awarded']}")
+            
+        except Exception as db_error:
+            db.rollback()
+            logger.error(f"💥 Database error during free mode draw: {str(db_error)}")
+        finally:
+            db.close()
+        
+    except Exception as e:
+        logger.error(f"💥 Error running free mode draw: {str(e)}")
+
+async def allocate_free_mode_questions():
+    """
+    Allocate free mode questions for the new day.
+    Selects random questions from TriviaQuestionsFreeMode and adds them to TriviaQuestionsFreeModeDaily.
+    """
+    try:
+        logger.info(f"🔄 Starting free mode question allocation at {datetime.now()}")
+        db: Session = SessionLocal()
+        
+        try:
+            # Get mode config
+            mode_config = get_mode_config(db, 'free_mode')
+            if not mode_config:
+                logger.warning("⚠️ Free mode config not found, skipping question allocation...")
+                return
+            
+            questions_count = mode_config.questions_count
+            target_date = get_active_draw_date()
+            
+            # Get date range for the target date
+            start_datetime, end_datetime = get_date_range_for_query(target_date)
+            
+            # Check if questions already allocated for this date
+            existing_questions = db.query(TriviaQuestionsFreeModeDaily).filter(
+                TriviaQuestionsFreeModeDaily.date >= start_datetime,
+                TriviaQuestionsFreeModeDaily.date <= end_datetime
+            ).count()
+            
+            if existing_questions > 0:
+                logger.info(f"⏭️ Questions already allocated for {target_date}, skipping...")
+                return
+            
+            # Get available questions (not used recently, prefer unused)
+            unused_questions = db.query(TriviaQuestionsFreeMode).filter(
+                TriviaQuestionsFreeMode.is_used == False
+            ).all()
+            
+            # If not enough unused questions, get any questions
+            if len(unused_questions) < questions_count:
+                all_questions = db.query(TriviaQuestionsFreeMode).all()
+                available_questions = random.sample(all_questions, min(questions_count, len(all_questions)))
+            else:
+                available_questions = random.sample(unused_questions, questions_count)
+            
+            if len(available_questions) < questions_count:
+                logger.warning(f"⚠️ Only {len(available_questions)} questions available, need {questions_count}")
+            
+            # Allocate questions to daily pool
+            allocated_count = 0
+            for i, question in enumerate(available_questions[:questions_count], 1):
+                daily_question = TriviaQuestionsFreeModeDaily(
+                    date=start_datetime,
+                    question_id=question.id,
+                    question_order=i,
+                    is_used=False
+                )
+                db.add(daily_question)
+                # Mark question as used
+                question.is_used = True
+                allocated_count += 1
+            
+            db.commit()
+            logger.info(f"✅ Successfully allocated {allocated_count} questions for {target_date}")
+            
+        except Exception as db_error:
+            db.rollback()
+            logger.error(f"💥 Database error during question allocation: {str(db_error)}")
+        finally:
+            db.close()
+        
+    except Exception as e:
+        logger.error(f"💥 Error allocating free mode questions: {str(e)}")
 
 def start_scheduler():
     """

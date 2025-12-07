@@ -171,8 +171,12 @@ def verify_webhook_signature(payload: bytes, signature: str) -> stripe.Webhook:
         raise ValueError("STRIPE_WEBHOOK_SECRET not configured")
     
     try:
+        # Construct event with timestamp tolerance (5 minutes default, configurable)
+        # This prevents replay attacks by rejecting events that are too old
+        timestamp_tolerance = int(os.getenv("STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300"))  # Default 5 minutes
         event = stripe.Webhook.construct_event(
-            payload, signature, STRIPE_WEBHOOK_SECRET
+            payload, signature, STRIPE_WEBHOOK_SECRET,
+            tolerance=timestamp_tolerance
         )
         return event
     except ValueError as e:

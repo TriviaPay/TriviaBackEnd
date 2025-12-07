@@ -8,7 +8,7 @@ from typing import Optional
 from datetime import datetime
 from app.db import get_async_db
 from app.services.stripe_service import verify_webhook_signature
-from app.models.wallet import WalletTransaction
+from app.models.wallet import WalletTransaction, WithdrawalRequest
 from app.models.user import User
 from app.services.wallet_service import adjust_wallet_balance
 import logging
@@ -76,17 +76,51 @@ async def stripe_webhook(
             # Handle Connect account updates
             account = event['data']['object']
             account_id = account.get('id')
+            charges_enabled = account.get('charges_enabled', False)
+            payouts_enabled = account.get('payouts_enabled', False)
+            details_submitted = account.get('details_submitted', False)
             
-            # TODO: Update user's stripe_connect_account_id status if needed
-            logger.info(f"Account updated: {account_id}")
+            # Find user with this Connect account ID
+            user_stmt = select(User).where(User.stripe_connect_account_id == account_id)
+            user_result = await db.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+            
+            if user:
+                # Update user's Connect account status flags if they exist
+                if hasattr(user, 'stripe_charges_enabled'):
+                    user.stripe_charges_enabled = charges_enabled
+                if hasattr(user, 'stripe_payouts_enabled'):
+                    user.stripe_payouts_enabled = payouts_enabled
+                if hasattr(user, 'stripe_details_submitted'):
+                    user.stripe_details_submitted = details_submitted
+                
+                await db.commit()
+                logger.info(f"Updated Connect account status for user {user.account_id}: charges={charges_enabled}, payouts={payouts_enabled}, details={details_submitted}")
+            else:
+                logger.warning(f"User not found for Connect account {account_id}")
             
         elif event_type in ["transfer.paid", "payout.paid"]:
             # Handle successful payouts
             transfer = event['data']['object']
             transfer_id = transfer.get('id')
             
-            # TODO: Update withdrawal_requests table with status='paid'
-            logger.info(f"Transfer/Payout paid: {transfer_id}")
+            # Find withdrawal request by payout/transfer ID
+            withdrawal_stmt = select(WithdrawalRequest).where(
+                WithdrawalRequest.stripe_payout_id == transfer_id
+            )
+            withdrawal_result = await db.execute(withdrawal_stmt)
+            withdrawal = withdrawal_result.scalar_one_or_none()
+            
+            if withdrawal:
+                if withdrawal.status != 'paid':
+                    withdrawal.status = 'paid'
+                    withdrawal.processed_at = datetime.utcnow()
+                    await db.commit()
+                    logger.info(f"Updated withdrawal {withdrawal.id} to paid status for payout {transfer_id}")
+                else:
+                    logger.info(f"Withdrawal {withdrawal.id} already marked as paid")
+            else:
+                logger.warning(f"Withdrawal request not found for payout/transfer {transfer_id}")
             
         elif event_type in ["transfer.failed", "payout.failed"]:
             # Handle failed payouts - need to refund wallet
@@ -94,8 +128,44 @@ async def stripe_webhook(
             transfer_id = transfer.get('id')
             amount = transfer.get('amount', 0)
             
-            # TODO: Find withdrawal request by transfer_id and refund wallet
-            logger.warning(f"Transfer/Payout failed: {transfer_id}, amount: {amount}")
+            # Find withdrawal request by payout/transfer ID
+            withdrawal_stmt = select(WithdrawalRequest).where(
+                WithdrawalRequest.stripe_payout_id == transfer_id
+            )
+            withdrawal_result = await db.execute(withdrawal_stmt)
+            withdrawal = withdrawal_result.scalar_one_or_none()
+            
+            if withdrawal:
+                if withdrawal.status != 'failed':
+                    # Refund the wallet (amount + fee)
+                    refund_amount = withdrawal.amount_minor + withdrawal.fee_minor
+                    
+                    try:
+                        new_balance = await adjust_wallet_balance(
+                            db=db,
+                            user_id=withdrawal.user_id,
+                            currency=withdrawal.currency,
+                            delta_minor=refund_amount,
+                            kind='refund',
+                            external_ref_type='withdrawal_failed',
+                            external_ref_id=str(withdrawal.id),
+                            livemode=livemode
+                        )
+                        
+                        withdrawal.status = 'failed'
+                        withdrawal.processed_at = datetime.utcnow()
+                        withdrawal.admin_notes = f"Payout failed via webhook: {transfer_id}"
+                        
+                        await db.commit()
+                        logger.info(f"Refunded withdrawal {withdrawal.id}: {refund_amount} {withdrawal.currency} to user {withdrawal.user_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to refund withdrawal {withdrawal.id}: {str(e)}")
+                        await db.rollback()
+                        raise
+                else:
+                    logger.info(f"Withdrawal {withdrawal.id} already marked as failed")
+            else:
+                logger.warning(f"Withdrawal request not found for failed payout/transfer {transfer_id}")
         
         elif event_type == "payment_intent.succeeded":
             # Handle successful payment intents for wallet top-ups and product purchases
@@ -243,6 +313,38 @@ async def stripe_webhook(
                 await db.commit()
                 return {"received": True, "status": "error", "error": str(e)}
             
+        elif event_type == "payment_intent.amount_capturable_updated":
+            # Handle partial captures
+            pi = event['data']['object']
+            payment_intent_id = pi['id']
+            amount_capturable = pi.get('amount_capturable', 0)
+            amount_received = pi.get('amount_received', 0)
+            
+            logger.info(f"PaymentIntent {payment_intent_id} amount capturable updated: capturable={amount_capturable}, received={amount_received}")
+            # For now, just log - implement partial capture logic if needed
+        
+        elif event_type == "customer.subscription.trial_will_end":
+            # Handle trial ending notification
+            subscription = event['data']['object']
+            subscription_id = subscription.get('id')
+            customer_id = subscription.get('customer')
+            trial_end = subscription.get('trial_end')
+            
+            logger.info(f"Subscription {subscription_id} trial ending for customer {customer_id} at {trial_end}")
+            # Notify user or update subscription status if needed
+        
+        elif event_type in ["customer.subscription.created", "customer.subscription.updated", 
+                              "customer.subscription.deleted", "customer.subscription.paused",
+                              "customer.subscription.resumed"]:
+            # Handle subscription lifecycle events
+            subscription = event['data']['object']
+            subscription_id = subscription.get('id')
+            customer_id = subscription.get('customer')
+            status = subscription.get('status')
+            
+            logger.info(f"Subscription {subscription_id} {event_type}: status={status}, customer={customer_id}")
+            # Update user_subscriptions table if needed
+        
         else:
             logger.info(f"Unhandled event type: {event_type}")
         

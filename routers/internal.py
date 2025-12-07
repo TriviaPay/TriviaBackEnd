@@ -8,7 +8,12 @@ from db import get_db
 from rewards_logic import perform_draw, reset_monthly_subscriptions, reset_weekly_daily_rewards
 import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
-from models import GlobalChatMessage, User, OneSignalPlayer, TriviaUserDaily
+from models import GlobalChatMessage, User, OneSignalPlayer, TriviaUserDaily, TriviaFreeModeWinners
+from utils.free_mode_rewards import (
+    get_eligible_participants_free_mode, rank_participants_by_completion,
+    calculate_reward_distribution, distribute_rewards_to_winners, cleanup_old_leaderboard
+)
+from utils.trivia_mode_service import get_mode_config, get_active_draw_date
 from utils.pusher_client import publish_chat_message_sync
 from utils.chat_helpers import get_user_chat_profile_data
 from utils.onesignal_client import send_push_notification_async
@@ -274,6 +279,129 @@ async def internal_daily_draw(
         raise HTTPException(
             status_code=500,
             detail=f"Error in daily draw: {str(e)}"
+        )
+
+
+@router.post("/free-mode-draw")
+async def internal_free_mode_draw(
+    secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
+    db: Session = Depends(get_db)
+):
+    """
+    Internal endpoint for free mode draw triggered by external cron or scheduler.
+    
+    Determines draw date based on current time and configured draw time:
+    - Processes yesterday's draw (same logic as regular draw)
+    
+    Draw time is configured via DRAW_TIME_HOUR and DRAW_TIME_MINUTE environment variables.
+    
+    Returns clean response with winner details.
+    """
+    if secret != os.getenv("INTERNAL_SECRET"):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    try:
+        # Determine which draw date to use (yesterday's draw)
+        from utils.trivia_mode_service import get_active_draw_date
+        draw_date = get_active_draw_date() - timedelta(days=1)
+        
+        logging.info(f"🎯 Starting free mode draw for {draw_date} via internal endpoint")
+        
+        # Check if draw already performed
+        existing_draw = db.query(TriviaFreeModeWinners).filter(
+            TriviaFreeModeWinners.draw_date == draw_date
+        ).first()
+        
+        if existing_draw:
+            logging.info(f"⏭️ Draw for {draw_date} has already been performed")
+            return {
+                "status": "already_performed",
+                "draw_date": draw_date.isoformat(),
+                "message": f"Draw for {draw_date} has already been performed"
+            }
+        
+        # Get mode config
+        mode_config = get_mode_config(db, 'free_mode')
+        if not mode_config:
+            logging.error("Free mode config not found")
+            raise HTTPException(status_code=404, detail="Free mode config not found")
+        
+        # Get eligible participants
+        participants = get_eligible_participants_free_mode(db, draw_date)
+        
+        if not participants:
+            logging.info(f"No eligible participants for draw on {draw_date}")
+            return {
+                "status": "no_participants",
+                "draw_date": draw_date.isoformat(),
+                "message": f"No eligible participants for draw on {draw_date}",
+                "total_participants": 0
+            }
+        
+        logging.info(f"Found {len(participants)} eligible participants")
+        
+        # Rank participants
+        ranked_participants = rank_participants_by_completion(participants)
+        
+        # Calculate reward distribution
+        reward_info = calculate_reward_distribution(mode_config, len(ranked_participants))
+        winner_count = reward_info['winner_count']
+        gem_amounts = reward_info['gem_amounts']
+        
+        # Select winners
+        if len(ranked_participants) <= winner_count:
+            winners_list = ranked_participants
+        else:
+            winners_list = ranked_participants[:winner_count]
+        
+        # Prepare winners with gem amounts
+        winners = []
+        for i, participant in enumerate(winners_list):
+            winners.append({
+                'account_id': participant['account_id'],
+                'username': participant['username'],
+                'position': i + 1,
+                'gems_awarded': gem_amounts[i] if i < len(gem_amounts) else 0,
+                'completed_at': participant['third_question_completed_at']
+            })
+        
+        # Distribute rewards
+        distribution_result = distribute_rewards_to_winners(db, winners, mode_config, draw_date)
+        
+        # Cleanup old leaderboard (previous draw date)
+        previous_draw_date = draw_date - timedelta(days=1)
+        cleanup_old_leaderboard(db, previous_draw_date)
+        
+        logging.info(f"✅ Free mode draw completed: {len(winners)} winners, {distribution_result['total_gems_awarded']} gems awarded")
+        
+        # Get winner details with emails
+        winners_data = []
+        for winner in winners:
+            user = db.query(User).filter(User.account_id == winner['account_id']).first()
+            if user:
+                winners_data.append({
+                    "position": winner.get('position'),
+                    "username": winner.get('username'),
+                    "email": user.email if user.email else None,
+                    "gems_awarded": winner.get('gems_awarded', 0)
+                })
+        
+        # Return clean, simplified response
+        return {
+            "status": "success",
+            "draw_date": draw_date.isoformat(),
+            "total_participants": len(ranked_participants),
+            "total_winners": len(winners),
+            "total_gems_awarded": distribution_result['total_gems_awarded'],
+            "winners": winners_data
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"💥 Fatal error in free mode draw: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error in free mode draw: {str(e)}"
         )
 
 

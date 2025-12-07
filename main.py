@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, updates, trivia, entries, login, refresh, store, profile, cosmetics, badges, rewards, admin, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute
+from routers import draw, updates, trivia, entries, login, refresh, store, profile, cosmetics, badges, rewards, admin, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute, trivia_free_mode
 from config import E2EE_DM_ENABLED, GROUPS_ENABLED, STATUS_ENABLED, PRESENCE_ENABLED
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -119,7 +119,7 @@ from app.routers import wallet, stripe_connect, admin_withdrawals, iap, stripe_w
 # Initialize FastAPI app
 app = FastAPI(
     title="TriviaPay API",
-    description="Backend API for TriviaPay application",
+    description="Unified Backend API for TriviaPay application - Includes trivia, rewards, wallet, payments, and chat features",
     version="1.0.0",
     swagger_ui_parameters={
         "defaultModelsExpandDepth": -1,
@@ -257,6 +257,7 @@ app.include_router(login.router)     # Auth0 login
 app.include_router(refresh.router)   # Token refresh
 app.include_router(draw.router)      # Draw-related endpoints
 app.include_router(trivia.router)    # Trivia questions and lifelines
+app.include_router(trivia_free_mode.router)  # Free mode trivia endpoints
 app.include_router(store.router)     # Store and purchases
 app.include_router(profile.router)   # User profile management
 app.include_router(cosmetics.router) # Avatars and Frames management

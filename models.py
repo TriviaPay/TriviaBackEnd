@@ -1330,3 +1330,123 @@ class ChatMutePreferences(Base):
     
     # Relationships
     user = relationship("User", backref="chat_mute_preferences", uselist=False)
+
+# =================================
+#  Trivia Mode Configuration Table
+# =================================
+class TriviaModeConfig(Base):
+    __tablename__ = "trivia_mode_config"
+    
+    mode_id = Column(String, primary_key=True, index=True)
+    mode_name = Column(String, nullable=False)
+    questions_count = Column(Integer, nullable=False)
+    reward_distribution = Column(Text, nullable=False)  # JSON string
+    amount = Column(Float, default=0.0, nullable=False)
+    leaderboard_types = Column(Text, nullable=False)  # JSON array string
+    ad_config = Column(Text, nullable=True)  # JSON string
+    survey_config = Column(Text, nullable=True)  # JSON string
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+# =================================
+#  Free Mode Questions Table
+# =================================
+class TriviaQuestionsFreeMode(Base):
+    __tablename__ = "trivia_questions_free_mode"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    question = Column(String, nullable=False)
+    option_a = Column(String, nullable=False)
+    option_b = Column(String, nullable=False)
+    option_c = Column(String, nullable=False)
+    option_d = Column(String, nullable=False)
+    correct_answer = Column(String, nullable=False)
+    fill_in_answer = Column(String, nullable=True)
+    hint = Column(String, nullable=True)
+    explanation = Column(String, nullable=True)
+    category = Column(String, nullable=False)
+    country = Column(String, nullable=True)
+    difficulty_level = Column(String, nullable=False)
+    picture_url = Column(String, nullable=True)
+    question_hash = Column(String, index=True, nullable=False)  # MD5 hash for deduplication
+    created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_used = Column(Boolean, default=False, nullable=False)
+
+# =================================
+#  Free Mode Daily Questions Pool
+# =================================
+class TriviaQuestionsFreeModeDaily(Base):
+    __tablename__ = "trivia_questions_free_mode_daily"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(DateTime, nullable=False)
+    question_id = Column(Integer, ForeignKey("trivia_questions_free_mode.id"), nullable=False)
+    question_order = Column(Integer, nullable=False)  # 1-3
+    is_used = Column(Boolean, default=False, nullable=False)
+    
+    # Relationships
+    question = relationship("TriviaQuestionsFreeMode", backref="daily_allocations")
+    __table_args__ = (
+        UniqueConstraint('date', 'question_order', name='uq_free_mode_daily_question_order'),
+        UniqueConstraint('date', 'question_id', name='uq_free_mode_daily_question_id'),
+    )
+
+# =================================
+#  User Free Mode Daily Attempts
+# =================================
+class TriviaUserFreeModeDaily(Base):
+    __tablename__ = "trivia_user_free_mode_daily"
+    
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
+    date = Column(Date, primary_key=True, nullable=False)
+    question_order = Column(Integer, primary_key=True, nullable=False)  # 1-3
+    
+    question_id = Column(Integer, ForeignKey("trivia_questions_free_mode.id"), nullable=False)
+    user_answer = Column(String, nullable=True)
+    is_correct = Column(Boolean, nullable=True)
+    answered_at = Column(DateTime, nullable=True)
+    status = Column(String, nullable=False, default='locked')  # locked, viewed, answered_wrong, answered_correct
+    third_question_completed_at = Column(DateTime, nullable=True)  # For ranking winners
+    
+    # Relationships
+    user = relationship("User", backref="free_mode_daily_attempts")
+    question = relationship("TriviaQuestionsFreeMode", backref="user_attempts")
+    __table_args__ = (
+        UniqueConstraint('account_id', 'date', 'question_order', name='uq_user_free_mode_daily_question'),
+    )
+
+# =================================
+#  Free Mode Winners
+# =================================
+class TriviaFreeModeWinners(Base):
+    __tablename__ = "trivia_free_mode_winners"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    draw_date = Column(Date, nullable=False)
+    position = Column(Integer, nullable=False)
+    gems_awarded = Column(Integer, nullable=False)
+    double_gems_flag = Column(Boolean, default=False, nullable=False)
+    final_gems = Column(Integer, nullable=True)
+    completed_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="free_mode_wins")
+
+# =================================
+#  Free Mode Leaderboard
+# =================================
+class TriviaFreeModeLeaderboard(Base):
+    __tablename__ = "trivia_free_mode_leaderboard"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    draw_date = Column(Date, nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    gems_awarded = Column(Integer, nullable=False)
+    completed_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="free_mode_leaderboard_entries")

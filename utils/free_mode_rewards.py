@@ -1,0 +1,268 @@
+"""
+Free mode specific reward logic for winner calculation and gem distribution.
+"""
+import json
+import logging
+from typing import List, Dict, Any
+from datetime import date, datetime
+from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
+from models import (
+    TriviaModeConfig, TriviaUserFreeModeDaily, TriviaFreeModeWinners,
+    TriviaFreeModeLeaderboard, User
+)
+
+logger = logging.getLogger(__name__)
+
+
+def get_eligible_participants_free_mode(db: Session, draw_date: date) -> List[Dict[str, Any]]:
+    """
+    Get users who answered all questions correctly for free mode.
+    Only users with is_correct=True AND status='answered_correct' for ALL questions are eligible.
+    
+    Args:
+        db: Database session
+        draw_date: The draw date to check
+        
+    Returns:
+        List of participant dictionaries with account_id, username, and third_question_completed_at
+    """
+    logger.info(f"Getting eligible participants for free mode draw date: {draw_date}")
+    
+    # Get mode config to know how many questions are required
+    mode_config = db.query(TriviaModeConfig).filter(
+        TriviaModeConfig.mode_id == 'free_mode'
+    ).first()
+    
+    if not mode_config:
+        logger.warning("Free mode config not found")
+        return []
+    
+    questions_count = mode_config.questions_count
+    
+    # Get all users who have answered questions for this date
+    user_attempts = db.query(TriviaUserFreeModeDaily).filter(
+        TriviaUserFreeModeDaily.date == draw_date
+    ).all()
+    
+    # Group by account_id
+    user_attempts_dict = {}
+    for attempt in user_attempts:
+        if attempt.account_id not in user_attempts_dict:
+            user_attempts_dict[attempt.account_id] = []
+        user_attempts_dict[attempt.account_id].append(attempt)
+    
+    # Filter users who answered all questions correctly
+    eligible_participants = []
+    for account_id, attempts in user_attempts_dict.items():
+        # Check if user has answered all required questions correctly
+        correct_attempts = [
+            a for a in attempts 
+            if a.is_correct is True and a.status == 'answered_correct'
+        ]
+        
+        if len(correct_attempts) == questions_count:
+            # User answered all questions correctly
+            # Get the third question completion time
+            third_question = next(
+                (a for a in attempts if a.question_order == questions_count and a.third_question_completed_at),
+                None
+            )
+            
+            if third_question and third_question.third_question_completed_at:
+                # Get user details
+                user = db.query(User).filter(User.account_id == account_id).first()
+                if user:
+                    eligible_participants.append({
+                        'account_id': account_id,
+                        'username': user.username,
+                        'third_question_completed_at': third_question.third_question_completed_at
+                    })
+    
+    logger.info(f"Found {len(eligible_participants)} eligible participants for free mode draw on {draw_date}")
+    return eligible_participants
+
+
+def rank_participants_by_completion(participants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Rank participants by their 3rd question completion time (earliest first).
+    
+    Args:
+        participants: List of participant dictionaries
+        
+    Returns:
+        Sorted list of participants (earliest completion first)
+    """
+    return sorted(
+        participants,
+        key=lambda x: x['third_question_completed_at']
+    )
+
+
+def calculate_reward_distribution(mode_config: TriviaModeConfig, participant_count: int) -> Dict[str, Any]:
+    """
+    Calculate reward distribution based on mode configuration.
+    
+    Args:
+        mode_config: The mode configuration object
+        participant_count: Number of eligible participants
+        
+    Returns:
+        Dictionary with 'winner_count', 'gem_shares', 'total_gems_pool', and 'gem_amounts'
+    """
+    try:
+        reward_config = json.loads(mode_config.reward_distribution)
+    except (json.JSONDecodeError, TypeError):
+        logger.error(f"Invalid reward_distribution JSON for mode {mode_config.mode_id}")
+        return {
+            'winner_count': 0,
+            'gem_shares': [],
+            'total_gems_pool': 0,
+            'gem_amounts': []
+        }
+    
+    # Determine winner count
+    winner_count_formula = reward_config.get('winner_count_formula', 'tiered')
+    
+    if winner_count_formula == 'fixed':
+        winner_count = reward_config.get('fixed_winner_count', 1)
+    else:  # tiered
+        tiered_config = reward_config.get('tiered_config', {})
+        winner_count = 1  # default
+        
+        for threshold, count in tiered_config.items():
+            if threshold == 'default':
+                winner_count = count
+            else:
+                # Parse threshold like "<50"
+                threshold_num = int(threshold.replace('<', '').replace('>', ''))
+                if threshold.startswith('<') and participant_count < threshold_num:
+                    winner_count = count
+                    break
+                elif threshold.startswith('>') and participant_count > threshold_num:
+                    winner_count = count
+                    break
+        
+        # Cap winner count at participant count
+        winner_count = min(winner_count, participant_count)
+    
+    # Get gem shares
+    gem_shares = reward_config.get('gem_shares', [1.0])  # Default: winner takes all
+    
+    # Get total gems pool
+    total_gems_pool = reward_config.get('total_gems_pool', 1000)
+    
+    # Calculate gem amounts for each winner
+    gem_amounts = []
+    if gem_shares and winner_count > 0:
+        # Normalize shares if needed
+        total_share = sum(gem_shares[:winner_count])
+        if total_share > 0:
+            for i in range(winner_count):
+                share = gem_shares[i] if i < len(gem_shares) else gem_shares[-1] / (i + 1)
+                gems = int((share / total_share) * total_gems_pool)
+                gem_amounts.append(gems)
+        else:
+            # Equal distribution
+            gems_per_winner = total_gems_pool // winner_count
+            gem_amounts = [gems_per_winner] * winner_count
+    
+    return {
+        'winner_count': winner_count,
+        'gem_shares': gem_shares[:winner_count] if gem_shares else [],
+        'total_gems_pool': total_gems_pool,
+        'gem_amounts': gem_amounts
+    }
+
+
+def distribute_rewards_to_winners(
+    db: Session,
+    winners: List[Dict[str, Any]],
+    mode_config: TriviaModeConfig,
+    draw_date: date
+) -> Dict[str, Any]:
+    """
+    Award gems to winners and create winner records.
+    
+    Args:
+        db: Database session
+        winners: List of winner dictionaries with account_id, username, position, gems_awarded
+        mode_config: The mode configuration
+        draw_date: The draw date
+        
+    Returns:
+        Dictionary with summary of distribution
+    """
+    total_gems_awarded = 0
+    
+    for winner in winners:
+        # Update user's gem balance
+        user = db.query(User).filter(User.account_id == winner['account_id']).first()
+        if user:
+            gems_to_award = winner.get('gems_awarded', 0)
+            user.gems += gems_to_award
+            total_gems_awarded += gems_to_award
+        
+        # Create winner record
+        winner_record = TriviaFreeModeWinners(
+            account_id=winner['account_id'],
+            draw_date=draw_date,
+            position=winner['position'],
+            gems_awarded=winner.get('gems_awarded', 0),
+            double_gems_flag=False,
+            final_gems=None,
+            completed_at=winner.get('completed_at', datetime.utcnow())
+        )
+        db.add(winner_record)
+        
+        # Create/update leaderboard entry
+        leaderboard_entry = db.query(TriviaFreeModeLeaderboard).filter(
+            and_(
+                TriviaFreeModeLeaderboard.account_id == winner['account_id'],
+                TriviaFreeModeLeaderboard.draw_date == draw_date
+            )
+        ).first()
+        
+        if leaderboard_entry:
+            leaderboard_entry.position = winner['position']
+            leaderboard_entry.gems_awarded = winner.get('gems_awarded', 0)
+            leaderboard_entry.completed_at = winner.get('completed_at', datetime.utcnow())
+        else:
+            leaderboard_entry = TriviaFreeModeLeaderboard(
+                account_id=winner['account_id'],
+                draw_date=draw_date,
+                position=winner['position'],
+                gems_awarded=winner.get('gems_awarded', 0),
+                completed_at=winner.get('completed_at', datetime.utcnow())
+            )
+            db.add(leaderboard_entry)
+    
+    db.commit()
+    
+    return {
+        'total_winners': len(winners),
+        'total_gems_awarded': total_gems_awarded
+    }
+
+
+def cleanup_old_leaderboard(db: Session, previous_draw_date: date) -> int:
+    """
+    Delete leaderboard entries from previous draw date.
+    Called when a new draw is triggered.
+    
+    Args:
+        db: Database session
+        previous_draw_date: The draw date to clean up
+        
+    Returns:
+        Number of entries deleted
+    """
+    deleted_count = db.query(TriviaFreeModeLeaderboard).filter(
+        TriviaFreeModeLeaderboard.draw_date == previous_draw_date
+    ).delete()
+    
+    db.commit()
+    
+    logger.info(f"Cleaned up {deleted_count} leaderboard entries for draw date {previous_draw_date}")
+    return deleted_count
+
