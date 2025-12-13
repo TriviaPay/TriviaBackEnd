@@ -359,6 +359,7 @@ async def get_silver_mode_status(
         'has_submitted': user_attempt is not None and user_attempt.submitted_at is not None,
         'submitted_at': user_attempt.submitted_at.isoformat() if user_attempt and user_attempt.submitted_at else None,
         'is_correct': user_attempt.is_correct if user_attempt else None,
+        'fill_in_answer': user_attempt.user_answer if user_attempt and user_attempt.user_answer else None,  # User's submitted answer
         'is_winner': is_winner,
         'current_date': target_date.isoformat()
     }

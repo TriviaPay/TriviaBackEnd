@@ -15,6 +15,8 @@ from routers.dependencies import get_current_user
 from pathlib import Path as FilePath
 from utils.draw_calculations import get_next_draw_time
 from utils.logging_helpers import log_info, log_warning, log_error
+from utils.subscription_service import check_mode_access
+from utils.trivia_mode_service import get_active_draw_date
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/trivia", tags=["Trivia"])
@@ -981,4 +983,46 @@ async def get_boost_availability(
         "boost_costs": {boost_type: boost_info.get('gems', 0) 
                        for boost_type, boost_info in gameplay_boosts.items() 
                        if 'gems' in boost_info}
+    }
+
+
+@router.get("/modes/status")
+async def get_all_modes_status(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get combined subscription status for all 3 modes (free, bronze, silver).
+    Shows which modes the current user has access to.
+    """
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check access for each mode
+    free_mode_access = check_mode_access(db, user, 'free_mode')
+    bronze_mode_access = check_mode_access(db, user, 'bronze')
+    silver_mode_access = check_mode_access(db, user, 'silver')
+    
+    return {
+        'free_mode': {
+            'has_access': free_mode_access['has_access'],
+            'subscription_status': free_mode_access.get('subscription_status', 'not_required'),
+            'subscription_details': free_mode_access.get('subscription_details'),
+            'mode_name': 'Free Mode',
+            'price': 0.0
+        },
+        'bronze_mode': {
+            'has_access': bronze_mode_access['has_access'],
+            'subscription_status': bronze_mode_access.get('subscription_status', 'no_subscription'),
+            'subscription_details': bronze_mode_access.get('subscription_details'),
+            'mode_name': 'Bronze Mode',
+            'price': 5.0
+        },
+        'silver_mode': {
+            'has_access': silver_mode_access['has_access'],
+            'subscription_status': silver_mode_access.get('subscription_status', 'no_subscription'),
+            'subscription_details': silver_mode_access.get('subscription_details'),
+            'mode_name': 'Silver Mode',
+            'price': 10.0
+        }
     }

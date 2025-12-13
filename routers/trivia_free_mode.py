@@ -232,6 +232,16 @@ async def get_free_mode_status(
         None
     )
     
+    # Get user's answers (fill_in_answer for each question)
+    answers = []
+    for attempt in sorted(user_attempts, key=lambda x: x.question_order):
+        answers.append({
+            'question_order': attempt.question_order,
+            'user_answer': attempt.user_answer,
+            'is_correct': attempt.is_correct,
+            'answered_at': attempt.answered_at.isoformat() if attempt.answered_at else None
+        })
+    
     # Check if user is a winner
     yesterday_draw = target_date - date.resolution
     is_winner = db.query(TriviaFreeModeWinners).filter(
@@ -247,6 +257,7 @@ async def get_free_mode_status(
         },
         'completion_time': third_question.third_question_completed_at.isoformat() if third_question else None,
         'is_winner': is_winner,
-        'current_date': target_date.isoformat()
+        'current_date': target_date.isoformat(),
+        'fill_in_answer': answers  # User's submitted answers for each question
     }
 
