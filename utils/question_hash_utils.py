@@ -3,7 +3,7 @@ Utility functions for question hash generation and duplicate checking.
 """
 import hashlib
 from sqlalchemy.orm import Session
-from models import Trivia, TriviaQuestionsFreeMode
+from models import Trivia, TriviaQuestionsFreeMode, TriviaQuestionsFiveDollarMode
 
 
 def generate_question_hash(question_text: str) -> str:
@@ -46,6 +46,14 @@ def check_duplicate_across_modes(db: Session, question_hash: str) -> dict:
     if existing_free:
         found_in.append('trivia_questions_free_mode')
     
+    # Check $5 mode questions table
+    existing_five_dollar = db.query(TriviaQuestionsFiveDollarMode).filter(
+        TriviaQuestionsFiveDollarMode.question_hash == question_hash
+    ).first()
+    
+    if existing_five_dollar:
+        found_in.append('trivia_questions_five_dollar_mode')
+    
     # Add more mode tables here as they are created
     
     return {
@@ -69,6 +77,12 @@ def check_duplicate_in_mode(db: Session, question_hash: str, mode_id: str) -> bo
     if mode_id == 'free_mode':
         existing = db.query(TriviaQuestionsFreeMode).filter(
             TriviaQuestionsFreeMode.question_hash == question_hash
+        ).first()
+        return existing is not None
+    
+    if mode_id == 'five_dollar_mode':
+        existing = db.query(TriviaQuestionsFiveDollarMode).filter(
+            TriviaQuestionsFiveDollarMode.question_hash == question_hash
         ).first()
         return existing is not None
     

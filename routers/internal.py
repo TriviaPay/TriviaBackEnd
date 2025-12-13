@@ -8,7 +8,11 @@ from db import get_db
 from rewards_logic import perform_draw, reset_monthly_subscriptions, reset_weekly_daily_rewards
 import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
-from models import GlobalChatMessage, User, OneSignalPlayer, TriviaUserDaily, TriviaFreeModeWinners
+from models import (
+    GlobalChatMessage, User, OneSignalPlayer, TriviaUserDaily,
+    TriviaFreeModeWinners, TriviaFiveDollarModeWinners
+)
+from utils.trivia_mode_service import get_mode_config
 from utils.free_mode_rewards import (
     get_eligible_participants_free_mode, rank_participants_by_completion,
     calculate_reward_distribution, distribute_rewards_to_winners, cleanup_old_leaderboard
@@ -402,6 +406,140 @@ async def internal_free_mode_draw(
         raise HTTPException(
             status_code=500,
             detail=f"Error in free mode draw: {str(e)}"
+        )
+
+
+@router.post("/mode-draw/{mode_id}")
+async def internal_mode_draw(
+    mode_id: str,
+    secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
+    db: Session = Depends(get_db)
+):
+    """
+    Generic internal endpoint for mode draws triggered by external cron or scheduler.
+    Supports any registered mode (free_mode, five_dollar_mode, etc.).
+    
+    Args:
+        mode_id: Mode identifier (e.g., 'free_mode', 'five_dollar_mode')
+        
+    Returns clean response with winner details.
+    """
+    if secret != os.getenv("INTERNAL_SECRET"):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    try:
+        from utils.trivia_mode_service import get_active_draw_date
+        from utils.mode_draw_service import execute_mode_draw
+        from utils.free_mode_rewards import distribute_rewards_to_winners, cleanup_old_leaderboard
+        from utils.five_dollar_mode_service import (
+            distribute_rewards_to_winners_five_dollar_mode,
+            cleanup_old_leaderboard_five_dollar_mode
+        )
+        from models import TriviaFreeModeWinners, TriviaFiveDollarModeWinners
+        
+        # Determine which draw date to use (yesterday's draw)
+        draw_date = get_active_draw_date() - timedelta(days=1)
+        
+        logging.info(f"🎯 Starting {mode_id} draw for {draw_date} via internal endpoint")
+        
+        # Check if draw already performed (mode-specific)
+        if mode_id == 'free_mode':
+            existing_draw = db.query(TriviaFreeModeWinners).filter(
+                TriviaFreeModeWinners.draw_date == draw_date
+            ).first()
+        elif mode_id == 'five_dollar_mode':
+            existing_draw = db.query(TriviaFiveDollarModeWinners).filter(
+                TriviaFiveDollarModeWinners.draw_date == draw_date
+            ).first()
+        else:
+            existing_draw = None
+        
+        if existing_draw:
+            logging.info(f"⏭️ Draw for {draw_date} has already been performed")
+            return {
+                "status": "already_performed",
+                "draw_date": draw_date.isoformat(),
+                "message": f"Draw for {draw_date} has already been performed"
+            }
+        
+        # Execute draw using generic service
+        result = execute_mode_draw(db, mode_id, draw_date)
+        
+        if result.get('status') == 'no_participants':
+            logging.info(f"No eligible participants for {mode_id} draw on {draw_date}")
+            return {
+                "status": "no_participants",
+                "draw_date": draw_date.isoformat(),
+                "message": f"No eligible participants for draw on {draw_date}",
+                "total_participants": 0
+            }
+        
+        if result.get('status') != 'success':
+            logging.error(f"Draw failed for {mode_id}: {result.get('message', 'Unknown error')}")
+            return {
+                "status": result.get('status', 'error'),
+                "draw_date": draw_date.isoformat(),
+                "message": result.get('message', 'Unknown error')
+            }
+        
+        # Distribute rewards (mode-specific)
+        mode_config = get_mode_config(db, mode_id)
+        if mode_config:
+            winners = result.get('winners', [])
+            
+            if mode_id == 'free_mode':
+                distribution_result = distribute_rewards_to_winners(db, winners, mode_config, draw_date)
+                previous_draw_date = draw_date - timedelta(days=1)
+                cleanup_old_leaderboard(db, previous_draw_date)
+            elif mode_id == 'five_dollar_mode':
+                distribution_result = distribute_rewards_to_winners_five_dollar_mode(
+                    db, winners, mode_config, draw_date
+                )
+                previous_draw_date = draw_date - timedelta(days=1)
+                cleanup_old_leaderboard_five_dollar_mode(db, previous_draw_date)
+            else:
+                distribution_result = {'total_winners': len(winners)}
+            
+            # Get winner details with emails
+            winners_data = []
+            for winner in winners:
+                user = db.query(User).filter(User.account_id == winner['account_id']).first()
+                if user:
+                    winner_data = {
+                        "position": winner.get('position'),
+                        "username": winner.get('username'),
+                        "email": user.email if user.email else None,
+                    }
+                    # Add reward amount (gems or money)
+                    if 'gems_awarded' in winner:
+                        winner_data['gems_awarded'] = winner['gems_awarded']
+                    if 'reward_amount' in winner:
+                        winner_data['money_awarded'] = winner['reward_amount']
+                    winners_data.append(winner_data)
+            
+            logging.info(f"✅ {mode_id} draw completed: {len(winners)} winners")
+            
+            return {
+                "status": "success",
+                "draw_date": draw_date.isoformat(),
+                "total_participants": result.get('total_participants', 0),
+                "total_winners": len(winners),
+                "winners": winners_data
+            }
+        else:
+            return {
+                "status": "error",
+                "draw_date": draw_date.isoformat(),
+                "message": f"Mode config not found for {mode_id}"
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"💥 Fatal error in {mode_id} draw: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error in {mode_id} draw: {str(e)}"
         )
 
 

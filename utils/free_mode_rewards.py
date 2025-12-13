@@ -1,5 +1,6 @@
 """
 Free mode specific reward logic for winner calculation and gem distribution.
+Uses generic mode_rewards_service for reward calculations.
 """
 import json
 import logging
@@ -10,6 +11,10 @@ from sqlalchemy import func, and_
 from models import (
     TriviaModeConfig, TriviaUserFreeModeDaily, TriviaFreeModeWinners,
     TriviaFreeModeLeaderboard, User
+)
+from utils.mode_rewards_service import (
+    calculate_reward_distribution as generic_calculate_reward_distribution,
+    rank_participants_by_completion as generic_rank_participants_by_completion
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +91,7 @@ def get_eligible_participants_free_mode(db: Session, draw_date: date) -> List[Di
 def rank_participants_by_completion(participants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Rank participants by their 3rd question completion time (earliest first).
+    Uses generic ranking function.
     
     Args:
         participants: List of participant dictionaries
@@ -93,15 +99,13 @@ def rank_participants_by_completion(participants: List[Dict[str, Any]]) -> List[
     Returns:
         Sorted list of participants (earliest completion first)
     """
-    return sorted(
-        participants,
-        key=lambda x: x['third_question_completed_at']
-    )
+    return generic_rank_participants_by_completion(participants, completion_field='third_question_completed_at')
 
 
 def calculate_reward_distribution(mode_config: TriviaModeConfig, participant_count: int) -> Dict[str, Any]:
     """
     Calculate reward distribution based on mode configuration.
+    Uses generic mode_rewards_service.
     
     Args:
         mode_config: The mode configuration object
@@ -109,67 +113,27 @@ def calculate_reward_distribution(mode_config: TriviaModeConfig, participant_cou
         
     Returns:
         Dictionary with 'winner_count', 'gem_shares', 'total_gems_pool', and 'gem_amounts'
+        (maintains backward compatibility with existing code)
     """
+    # Use generic reward distribution calculator
+    result = generic_calculate_reward_distribution(mode_config, participant_count)
+    
+    # Convert to legacy format for backward compatibility
+    reward_amounts = result.get('reward_amounts', [])
+    gem_amounts = [int(amount) for amount in reward_amounts]  # Convert to int for gems
+    
+    # Get gem shares from config for backward compatibility
     try:
         reward_config = json.loads(mode_config.reward_distribution)
+        gem_shares = reward_config.get('gem_shares', [1.0])
+        total_gems_pool = reward_config.get('total_gems_pool', 1000)
     except (json.JSONDecodeError, TypeError):
-        logger.error(f"Invalid reward_distribution JSON for mode {mode_config.mode_id}")
-        return {
-            'winner_count': 0,
-            'gem_shares': [],
-            'total_gems_pool': 0,
-            'gem_amounts': []
-        }
-    
-    # Determine winner count
-    winner_count_formula = reward_config.get('winner_count_formula', 'tiered')
-    
-    if winner_count_formula == 'fixed':
-        winner_count = reward_config.get('fixed_winner_count', 1)
-    else:  # tiered
-        tiered_config = reward_config.get('tiered_config', {})
-        winner_count = 1  # default
-        
-        for threshold, count in tiered_config.items():
-            if threshold == 'default':
-                winner_count = count
-            else:
-                # Parse threshold like "<50"
-                threshold_num = int(threshold.replace('<', '').replace('>', ''))
-                if threshold.startswith('<') and participant_count < threshold_num:
-                    winner_count = count
-                    break
-                elif threshold.startswith('>') and participant_count > threshold_num:
-                    winner_count = count
-                    break
-        
-        # Cap winner count at participant count
-        winner_count = min(winner_count, participant_count)
-    
-    # Get gem shares
-    gem_shares = reward_config.get('gem_shares', [1.0])  # Default: winner takes all
-    
-    # Get total gems pool
-    total_gems_pool = reward_config.get('total_gems_pool', 1000)
-    
-    # Calculate gem amounts for each winner
-    gem_amounts = []
-    if gem_shares and winner_count > 0:
-        # Normalize shares if needed
-        total_share = sum(gem_shares[:winner_count])
-        if total_share > 0:
-            for i in range(winner_count):
-                share = gem_shares[i] if i < len(gem_shares) else gem_shares[-1] / (i + 1)
-                gems = int((share / total_share) * total_gems_pool)
-                gem_amounts.append(gems)
-        else:
-            # Equal distribution
-            gems_per_winner = total_gems_pool // winner_count
-            gem_amounts = [gems_per_winner] * winner_count
+        gem_shares = []
+        total_gems_pool = 0
     
     return {
-        'winner_count': winner_count,
-        'gem_shares': gem_shares[:winner_count] if gem_shares else [],
+        'winner_count': result.get('winner_count', 0),
+        'gem_shares': gem_shares[:result.get('winner_count', 0)] if gem_shares else [],
         'total_gems_pool': total_gems_pool,
         'gem_amounts': gem_amounts
     }

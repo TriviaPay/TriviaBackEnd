@@ -247,7 +247,7 @@ def get_free_mode_questions(db: Session, user: User, target_date: date) -> List[
             'option_d': question.option_d,
             'correct_answer': question.correct_answer,
             'hint': question.hint,
-            'fill_in_answer': question.fill_in_answer,
+            'fill_in_answer': user_attempt.user_answer if user_attempt and user_attempt.user_answer else None,  # User's submitted answer
             'explanation': question.explanation,
             'category': question.category,
             'difficulty_level': question.difficulty_level,

@@ -1450,3 +1450,102 @@ class TriviaFreeModeLeaderboard(Base):
     
     # Relationships
     user = relationship("User", backref="free_mode_leaderboard_entries")
+
+# =================================
+#  $5 Mode Questions Table
+# =================================
+class TriviaQuestionsFiveDollarMode(Base):
+    __tablename__ = "trivia_questions_five_dollar_mode"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    question = Column(String, nullable=False)
+    option_a = Column(String, nullable=False)
+    option_b = Column(String, nullable=False)
+    option_c = Column(String, nullable=False)
+    option_d = Column(String, nullable=False)
+    correct_answer = Column(String, nullable=False)
+    fill_in_answer = Column(String, nullable=True)
+    hint = Column(String, nullable=True)
+    explanation = Column(String, nullable=True)
+    category = Column(String, nullable=False)
+    country = Column(String, nullable=True)
+    difficulty_level = Column(String, nullable=False)
+    picture_url = Column(String, nullable=True)
+    question_hash = Column(String, index=True, nullable=False)  # MD5 hash for deduplication
+    created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_used = Column(Boolean, default=False, nullable=False)
+
+# =================================
+#  $5 Mode Daily Questions Pool
+# =================================
+class TriviaQuestionsFiveDollarModeDaily(Base):
+    __tablename__ = "trivia_questions_five_dollar_mode_daily"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(DateTime, nullable=False)
+    question_id = Column(Integer, ForeignKey("trivia_questions_five_dollar_mode.id"), nullable=False)
+    question_order = Column(Integer, nullable=False)  # Always 1 for $5 mode
+    is_used = Column(Boolean, default=False, nullable=False)
+    
+    # Relationships
+    question = relationship("TriviaQuestionsFiveDollarMode", backref="daily_allocations")
+    __table_args__ = (
+        UniqueConstraint('date', 'question_order', name='uq_five_dollar_mode_daily_question_order'),
+        UniqueConstraint('date', 'question_id', name='uq_five_dollar_mode_daily_question_id'),
+    )
+
+# =================================
+#  User $5 Mode Daily Attempts
+# =================================
+class TriviaUserFiveDollarModeDaily(Base):
+    __tablename__ = "trivia_user_five_dollar_mode_daily"
+    
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
+    date = Column(Date, primary_key=True, nullable=False)
+    
+    question_id = Column(Integer, ForeignKey("trivia_questions_five_dollar_mode.id"), nullable=False)
+    user_answer = Column(String, nullable=True)
+    is_correct = Column(Boolean, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)  # Submission time for ranking
+    status = Column(String, nullable=False, default='locked')  # locked, viewed, answered
+    
+    # Relationships
+    user = relationship("User", backref="five_dollar_mode_daily_attempts")
+    question = relationship("TriviaQuestionsFiveDollarMode", backref="user_attempts")
+    __table_args__ = (
+        UniqueConstraint('account_id', 'date', name='uq_user_five_dollar_mode_daily'),
+    )
+
+# =================================
+#  $5 Mode Winners
+# =================================
+class TriviaFiveDollarModeWinners(Base):
+    __tablename__ = "trivia_five_dollar_mode_winners"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    draw_date = Column(Date, nullable=False)
+    position = Column(Integer, nullable=False)
+    money_awarded = Column(Float, nullable=False)  # Money in USD
+    submitted_at = Column(DateTime, nullable=False)  # Submission time
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="five_dollar_mode_wins")
+
+# =================================
+#  $5 Mode Leaderboard
+# =================================
+class TriviaFiveDollarModeLeaderboard(Base):
+    __tablename__ = "trivia_five_dollar_mode_leaderboard"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    draw_date = Column(Date, nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    money_awarded = Column(Float, nullable=False)  # Money in USD
+    submitted_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="five_dollar_mode_leaderboard_entries")

@@ -6,7 +6,7 @@ import io
 import json
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
-from models import TriviaQuestionsFreeMode
+from models import TriviaQuestionsFreeMode, TriviaQuestionsFiveDollarMode
 from utils.question_hash_utils import generate_question_hash, check_duplicate_in_mode
 
 
@@ -143,29 +143,35 @@ def save_questions_to_mode(db: Session, questions: List[Dict[str, Any]], mode_id
                 continue
             
             # Save to appropriate table
+            question_model = None
             if mode_id == 'free_mode':
-                question = TriviaQuestionsFreeMode(
-                    question=question_data['question'],
-                    option_a=question_data['option_a'],
-                    option_b=question_data['option_b'],
-                    option_c=question_data['option_c'],
-                    option_d=question_data['option_d'],
-                    correct_answer=question_data['correct_answer'],
-                    fill_in_answer=question_data.get('fill_in_answer'),
-                    hint=question_data.get('hint'),
-                    explanation=question_data.get('explanation'),
-                    category=question_data['category'],
-                    country=question_data.get('country'),
-                    difficulty_level=question_data['difficulty_level'],
-                    picture_url=question_data.get('picture_url'),
-                    question_hash=question_hash,
-                    is_used=False
-                )
-                db.add(question)
-                saved_count += 1
+                question_model = TriviaQuestionsFreeMode
+            elif mode_id == 'five_dollar_mode':
+                question_model = TriviaQuestionsFiveDollarMode
             else:
                 error_count += 1
                 errors.append(f"Question {idx}: Unknown mode_id '{mode_id}'")
+                continue
+            
+            question = question_model(
+                question=question_data['question'],
+                option_a=question_data['option_a'],
+                option_b=question_data['option_b'],
+                option_c=question_data['option_c'],
+                option_d=question_data['option_d'],
+                correct_answer=question_data['correct_answer'],
+                fill_in_answer=question_data.get('fill_in_answer'),
+                hint=question_data.get('hint'),
+                explanation=question_data.get('explanation'),
+                category=question_data['category'],
+                country=question_data.get('country'),
+                difficulty_level=question_data['difficulty_level'],
+                picture_url=question_data.get('picture_url'),
+                question_hash=question_hash,
+                is_used=False
+            )
+            db.add(question)
+            saved_count += 1
         
         except Exception as e:
             error_count += 1

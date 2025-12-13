@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, updates, trivia, entries, login, refresh, store, profile, cosmetics, badges, rewards, admin, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute, trivia_free_mode
+from routers import draw, updates, trivia, entries, login, refresh, store, profile, cosmetics, badges, rewards, admin, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute, trivia_free_mode, trivia_five_dollar_mode
 from config import E2EE_DM_ENABLED, GROUPS_ENABLED, STATUS_ENABLED, PRESENCE_ENABLED
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -258,6 +258,7 @@ app.include_router(refresh.router)   # Token refresh
 app.include_router(draw.router)      # Draw-related endpoints
 app.include_router(trivia.router)    # Trivia questions and lifelines
 app.include_router(trivia_free_mode.router)  # Free mode trivia endpoints
+app.include_router(trivia_five_dollar_mode.router)  # $5 mode trivia endpoints
 app.include_router(store.router)     # Store and purchases
 app.include_router(profile.router)   # User profile management
 app.include_router(cosmetics.router) # Avatars and Frames management

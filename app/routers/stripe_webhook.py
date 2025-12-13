@@ -344,7 +344,7 @@ async def stripe_webhook(
             
             logger.info(f"Subscription {subscription_id} {event_type}: status={status}, customer={customer_id}")
             # Update user_subscriptions table if needed
-        
+            
         else:
             logger.info(f"Unhandled event type: {event_type}")
         

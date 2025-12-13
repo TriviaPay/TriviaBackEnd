@@ -8,13 +8,24 @@ from sqlalchemy import func, and_, or_, Integer, cast, select
 from db import SessionLocal
 from rewards_logic import perform_draw, reset_daily_eligibility_flags, reset_weekly_daily_rewards
 from cleanup_unused_questions import cleanup_unused_questions
-from models import User, TriviaQuestionsDaily, TriviaQuestionsWinners, UserSubscription, TriviaUserDaily, TriviaQuestionsEntries
-from models import TriviaModeConfig, TriviaQuestionsFreeMode, TriviaQuestionsFreeModeDaily, TriviaFreeModeWinners
+from models import (
+    User, TriviaQuestionsDaily, TriviaQuestionsWinners, UserSubscription, TriviaUserDaily, TriviaQuestionsEntries
+)
+from models import (
+    TriviaModeConfig, TriviaQuestionsFreeMode, TriviaQuestionsFreeModeDaily, TriviaFreeModeWinners,
+    TriviaQuestionsFiveDollarMode, TriviaQuestionsFiveDollarModeDaily, TriviaFiveDollarModeWinners
+)
 from utils.free_mode_rewards import (
     get_eligible_participants_free_mode, rank_participants_by_completion,
     calculate_reward_distribution, distribute_rewards_to_winners, cleanup_old_leaderboard
 )
+from utils.five_dollar_mode_service import (
+    get_eligible_participants_five_dollar_mode, rank_participants_by_submission_time,
+    calculate_total_pool_five_dollar_mode, distribute_rewards_to_winners_five_dollar_mode,
+    cleanup_old_leaderboard_five_dollar_mode
+)
 from utils.trivia_mode_service import get_mode_config, get_active_draw_date, get_date_range_for_query
+from utils.mode_draw_service import register_mode_handler, execute_mode_draw
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -352,6 +363,24 @@ def schedule_draws():
         replace_existing=True,
         misfire_grace_time=3600
     )
+    
+    # Schedule $5 mode draw job (same time as regular draw)
+    scheduler.add_job(
+        run_five_dollar_mode_draw,
+        CronTrigger(hour=hour, minute=minute, timezone=timezone),
+        id="five_dollar_mode_draw",
+        replace_existing=True,
+        misfire_grace_time=3600
+    )
+    
+    # Schedule $5 mode question allocation (1 minute after draw, same as regular questions)
+    scheduler.add_job(
+        allocate_five_dollar_mode_questions,
+        CronTrigger(hour=hour, minute=minute+1, timezone=timezone),
+        id="five_dollar_mode_question_allocation",
+        replace_existing=True,
+        misfire_grace_time=3600
+    )
 
 async def run_daily_draw():
     """
@@ -684,6 +713,136 @@ async def allocate_free_mode_questions():
     except Exception as e:
         logger.error(f"💥 Error allocating free mode questions: {str(e)}")
 
+async def run_five_dollar_mode_draw():
+    """
+    Process $5 mode draw at the configured draw time.
+    Uses generic draw service with registered handlers.
+    """
+    try:
+        logger.info(f"🎯 Starting $5 mode draw at {datetime.now()}")
+        db: Session = SessionLocal()
+        
+        try:
+            # Process yesterday's draw
+            yesterday = date.today() - timedelta(days=1)
+            
+            # Check if draw already performed
+            existing_draw = db.query(TriviaFiveDollarModeWinners).filter(
+                TriviaFiveDollarModeWinners.draw_date == yesterday
+            ).first()
+            
+            if existing_draw:
+                logger.info(f"⏭️ Draw for {yesterday} has already been performed, skipping...")
+                return
+            
+            # Execute draw using generic service
+            result = execute_mode_draw(db, 'five_dollar_mode', yesterday)
+            
+            if result['status'] == 'no_participants':
+                logger.info(f"📭 No eligible participants for $5 mode draw on {yesterday}")
+                return
+            
+            if result['status'] != 'success':
+                logger.error(f"❌ Draw failed: {result.get('message', 'Unknown error')}")
+                return
+            
+            # Distribute rewards
+            mode_config = get_mode_config(db, 'five_dollar_mode')
+            if mode_config:
+                winners = result.get('winners', [])
+                distribution_result = distribute_rewards_to_winners_five_dollar_mode(
+                    db, winners, mode_config, yesterday
+                )
+                
+                # Cleanup old leaderboard
+                previous_draw_date = yesterday - date.resolution
+                cleanup_old_leaderboard_five_dollar_mode(db, previous_draw_date)
+                
+                logger.info("🎉 $5 MODE DRAW COMPLETED SUCCESSFULLY!")
+                logger.info(f"🏆 Winners Selected: {len(winners)}")
+                logger.info(f"👥 Total Participants: {result.get('total_participants', 0)}")
+                logger.info(f"💰 Total Money Awarded: ${distribution_result.get('total_money_awarded', 0):.2f}")
+            
+        except Exception as db_error:
+            db.rollback()
+            logger.error(f"💥 Database error during $5 mode draw: {str(db_error)}")
+        finally:
+            db.close()
+        
+    except Exception as e:
+        logger.error(f"💥 Error running $5 mode draw: {str(e)}")
+
+async def allocate_five_dollar_mode_questions():
+    """
+    Allocate $5 mode question for the new day.
+    Selects a random question from TriviaQuestionsFiveDollarMode and adds it to TriviaQuestionsFiveDollarModeDaily.
+    """
+    try:
+        logger.info(f"🔄 Starting $5 mode question allocation at {datetime.now()}")
+        db: Session = SessionLocal()
+        
+        try:
+            # Get mode config
+            mode_config = get_mode_config(db, 'five_dollar_mode')
+            if not mode_config:
+                logger.warning("⚠️ $5 mode config not found, skipping question allocation...")
+                return
+            
+            target_date = get_active_draw_date()
+            
+            # Get date range for the target date
+            start_datetime, end_datetime = get_date_range_for_query(target_date)
+            
+            # Check if question already allocated for this date
+            existing_question = db.query(TriviaQuestionsFiveDollarModeDaily).filter(
+                TriviaQuestionsFiveDollarModeDaily.date >= start_datetime,
+                TriviaQuestionsFiveDollarModeDaily.date <= end_datetime
+            ).count()
+            
+            if existing_question > 0:
+                logger.info(f"⏭️ Question already allocated for {target_date}, skipping...")
+                return
+            
+            # Get available questions (prefer unused)
+            unused_questions = db.query(TriviaQuestionsFiveDollarMode).filter(
+                TriviaQuestionsFiveDollarMode.is_used == False
+            ).all()
+            
+            # If not enough unused questions, get any questions
+            import random
+            if len(unused_questions) < 1:
+                all_questions = db.query(TriviaQuestionsFiveDollarMode).all()
+                if len(all_questions) >= 1:
+                    selected_question = random.choice(all_questions)
+                else:
+                    logger.warning("⚠️ No questions available for $5 mode")
+                    return
+            else:
+                selected_question = random.choice(unused_questions)
+            
+            # Allocate question to daily pool
+            daily_question = TriviaQuestionsFiveDollarModeDaily(
+                date=start_datetime,
+                question_id=selected_question.id,
+                question_order=1,  # Always 1 for $5 mode
+                is_used=False
+            )
+            db.add(daily_question)
+            # Mark question as used
+            selected_question.is_used = True
+            
+            db.commit()
+            logger.info(f"✅ Successfully allocated question for $5 mode on {target_date}")
+            
+        except Exception as db_error:
+            db.rollback()
+            logger.error(f"💥 Database error during $5 mode question allocation: {str(db_error)}")
+        finally:
+            db.close()
+        
+    except Exception as e:
+        logger.error(f"💥 Error allocating $5 mode questions: {str(e)}")
+
 def start_scheduler():
     """
     Start the background scheduler.
@@ -692,11 +851,36 @@ def start_scheduler():
     global scheduler
     
     if not scheduler.running:
+        # Register mode handlers
+        register_mode_handlers()
         schedule_draws()
         scheduler.start()
         logger.info("Scheduler started successfully")
     else:
         logger.warning("Scheduler is already running")
+
+
+def register_mode_handlers():
+    """
+    Register mode-specific handlers for the generic draw service.
+    """
+    # Register free mode handler
+    register_mode_handler(
+        mode_id='free_mode',
+        eligibility_func=get_eligible_participants_free_mode,
+        ranking_func=rank_participants_by_completion,
+        reward_calc_func=None  # Uses config value
+    )
+    
+    # Register $5 mode handler
+    register_mode_handler(
+        mode_id='five_dollar_mode',
+        eligibility_func=get_eligible_participants_five_dollar_mode,
+        ranking_func=rank_participants_by_submission_time,
+        reward_calc_func=calculate_total_pool_five_dollar_mode
+    )
+    
+    logger.info("Mode handlers registered successfully")
 
 def stop_scheduler():
     """
