@@ -1,6 +1,6 @@
 """
-Bronze Mode ($5) trivia endpoints.
-Requires active $5 monthly subscription to access.
+Silver Mode ($10) trivia endpoints.
+Requires active $10 monthly subscription to access.
 """
 import logging
 import random
@@ -13,9 +13,9 @@ from pydantic import BaseModel
 from db import get_db
 from routers.dependencies import get_current_user
 from models import (
-    User, TriviaBronzeModeWinners, TriviaBronzeModeLeaderboard,
-    TriviaQuestionsBronzeModeDaily, TriviaUserBronzeModeDaily,
-    TriviaQuestionsBronzeMode
+    User, TriviaSilverModeWinners, TriviaSilverModeLeaderboard,
+    TriviaQuestionsSilverModeDaily, TriviaUserSilverModeDaily,
+    TriviaQuestionsSilverMode
 )
 from utils.trivia_mode_service import get_active_draw_date, get_mode_config, get_date_range_for_query
 from utils.subscription_service import check_mode_access
@@ -23,7 +23,7 @@ from models import TriviaModeConfig
 import json
 from sqlalchemy.orm import joinedload
 
-router = APIRouter(prefix="/trivia/bronze-mode", tags=["trivia-bronze-mode"])
+router = APIRouter(prefix="/trivia/silver-mode", tags=["trivia-silver-mode"])
 logger = logging.getLogger(__name__)
 
 
@@ -32,9 +32,9 @@ class SubmitAnswerRequest(BaseModel):
     answer: str
 
 
-def ensure_bronze_mode_config(db: Session) -> TriviaModeConfig:
+def ensure_silver_mode_config(db: Session) -> TriviaModeConfig:
     """
-    Ensure bronze mode configuration exists, creating it if missing.
+    Ensure silver mode configuration exists, creating it if missing.
     
     Args:
         db: Database session
@@ -45,22 +45,22 @@ def ensure_bronze_mode_config(db: Session) -> TriviaModeConfig:
     Raises:
         HTTPException: If config cannot be created
     """
-    mode_config = get_mode_config(db, 'bronze')
+    mode_config = get_mode_config(db, 'silver')
     if not mode_config:
         try:
             reward_distribution = {
                 "reward_type": "money",
                 "distribution_method": "harmonic_sum",
                 "requires_subscription": True,
-                "subscription_amount": 5.0,
+                "subscription_amount": 10.0,
                 "profit_share_percentage": 0.5
             }
             mode_config = TriviaModeConfig(
-                mode_id='bronze',
-                mode_name='Bronze Mode - First-Come Reward',
+                mode_id='silver',
+                mode_name='Silver Mode - First-Come Reward',
                 questions_count=1,
                 reward_distribution=json.dumps(reward_distribution),
-                amount=5.0,
+                amount=10.0,
                 leaderboard_types=json.dumps(['daily']),
                 ad_config=json.dumps({}),
                 survey_config=json.dumps({})
@@ -68,10 +68,10 @@ def ensure_bronze_mode_config(db: Session) -> TriviaModeConfig:
             db.add(mode_config)
             db.commit()
             db.refresh(mode_config)
-            logger.info("Auto-created bronze mode config")
+            logger.info("Auto-created silver mode config")
         except Exception as e:
             db.rollback()
-            logger.error(f"Failed to auto-create bronze mode config: {str(e)}")
+            logger.error(f"Failed to auto-create silver mode config: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail="Mode configuration not found and could not be created"
@@ -80,22 +80,22 @@ def ensure_bronze_mode_config(db: Session) -> TriviaModeConfig:
 
 
 @router.get("/question")
-async def get_bronze_mode_question(
+async def get_silver_mode_question(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Get today's question for bronze mode.
-    Requires active $5 subscription.
+    Get today's question for silver mode.
+    Requires active $10 subscription.
     """
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     # Ensure mode config exists
-    ensure_bronze_mode_config(db)
+    ensure_silver_mode_config(db)
     
     # Check subscription access
-    access_check = check_mode_access(db, user, 'bronze')
+    access_check = check_mode_access(db, user, 'silver')
     if not access_check['has_access']:
         raise HTTPException(
             status_code=403,
@@ -106,11 +106,11 @@ async def get_bronze_mode_question(
     start_datetime, end_datetime = get_date_range_for_query(target_date)
     
     # Get today's question
-    daily_question = db.query(TriviaQuestionsBronzeModeDaily).options(
-        joinedload(TriviaQuestionsBronzeModeDaily.question)
+    daily_question = db.query(TriviaQuestionsSilverModeDaily).options(
+        joinedload(TriviaQuestionsSilverModeDaily.question)
     ).filter(
-        TriviaQuestionsBronzeModeDaily.date >= start_datetime,
-        TriviaQuestionsBronzeModeDaily.date <= end_datetime
+        TriviaQuestionsSilverModeDaily.date >= start_datetime,
+        TriviaQuestionsSilverModeDaily.date <= end_datetime
     ).first()
     
     # Auto-allocate question if pool is empty
@@ -118,12 +118,12 @@ async def get_bronze_mode_question(
         logger.info(f"No question allocated for {target_date}, attempting auto-allocation...")
         try:
             # Get available questions (prefer unused)
-            unused_questions = db.query(TriviaQuestionsBronzeMode).filter(
-                TriviaQuestionsBronzeMode.is_used == False
+            unused_questions = db.query(TriviaQuestionsSilverMode).filter(
+                TriviaQuestionsSilverMode.is_used == False
             ).all()
             
             if len(unused_questions) < 1:
-                all_questions = db.query(TriviaQuestionsBronzeMode).all()
+                all_questions = db.query(TriviaQuestionsSilverMode).all()
                 if len(all_questions) < 1:
                     raise HTTPException(
                         status_code=404,
@@ -134,10 +134,10 @@ async def get_bronze_mode_question(
                 selected_question = random.choice(unused_questions)
             
             # Allocate question to daily pool
-            daily_question = TriviaQuestionsBronzeModeDaily(
+            daily_question = TriviaQuestionsSilverModeDaily(
                 date=start_datetime,
                 question_id=selected_question.id,
-                question_order=1,  # Always 1 for bronze mode
+                question_order=1,  # Always 1 for silver mode
                 is_used=False
             )
             db.add(daily_question)
@@ -147,9 +147,9 @@ async def get_bronze_mode_question(
             db.refresh(daily_question)
             
             # Reload with relationship
-            daily_question = db.query(TriviaQuestionsBronzeModeDaily).options(
-                joinedload(TriviaQuestionsBronzeModeDaily.question)
-            ).filter(TriviaQuestionsBronzeModeDaily.id == daily_question.id).first()
+            daily_question = db.query(TriviaQuestionsSilverModeDaily).options(
+                joinedload(TriviaQuestionsSilverModeDaily.question)
+            ).filter(TriviaQuestionsSilverModeDaily.id == daily_question.id).first()
             
             logger.info(f"Auto-allocated question {selected_question.id} for {target_date}")
         except Exception as e:
@@ -161,9 +161,9 @@ async def get_bronze_mode_question(
             )
     
     # Get user's attempt
-    user_attempt = db.query(TriviaUserBronzeModeDaily).filter(
-        TriviaUserBronzeModeDaily.account_id == user.account_id,
-        TriviaUserBronzeModeDaily.date == target_date
+    user_attempt = db.query(TriviaUserSilverModeDaily).filter(
+        TriviaUserSilverModeDaily.account_id == user.account_id,
+        TriviaUserSilverModeDaily.date == target_date
     ).first()
     
     question = daily_question.question
@@ -210,13 +210,13 @@ async def get_bronze_mode_question(
 
 
 @router.post("/submit-answer")
-async def submit_bronze_mode_answer(
+async def submit_silver_mode_answer(
     request: SubmitAnswerRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Submit answer for bronze mode question.
+    Submit answer for silver mode question.
     Only one submission per day per user allowed.
     Tracks submission time for ranking.
     """
@@ -224,10 +224,10 @@ async def submit_bronze_mode_answer(
         raise HTTPException(status_code=404, detail="User not found")
     
     # Ensure mode config exists
-    ensure_bronze_mode_config(db)
+    ensure_silver_mode_config(db)
     
     # Check subscription access
-    access_check = check_mode_access(db, user, 'bronze')
+    access_check = check_mode_access(db, user, 'silver')
     if not access_check['has_access']:
         raise HTTPException(
             status_code=403,
@@ -237,9 +237,9 @@ async def submit_bronze_mode_answer(
     target_date = get_active_draw_date()
     
     # Check if user already submitted today
-    existing_attempt = db.query(TriviaUserBronzeModeDaily).filter(
-        TriviaUserBronzeModeDaily.account_id == user.account_id,
-        TriviaUserBronzeModeDaily.date == target_date
+    existing_attempt = db.query(TriviaUserSilverModeDaily).filter(
+        TriviaUserSilverModeDaily.account_id == user.account_id,
+        TriviaUserSilverModeDaily.date == target_date
     ).first()
     
     if existing_attempt and existing_attempt.submitted_at:
@@ -249,8 +249,8 @@ async def submit_bronze_mode_answer(
         )
     
     # Get the question
-    question = db.query(TriviaQuestionsBronzeMode).filter(
-        TriviaQuestionsBronzeMode.id == request.question_id
+    question = db.query(TriviaQuestionsSilverMode).filter(
+        TriviaQuestionsSilverMode.id == request.question_id
     ).first()
     
     if not question:
@@ -258,10 +258,10 @@ async def submit_bronze_mode_answer(
     
     # Verify question is for today
     start_datetime, end_datetime = get_date_range_for_query(target_date)
-    daily_q = db.query(TriviaQuestionsBronzeModeDaily).filter(
-        TriviaQuestionsBronzeModeDaily.date >= start_datetime,
-        TriviaQuestionsBronzeModeDaily.date <= end_datetime,
-        TriviaQuestionsBronzeModeDaily.question_id == request.question_id
+    daily_q = db.query(TriviaQuestionsSilverModeDaily).filter(
+        TriviaQuestionsSilverModeDaily.date >= start_datetime,
+        TriviaQuestionsSilverModeDaily.date <= end_datetime,
+        TriviaQuestionsSilverModeDaily.question_id == request.question_id
     ).first()
     
     if not daily_q:
@@ -299,7 +299,7 @@ async def submit_bronze_mode_answer(
         existing_attempt.submitted_at = datetime.utcnow()
         existing_attempt.status = 'answered'
     else:
-        user_attempt = TriviaUserBronzeModeDaily(
+        user_attempt = TriviaUserSilverModeDaily(
             account_id=user.account_id,
             date=target_date,
             question_id=request.question_id,
@@ -321,40 +321,41 @@ async def submit_bronze_mode_answer(
 
 
 @router.get("/status")
-async def get_bronze_mode_status(
+async def get_silver_mode_status(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Get user's status for bronze mode (submission status, subscription status).
+    Get user's status for silver mode (submission status, winner status, etc.).
     """
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     # Ensure mode config exists
-    ensure_bronze_mode_config(db)
+    ensure_silver_mode_config(db)
+    
+    # Check subscription access
+    access_check = check_mode_access(db, user, 'silver')
+    if not access_check['has_access']:
+        raise HTTPException(
+            status_code=403,
+            detail=access_check['message']
+        )
     
     target_date = get_active_draw_date()
+    yesterday_draw = target_date - date.resolution
     
-    # Check subscription
-    access_check = check_mode_access(db, user, 'bronze')
-    
-    # Get user's attempt
-    user_attempt = db.query(TriviaUserBronzeModeDaily).filter(
-        TriviaUserBronzeModeDaily.account_id == user.account_id,
-        TriviaUserBronzeModeDaily.date == target_date
+    user_attempt = db.query(TriviaUserSilverModeDaily).filter(
+        TriviaUserSilverModeDaily.account_id == user.account_id,
+        TriviaUserSilverModeDaily.date == target_date
     ).first()
     
-    # Check if user is a winner for yesterday's draw
-    yesterday_draw = target_date - date.resolution
-    is_winner = db.query(TriviaBronzeModeWinners).filter(
-        TriviaBronzeModeWinners.account_id == user.account_id,
-        TriviaBronzeModeWinners.draw_date == yesterday_draw
+    is_winner = db.query(TriviaSilverModeWinners).filter(
+        TriviaSilverModeWinners.account_id == user.account_id,
+        TriviaSilverModeWinners.draw_date == yesterday_draw
     ).first() is not None
     
     return {
-        'has_access': access_check['has_access'],
-        'subscription_status': access_check['subscription_status'],
         'has_submitted': user_attempt is not None and user_attempt.submitted_at is not None,
         'submitted_at': user_attempt.submitted_at.isoformat() if user_attempt and user_attempt.submitted_at else None,
         'is_correct': user_attempt.is_correct if user_attempt else None,
@@ -364,14 +365,14 @@ async def get_bronze_mode_status(
 
 
 @router.get("/leaderboard")
-async def get_bronze_mode_leaderboard(
+async def get_silver_mode_leaderboard(
     draw_date: Optional[str] = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Get daily leaderboard for bronze mode.
-    Shows winners ranked by submission time (position) and money awarded.
+    Get daily leaderboard for silver mode.
+    Shows winners ranked by submission time (earliest first).
     """
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -386,11 +387,11 @@ async def get_bronze_mode_leaderboard(
         target_date = get_active_draw_date() - date.resolution  # Yesterday's draw
     
     # Get leaderboard entries
-    leaderboard_entries = db.query(TriviaBronzeModeLeaderboard).filter(
-        TriviaBronzeModeLeaderboard.draw_date == target_date
+    leaderboard_entries = db.query(TriviaSilverModeLeaderboard).filter(
+        TriviaSilverModeLeaderboard.draw_date == target_date
     ).order_by(
-        TriviaBronzeModeLeaderboard.position,
-        TriviaBronzeModeLeaderboard.submitted_at
+        TriviaSilverModeLeaderboard.position,
+        TriviaSilverModeLeaderboard.submitted_at
     ).all()
     
     # Get user details

@@ -1452,10 +1452,10 @@ class TriviaFreeModeLeaderboard(Base):
     user = relationship("User", backref="free_mode_leaderboard_entries")
 
 # =================================
-#  $5 Mode Questions Table
+#  Bronze Mode ($5) Questions Table
 # =================================
-class TriviaQuestionsFiveDollarMode(Base):
-    __tablename__ = "trivia_questions_five_dollar_mode"
+class TriviaQuestionsBronzeMode(Base):
+    __tablename__ = "trivia_questions_bronze_mode"
     
     id = Column(Integer, primary_key=True, index=True)
     question = Column(String, nullable=False)
@@ -1476,51 +1476,51 @@ class TriviaQuestionsFiveDollarMode(Base):
     is_used = Column(Boolean, default=False, nullable=False)
 
 # =================================
-#  $5 Mode Daily Questions Pool
+#  Bronze Mode ($5) Daily Questions Pool
 # =================================
-class TriviaQuestionsFiveDollarModeDaily(Base):
-    __tablename__ = "trivia_questions_five_dollar_mode_daily"
+class TriviaQuestionsBronzeModeDaily(Base):
+    __tablename__ = "trivia_questions_bronze_mode_daily"
     
     id = Column(Integer, primary_key=True, index=True)
     date = Column(DateTime, nullable=False)
-    question_id = Column(Integer, ForeignKey("trivia_questions_five_dollar_mode.id"), nullable=False)
-    question_order = Column(Integer, nullable=False)  # Always 1 for $5 mode
+    question_id = Column(Integer, ForeignKey("trivia_questions_bronze_mode.id"), nullable=False)
+    question_order = Column(Integer, nullable=False)  # Always 1 for bronze mode
     is_used = Column(Boolean, default=False, nullable=False)
     
     # Relationships
-    question = relationship("TriviaQuestionsFiveDollarMode", backref="daily_allocations")
+    question = relationship("TriviaQuestionsBronzeMode", backref="daily_allocations")
     __table_args__ = (
-        UniqueConstraint('date', 'question_order', name='uq_five_dollar_mode_daily_question_order'),
-        UniqueConstraint('date', 'question_id', name='uq_five_dollar_mode_daily_question_id'),
+        UniqueConstraint('date', 'question_order', name='uq_bronze_mode_daily_question_order'),
+        UniqueConstraint('date', 'question_id', name='uq_bronze_mode_daily_question_id'),
     )
 
 # =================================
-#  User $5 Mode Daily Attempts
+#  User Bronze Mode ($5) Daily Attempts
 # =================================
-class TriviaUserFiveDollarModeDaily(Base):
-    __tablename__ = "trivia_user_five_dollar_mode_daily"
+class TriviaUserBronzeModeDaily(Base):
+    __tablename__ = "trivia_user_bronze_mode_daily"
     
     account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
     date = Column(Date, primary_key=True, nullable=False)
     
-    question_id = Column(Integer, ForeignKey("trivia_questions_five_dollar_mode.id"), nullable=False)
+    question_id = Column(Integer, ForeignKey("trivia_questions_bronze_mode.id"), nullable=False)
     user_answer = Column(String, nullable=True)
     is_correct = Column(Boolean, nullable=True)
     submitted_at = Column(DateTime, nullable=True)  # Submission time for ranking
     status = Column(String, nullable=False, default='locked')  # locked, viewed, answered
     
     # Relationships
-    user = relationship("User", backref="five_dollar_mode_daily_attempts")
-    question = relationship("TriviaQuestionsFiveDollarMode", backref="user_attempts")
+    user = relationship("User", backref="bronze_mode_daily_attempts")
+    question = relationship("TriviaQuestionsBronzeMode", backref="user_attempts")
     __table_args__ = (
-        UniqueConstraint('account_id', 'date', name='uq_user_five_dollar_mode_daily'),
+        UniqueConstraint('account_id', 'date', name='uq_user_bronze_mode_daily'),
     )
 
 # =================================
-#  $5 Mode Winners
+#  Bronze Mode ($5) Winners
 # =================================
-class TriviaFiveDollarModeWinners(Base):
-    __tablename__ = "trivia_five_dollar_mode_winners"
+class TriviaBronzeModeWinners(Base):
+    __tablename__ = "trivia_bronze_mode_winners"
     
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
@@ -1531,13 +1531,13 @@ class TriviaFiveDollarModeWinners(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Relationships
-    user = relationship("User", backref="five_dollar_mode_wins")
+    user = relationship("User", backref="bronze_mode_wins")
 
 # =================================
-#  $5 Mode Leaderboard
+#  Bronze Mode ($5) Leaderboard
 # =================================
-class TriviaFiveDollarModeLeaderboard(Base):
-    __tablename__ = "trivia_five_dollar_mode_leaderboard"
+class TriviaBronzeModeLeaderboard(Base):
+    __tablename__ = "trivia_bronze_mode_leaderboard"
     
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
@@ -1548,4 +1548,103 @@ class TriviaFiveDollarModeLeaderboard(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Relationships
-    user = relationship("User", backref="five_dollar_mode_leaderboard_entries")
+    user = relationship("User", backref="bronze_mode_leaderboard_entries")
+
+# =================================
+#  Silver Mode ($10) Questions Table
+# =================================
+class TriviaQuestionsSilverMode(Base):
+    __tablename__ = "trivia_questions_silver_mode"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    question = Column(String, nullable=False)
+    option_a = Column(String, nullable=False)
+    option_b = Column(String, nullable=False)
+    option_c = Column(String, nullable=False)
+    option_d = Column(String, nullable=False)
+    correct_answer = Column(String, nullable=False)
+    fill_in_answer = Column(String, nullable=True)
+    hint = Column(String, nullable=True)
+    explanation = Column(String, nullable=True)
+    category = Column(String, nullable=False)
+    country = Column(String, nullable=True)
+    difficulty_level = Column(String, nullable=False)
+    picture_url = Column(String, nullable=True)
+    question_hash = Column(String, index=True, nullable=False)  # MD5 hash for deduplication
+    created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_used = Column(Boolean, default=False, nullable=False)
+
+# =================================
+#  Silver Mode ($10) Daily Questions Pool
+# =================================
+class TriviaQuestionsSilverModeDaily(Base):
+    __tablename__ = "trivia_questions_silver_mode_daily"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(DateTime, nullable=False)
+    question_id = Column(Integer, ForeignKey("trivia_questions_silver_mode.id"), nullable=False)
+    question_order = Column(Integer, nullable=False)  # Always 1 for silver mode
+    is_used = Column(Boolean, default=False, nullable=False)
+    
+    # Relationships
+    question = relationship("TriviaQuestionsSilverMode", backref="daily_allocations")
+    __table_args__ = (
+        UniqueConstraint('date', 'question_order', name='uq_silver_mode_daily_question_order'),
+        UniqueConstraint('date', 'question_id', name='uq_silver_mode_daily_question_id'),
+    )
+
+# =================================
+#  User Silver Mode ($10) Daily Attempts
+# =================================
+class TriviaUserSilverModeDaily(Base):
+    __tablename__ = "trivia_user_silver_mode_daily"
+    
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
+    date = Column(Date, primary_key=True, nullable=False)
+    
+    question_id = Column(Integer, ForeignKey("trivia_questions_silver_mode.id"), nullable=False)
+    user_answer = Column(String, nullable=True)
+    is_correct = Column(Boolean, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)  # Submission time for ranking
+    status = Column(String, nullable=False, default='locked')  # locked, viewed, answered
+    
+    # Relationships
+    user = relationship("User", backref="silver_mode_daily_attempts")
+    question = relationship("TriviaQuestionsSilverMode", backref="user_attempts")
+    __table_args__ = (
+        UniqueConstraint('account_id', 'date', name='uq_user_silver_mode_daily'),
+    )
+
+# =================================
+#  Silver Mode ($10) Winners
+# =================================
+class TriviaSilverModeWinners(Base):
+    __tablename__ = "trivia_silver_mode_winners"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    draw_date = Column(Date, nullable=False)
+    position = Column(Integer, nullable=False)
+    money_awarded = Column(Float, nullable=False)  # Money in USD
+    submitted_at = Column(DateTime, nullable=False)  # Submission time
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="silver_mode_wins")
+
+# =================================
+#  Silver Mode ($10) Leaderboard
+# =================================
+class TriviaSilverModeLeaderboard(Base):
+    __tablename__ = "trivia_silver_mode_leaderboard"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    draw_date = Column(Date, nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    money_awarded = Column(Float, nullable=False)  # Money in USD
+    submitted_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="silver_mode_leaderboard_entries")

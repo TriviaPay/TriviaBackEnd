@@ -629,8 +629,8 @@ async def allocate_free_mode_questions_manual(
     }
 
 
-@router.post("/trivia/five-dollar-mode/trigger-draw")
-async def trigger_five_dollar_mode_draw(
+@router.post("/trivia/bronze-mode/trigger-draw")
+async def trigger_bronze_mode_draw(
     draw_date: Optional[str] = Body(None, description="Draw date (YYYY-MM-DD). Defaults to yesterday."),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -652,9 +652,9 @@ async def trigger_five_dollar_mode_draw(
         target_date = get_active_draw_date() - date.resolution  # Yesterday's draw
     
     # Check if draw already performed
-    from models import TriviaFiveDollarModeWinners
-    existing_draw = db.query(TriviaFiveDollarModeWinners).filter(
-        TriviaFiveDollarModeWinners.draw_date == target_date
+    from models import TriviaBronzeModeWinners
+    existing_draw = db.query(TriviaBronzeModeWinners).filter(
+        TriviaBronzeModeWinners.draw_date == target_date
     ).first()
     
     if existing_draw:
@@ -666,12 +666,12 @@ async def trigger_five_dollar_mode_draw(
     
     # Use generic draw service
     from utils.mode_draw_service import execute_mode_draw
-    from utils.five_dollar_mode_service import (
-        distribute_rewards_to_winners_five_dollar_mode,
-        cleanup_old_leaderboard_five_dollar_mode
+    from utils.bronze_mode_service import (
+        distribute_rewards_to_winners_bronze_mode,
+        cleanup_old_leaderboard_bronze_mode
     )
     
-    result = execute_mode_draw(db, 'five_dollar_mode', target_date)
+    result = execute_mode_draw(db, 'bronze', target_date)
     
     if result['status'] == 'no_participants':
         return {
@@ -687,18 +687,19 @@ async def trigger_five_dollar_mode_draw(
         )
     
     # Distribute rewards
-    mode_config = get_mode_config(db, 'five_dollar_mode')
+    mode_config = get_mode_config(db, 'bronze')
     if not mode_config:
-        raise HTTPException(status_code=404, detail="$5 mode config not found")
+        raise HTTPException(status_code=404, detail="Bronze mode config not found")
     
     winners = result.get('winners', [])
-    distribution_result = distribute_rewards_to_winners_five_dollar_mode(
-        db, winners, mode_config, target_date
+    total_pool = result.get('total_pool', 0.0)
+    distribution_result = distribute_rewards_to_winners_bronze_mode(
+        db, winners, target_date, total_pool
     )
     
     # Cleanup old leaderboard
     previous_draw_date = target_date - date.resolution
-    cleanup_old_leaderboard_five_dollar_mode(db, previous_draw_date)
+    cleanup_old_leaderboard_bronze_mode(db, previous_draw_date)
     
     return {
         'status': 'success',
@@ -710,20 +711,20 @@ async def trigger_five_dollar_mode_draw(
     }
 
 
-@router.post("/trivia/five-dollar-mode/allocate-questions")
-async def allocate_five_dollar_mode_questions_manual(
+@router.post("/trivia/bronze-mode/allocate-questions")
+async def allocate_bronze_mode_questions_manual(
     target_date: Optional[str] = Body(None, description="Target date (YYYY-MM-DD). Defaults to active draw date."),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Manually trigger question allocation for $5 mode.
-    Allocates one question from trivia_questions_five_dollar_mode to trivia_questions_five_dollar_mode_daily.
+    Manually trigger question allocation for bronze mode.
+    Allocates one question from trivia_questions_bronze_mode to trivia_questions_bronze_mode_daily.
     """
     verify_admin(current_user)
     
     from utils.trivia_mode_service import get_active_draw_date, get_date_range_for_query, get_mode_config
-    from models import TriviaQuestionsFiveDollarMode, TriviaQuestionsFiveDollarModeDaily
+    from models import TriviaQuestionsBronzeMode, TriviaQuestionsBronzeModeDaily
     import random
     
     # Parse target_date or use active draw date
@@ -736,17 +737,17 @@ async def allocate_five_dollar_mode_questions_manual(
         target = get_active_draw_date()
     
     # Get mode config
-    mode_config = get_mode_config(db, 'five_dollar_mode')
+    mode_config = get_mode_config(db, 'bronze')
     if not mode_config:
-        raise HTTPException(status_code=404, detail="$5 mode config not found")
+        raise HTTPException(status_code=404, detail="Bronze mode config not found")
     
     # Get date range for the target date
     start_datetime, end_datetime = get_date_range_for_query(target)
     
     # Check if question already allocated for this date
-    existing_question = db.query(TriviaQuestionsFiveDollarModeDaily).filter(
-        TriviaQuestionsFiveDollarModeDaily.date >= start_datetime,
-        TriviaQuestionsFiveDollarModeDaily.date <= end_datetime
+    existing_question = db.query(TriviaQuestionsBronzeModeDaily).filter(
+        TriviaQuestionsBronzeModeDaily.date >= start_datetime,
+        TriviaQuestionsBronzeModeDaily.date <= end_datetime
     ).count()
     
     if existing_question > 0:
@@ -758,27 +759,27 @@ async def allocate_five_dollar_mode_questions_manual(
         }
     
     # Get available questions (prefer unused)
-    unused_questions = db.query(TriviaQuestionsFiveDollarMode).filter(
-        TriviaQuestionsFiveDollarMode.is_used == False
+    unused_questions = db.query(TriviaQuestionsBronzeMode).filter(
+        TriviaQuestionsBronzeMode.is_used == False
     ).all()
     
     # If not enough unused questions, get any questions
     if len(unused_questions) < 1:
-        all_questions = db.query(TriviaQuestionsFiveDollarMode).all()
+        all_questions = db.query(TriviaQuestionsBronzeMode).all()
         if len(all_questions) < 1:
             raise HTTPException(
                 status_code=400,
-                detail="No questions available for $5 mode"
+                detail="No questions available for bronze mode"
             )
         selected_question = random.choice(all_questions)
     else:
         selected_question = random.choice(unused_questions)
     
     # Allocate question to daily pool
-    daily_question = TriviaQuestionsFiveDollarModeDaily(
+    daily_question = TriviaQuestionsBronzeModeDaily(
         date=start_datetime,
         question_id=selected_question.id,
-        question_order=1,  # Always 1 for $5 mode
+        question_order=1,  # Always 1 for bronze mode
         is_used=False
     )
     db.add(daily_question)
@@ -796,22 +797,32 @@ async def allocate_five_dollar_mode_questions_manual(
     }
 
 
-@router.get("/subscriptions/five-dollar/check")
-async def check_five_dollar_subscription_status(
+@router.get("/subscriptions/check")
+async def check_subscription_status(
+    plan_id: Optional[int] = Query(None, description="Subscription plan ID to check. If not provided, checks all plans."),
+    price_usd: Optional[float] = Query(None, description="Filter by price in USD (e.g., 5.0 for $5 plans)"),
     user_id: Optional[int] = Query(None, description="User account ID to check. If not provided, checks all users."),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Check $5 subscription plan and user subscription status.
+    Check subscription plan and user subscription status.
+    Generic endpoint that can check any subscription plan by plan_id or price.
     """
     verify_admin(current_user)
     
-    # Check for $5 subscription plans
-    plans = db.query(SubscriptionPlan).filter(
-        (SubscriptionPlan.unit_amount_minor == 500) | 
-        (SubscriptionPlan.price_usd == 5.0)
-    ).all()
+    # Build query for plans
+    plan_query = db.query(SubscriptionPlan)
+    
+    if plan_id:
+        plan_query = plan_query.filter(SubscriptionPlan.id == plan_id)
+    elif price_usd:
+        plan_query = plan_query.filter(
+            (SubscriptionPlan.price_usd == price_usd) |
+            (SubscriptionPlan.unit_amount_minor == int(price_usd * 100))
+        )
+    
+    plans = plan_query.all()
     
     result = {
         'plans_found': len(plans),
@@ -823,17 +834,28 @@ async def check_five_dollar_subscription_status(
         result['plans'].append({
             'id': plan.id,
             'name': plan.name,
+            'description': plan.description,
             'price_usd': plan.price_usd,
             'unit_amount_minor': plan.unit_amount_minor,
+            'currency': plan.currency,
             'interval': plan.interval,
+            'interval_count': plan.interval_count,
             'stripe_price_id': plan.stripe_price_id
         })
     
     # Check subscriptions
-    query = db.query(UserSubscription).join(SubscriptionPlan).filter(
-        (SubscriptionPlan.unit_amount_minor == 500) | 
-        (SubscriptionPlan.price_usd == 5.0)
-    )
+    if plan_id:
+        # Filter by specific plan
+        query = db.query(UserSubscription).filter(UserSubscription.plan_id == plan_id)
+    elif price_usd:
+        # Filter by price
+        query = db.query(UserSubscription).join(SubscriptionPlan).filter(
+            (SubscriptionPlan.price_usd == price_usd) |
+            (SubscriptionPlan.unit_amount_minor == int(price_usd * 100))
+        )
+    else:
+        # Get all subscriptions
+        query = db.query(UserSubscription)
     
     if user_id:
         query = query.filter(UserSubscription.user_id == user_id)
@@ -842,12 +864,16 @@ async def check_five_dollar_subscription_status(
     
     for sub in subscriptions:
         user = db.query(User).filter(User.account_id == sub.user_id).first()
+        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == sub.plan_id).first()
         result['subscriptions'].append({
             'user_id': sub.user_id,
             'username': user.username if user else None,
             'subscription_id': sub.id,
             'plan_id': sub.plan_id,
+            'plan_name': plan.name if plan else None,
+            'plan_price_usd': plan.price_usd if plan else None,
             'status': sub.status,
+            'current_period_start': sub.current_period_start.isoformat() if sub.current_period_start else None,
             'current_period_end': sub.current_period_end.isoformat() if sub.current_period_end else None,
             'is_active': sub.status == 'active' and (sub.current_period_end is None or sub.current_period_end > datetime.utcnow())
         })
@@ -855,43 +881,72 @@ async def check_five_dollar_subscription_status(
     return result
 
 
-@router.post("/subscriptions/five-dollar/create-plan")
-async def create_five_dollar_subscription_plan(
-    name: str = Body("$5 Monthly Subscription", description="Plan name"),
-    stripe_price_id: Optional[str] = Body(None, description="Stripe Price ID"),
+class CreateSubscriptionPlanRequest(BaseModel):
+    name: str = "$5 Monthly Subscription"
+    description: Optional[str] = "$5 monthly subscription for trivia bronze mode access"
+    price_usd: float = 5.0
+    unit_amount_minor: Optional[int] = 500  # Will be calculated from price_usd if not provided
+    currency: str = "usd"
+    interval: str = "month"  # month, year, etc.
+    interval_count: int = 1
+    billing_interval: Optional[str] = None  # Will use interval if not provided
+    stripe_price_id: Optional[str] = None
+    livemode: bool = False
+
+
+@router.post("/subscriptions/create-plan")
+async def create_subscription_plan(
+    request: CreateSubscriptionPlanRequest = Body(...),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Create a $5 subscription plan if it doesn't exist.
+    Create a subscription plan if it doesn't exist.
+    Generic endpoint that can create any subscription plan with specified price and interval.
     """
     verify_admin(current_user)
     
-    # Check if plan already exists
+    # Calculate unit_amount_minor from price_usd if not provided
+    unit_amount_minor = request.unit_amount_minor
+    if unit_amount_minor is None:
+        unit_amount_minor = int(request.price_usd * 100)
+    
+    # Use billing_interval from request or default to interval
+    billing_interval = request.billing_interval or request.interval
+    
+    # Check if plan already exists (by price and interval)
     existing = db.query(SubscriptionPlan).filter(
-        (SubscriptionPlan.unit_amount_minor == 500) | 
-        (SubscriptionPlan.price_usd == 5.0)
+        (SubscriptionPlan.unit_amount_minor == unit_amount_minor) | 
+        (SubscriptionPlan.price_usd == request.price_usd),
+        SubscriptionPlan.interval == request.interval
     ).first()
     
     if existing:
         return {
             'success': False,
-            'message': f'$5 subscription plan already exists (ID: {existing.id})',
-            'plan_id': existing.id
+            'message': f'Subscription plan with price ${request.price_usd} and interval {request.interval} already exists (ID: {existing.id})',
+            'plan_id': existing.id,
+            'plan': {
+                'id': existing.id,
+                'name': existing.name,
+                'price_usd': existing.price_usd,
+                'unit_amount_minor': existing.unit_amount_minor,
+                'interval': existing.interval
+            }
         }
     
     # Create new plan
     plan = SubscriptionPlan(
-        name=name,
-        description="$5 monthly subscription for trivia $5 mode access",
-        price_usd=5.0,
-        billing_interval='month',
-        unit_amount_minor=500,  # $5.00 in cents
-        currency='usd',
-        interval='month',
-        interval_count=1,
-        stripe_price_id=stripe_price_id,
-        livemode=False
+        name=request.name,
+        description=request.description or f"{request.name} - ${request.price_usd:.2f} per {request.interval}",
+        price_usd=request.price_usd,
+        billing_interval=billing_interval,
+        unit_amount_minor=unit_amount_minor,
+        currency=request.currency,
+        interval=request.interval,
+        interval_count=request.interval_count,
+        stripe_price_id=request.stripe_price_id,
+        livemode=request.livemode
     )
     
     db.add(plan)
@@ -900,31 +955,37 @@ async def create_five_dollar_subscription_plan(
     
     return {
         'success': True,
-        'message': '$5 subscription plan created successfully',
+        'message': f'Subscription plan created successfully',
         'plan': {
             'id': plan.id,
             'name': plan.name,
+            'description': plan.description,
             'price_usd': plan.price_usd,
             'unit_amount_minor': plan.unit_amount_minor,
-            'interval': plan.interval
+            'currency': plan.currency,
+            'interval': plan.interval,
+            'interval_count': plan.interval_count,
+            'stripe_price_id': plan.stripe_price_id
         }
     }
 
 
 class CreateSubscriptionRequest(BaseModel):
     user_id: Optional[int] = Field(None, description="User account ID to create subscription for. If not provided, creates for current user.")
+    plan_id: int = Field(..., description="Subscription plan ID (required).")
 
 
-@router.post("/subscriptions/five-dollar/create-subscription")
-async def create_five_dollar_subscription_for_user(
+@router.post("/subscriptions/create-subscription")
+async def create_subscription_for_user(
     request: CreateSubscriptionRequest = Body(...),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Create an active $5 subscription for a user (for testing/admin purposes).
-    This creates a UserSubscription record linking the user to the $5 plan.
+    Create an active subscription for a user (for testing/admin purposes).
+    This creates a UserSubscription record linking the user to a plan.
     If user_id is not provided, creates subscription for the current user.
+    Subscription duration is fixed at 30 days.
     """
     verify_admin(current_user)
     
@@ -933,16 +994,12 @@ async def create_five_dollar_subscription_for_user(
     if user_id is None:
         user_id = current_user.account_id
     
-    # Find the $5 subscription plan
-    plan = db.query(SubscriptionPlan).filter(
-        (SubscriptionPlan.unit_amount_minor == 500) | 
-        (SubscriptionPlan.price_usd == 5.0)
-    ).first()
-    
+    # Find the subscription plan
+    plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == request.plan_id).first()
     if not plan:
         raise HTTPException(
             status_code=404,
-            detail="$5 subscription plan not found. Please create it first using /admin/subscriptions/five-dollar/create-plan"
+            detail=f"Subscription plan with ID {request.plan_id} not found"
         )
     
     # Check if user exists
@@ -953,7 +1010,7 @@ async def create_five_dollar_subscription_for_user(
             detail=f"User with ID {user_id} not found"
         )
     
-    # Check if user already has an active subscription
+    # Check if user already has an active subscription for this plan
     existing = db.query(UserSubscription).filter(
         UserSubscription.user_id == user_id,
         UserSubscription.plan_id == plan.id,
@@ -963,11 +1020,11 @@ async def create_five_dollar_subscription_for_user(
     if existing:
         return {
             'success': False,
-            'message': f'User already has an active $5 subscription (ID: {existing.id})',
+            'message': f'User already has an active subscription for plan "{plan.name}" (ID: {existing.id})',
             'subscription_id': existing.id
         }
     
-    # Create subscription (set to expire in 30 days)
+    # Create subscription (set to expire after 30 days)
     from datetime import datetime, timedelta
     now = datetime.utcnow()
     period_end = now + timedelta(days=30)
@@ -987,14 +1044,16 @@ async def create_five_dollar_subscription_for_user(
     
     return {
         'success': True,
-        'message': f'Active $5 subscription created for user {user_id}',
+        'message': f'Active subscription created for user {user_id}',
         'subscription': {
             'id': subscription.id,
             'user_id': subscription.user_id,
             'username': user.username,
             'plan_id': subscription.plan_id,
             'plan_name': plan.name,
+            'plan_price_usd': plan.price_usd,
             'status': subscription.status,
+            'current_period_start': subscription.current_period_start.isoformat() if subscription.current_period_start else None,
             'current_period_end': subscription.current_period_end.isoformat() if subscription.current_period_end else None
         }
     } 

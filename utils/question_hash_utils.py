@@ -3,7 +3,7 @@ Utility functions for question hash generation and duplicate checking.
 """
 import hashlib
 from sqlalchemy.orm import Session
-from models import Trivia, TriviaQuestionsFreeMode, TriviaQuestionsFiveDollarMode
+from models import Trivia, TriviaQuestionsFreeMode, TriviaQuestionsBronzeMode, TriviaQuestionsSilverMode
 
 
 def generate_question_hash(question_text: str) -> str:
@@ -46,15 +46,21 @@ def check_duplicate_across_modes(db: Session, question_hash: str) -> dict:
     if existing_free:
         found_in.append('trivia_questions_free_mode')
     
-    # Check $5 mode questions table
-    existing_five_dollar = db.query(TriviaQuestionsFiveDollarMode).filter(
-        TriviaQuestionsFiveDollarMode.question_hash == question_hash
+    # Check bronze mode questions table
+    existing_bronze = db.query(TriviaQuestionsBronzeMode).filter(
+        TriviaQuestionsBronzeMode.question_hash == question_hash
     ).first()
     
-    if existing_five_dollar:
-        found_in.append('trivia_questions_five_dollar_mode')
+    if existing_bronze:
+        found_in.append('trivia_questions_bronze_mode')
     
-    # Add more mode tables here as they are created
+    # Check silver mode questions table
+    existing_silver = db.query(TriviaQuestionsSilverMode).filter(
+        TriviaQuestionsSilverMode.question_hash == question_hash
+    ).first()
+    
+    if existing_silver:
+        found_in.append('trivia_questions_silver_mode')
     
     return {
         'exists': len(found_in) > 0,
@@ -80,12 +86,17 @@ def check_duplicate_in_mode(db: Session, question_hash: str, mode_id: str) -> bo
         ).first()
         return existing is not None
     
-    if mode_id == 'five_dollar_mode':
-        existing = db.query(TriviaQuestionsFiveDollarMode).filter(
-            TriviaQuestionsFiveDollarMode.question_hash == question_hash
+    if mode_id == 'bronze':
+        existing = db.query(TriviaQuestionsBronzeMode).filter(
+            TriviaQuestionsBronzeMode.question_hash == question_hash
         ).first()
         return existing is not None
     
-    # Add more modes here as they are created
+    if mode_id == 'silver':
+        existing = db.query(TriviaQuestionsSilverMode).filter(
+            TriviaQuestionsSilverMode.question_hash == question_hash
+        ).first()
+        return existing is not None
+    
     return False
 

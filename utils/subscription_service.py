@@ -36,10 +36,10 @@ def check_mode_access(
     mode_config = get_mode_config(db, mode_id)
     
     if not mode_config:
-        # Auto-create $5 mode config if missing
-        if mode_id == 'five_dollar_mode':
+        # Auto-create mode config if missing
+        import json
+        if mode_id == 'bronze':
             try:
-                import json
                 reward_distribution = {
                     "reward_type": "money",
                     "distribution_method": "harmonic_sum",
@@ -48,8 +48,8 @@ def check_mode_access(
                     "profit_share_percentage": 0.5
                 }
                 mode_config = TriviaModeConfig(
-                    mode_id='five_dollar_mode',
-                    mode_name='$5 Mode - First-Come Reward',
+                    mode_id='bronze',
+                    mode_name='Bronze Mode - First-Come Reward',
                     questions_count=1,
                     reward_distribution=json.dumps(reward_distribution),
                     amount=5.0,
@@ -59,9 +59,39 @@ def check_mode_access(
                 )
                 db.add(mode_config)
                 db.commit()
-                logger.info("Auto-created $5 mode config")
+                logger.info("Auto-created bronze mode config")
             except Exception as e:
-                logger.error(f"Failed to auto-create $5 mode config: {str(e)}")
+                logger.error(f"Failed to auto-create bronze mode config: {str(e)}")
+                return {
+                    'has_access': False,
+                    'subscription_status': 'mode_not_found',
+                    'subscription_details': None,
+                    'message': f'Mode {mode_id} not found and could not be created'
+                }
+        elif mode_id == 'silver':
+            try:
+                reward_distribution = {
+                    "reward_type": "money",
+                    "distribution_method": "harmonic_sum",
+                    "requires_subscription": True,
+                    "subscription_amount": 10.0,
+                    "profit_share_percentage": 0.5
+                }
+                mode_config = TriviaModeConfig(
+                    mode_id='silver',
+                    mode_name='Silver Mode - First-Come Reward',
+                    questions_count=1,
+                    reward_distribution=json.dumps(reward_distribution),
+                    amount=10.0,
+                    leaderboard_types=json.dumps(['daily']),
+                    ad_config=json.dumps({}),
+                    survey_config=json.dumps({})
+                )
+                db.add(mode_config)
+                db.commit()
+                logger.info("Auto-created silver mode config")
+            except Exception as e:
+                logger.error(f"Failed to auto-create silver mode config: {str(e)}")
                 return {
                     'has_access': False,
                     'subscription_status': 'mode_not_found',

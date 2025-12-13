@@ -10,7 +10,7 @@ import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
 from models import (
     GlobalChatMessage, User, OneSignalPlayer, TriviaUserDaily,
-    TriviaFreeModeWinners, TriviaFiveDollarModeWinners
+    TriviaFreeModeWinners, TriviaBronzeModeWinners, TriviaSilverModeWinners
 )
 from utils.trivia_mode_service import get_mode_config
 from utils.free_mode_rewards import (
@@ -417,10 +417,10 @@ async def internal_mode_draw(
 ):
     """
     Generic internal endpoint for mode draws triggered by external cron or scheduler.
-    Supports any registered mode (free_mode, five_dollar_mode, etc.).
+        Supports any registered mode (free_mode, bronze, silver, etc.).
     
     Args:
-        mode_id: Mode identifier (e.g., 'free_mode', 'five_dollar_mode')
+        mode_id: Mode identifier (e.g., 'free_mode', 'bronze', 'silver')
         
     Returns clean response with winner details.
     """
@@ -431,11 +431,15 @@ async def internal_mode_draw(
         from utils.trivia_mode_service import get_active_draw_date
         from utils.mode_draw_service import execute_mode_draw
         from utils.free_mode_rewards import distribute_rewards_to_winners, cleanup_old_leaderboard
-        from utils.five_dollar_mode_service import (
-            distribute_rewards_to_winners_five_dollar_mode,
-            cleanup_old_leaderboard_five_dollar_mode
+        from utils.bronze_mode_service import (
+            distribute_rewards_to_winners_bronze_mode,
+            cleanup_old_leaderboard_bronze_mode
         )
-        from models import TriviaFreeModeWinners, TriviaFiveDollarModeWinners
+        from utils.silver_mode_service import (
+            distribute_rewards_to_winners_silver_mode,
+            cleanup_old_leaderboard_silver_mode
+        )
+        from models import TriviaFreeModeWinners, TriviaBronzeModeWinners, TriviaSilverModeWinners
         
         # Determine which draw date to use (yesterday's draw)
         draw_date = get_active_draw_date() - timedelta(days=1)
@@ -447,9 +451,13 @@ async def internal_mode_draw(
             existing_draw = db.query(TriviaFreeModeWinners).filter(
                 TriviaFreeModeWinners.draw_date == draw_date
             ).first()
-        elif mode_id == 'five_dollar_mode':
-            existing_draw = db.query(TriviaFiveDollarModeWinners).filter(
-                TriviaFiveDollarModeWinners.draw_date == draw_date
+        elif mode_id == 'bronze':
+            existing_draw = db.query(TriviaBronzeModeWinners).filter(
+                TriviaBronzeModeWinners.draw_date == draw_date
+            ).first()
+        elif mode_id == 'silver':
+            existing_draw = db.query(TriviaSilverModeWinners).filter(
+                TriviaSilverModeWinners.draw_date == draw_date
             ).first()
         else:
             existing_draw = None
@@ -491,12 +499,20 @@ async def internal_mode_draw(
                 distribution_result = distribute_rewards_to_winners(db, winners, mode_config, draw_date)
                 previous_draw_date = draw_date - timedelta(days=1)
                 cleanup_old_leaderboard(db, previous_draw_date)
-            elif mode_id == 'five_dollar_mode':
-                distribution_result = distribute_rewards_to_winners_five_dollar_mode(
-                    db, winners, mode_config, draw_date
+            elif mode_id == 'bronze':
+                total_pool = result.get('total_pool', 0.0)
+                distribution_result = distribute_rewards_to_winners_bronze_mode(
+                    db, winners, draw_date, total_pool
                 )
                 previous_draw_date = draw_date - timedelta(days=1)
-                cleanup_old_leaderboard_five_dollar_mode(db, previous_draw_date)
+                cleanup_old_leaderboard_bronze_mode(db, previous_draw_date)
+            elif mode_id == 'silver':
+                total_pool = result.get('total_pool', 0.0)
+                distribution_result = distribute_rewards_to_winners_silver_mode(
+                    db, winners, draw_date, total_pool
+                )
+                previous_draw_date = draw_date - timedelta(days=1)
+                cleanup_old_leaderboard_silver_mode(db, previous_draw_date)
             else:
                 distribution_result = {'total_winners': len(winners)}
             

@@ -6,7 +6,7 @@ import io
 import json
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
-from models import TriviaQuestionsFreeMode, TriviaQuestionsFiveDollarMode
+from models import TriviaQuestionsFreeMode, TriviaQuestionsBronzeMode, TriviaQuestionsSilverMode
 from utils.question_hash_utils import generate_question_hash, check_duplicate_in_mode
 
 
@@ -146,8 +146,10 @@ def save_questions_to_mode(db: Session, questions: List[Dict[str, Any]], mode_id
             question_model = None
             if mode_id == 'free_mode':
                 question_model = TriviaQuestionsFreeMode
-            elif mode_id == 'five_dollar_mode':
-                question_model = TriviaQuestionsFiveDollarMode
+            elif mode_id == 'bronze':
+                question_model = TriviaQuestionsBronzeMode
+            elif mode_id == 'silver':
+                question_model = TriviaQuestionsSilverMode
             else:
                 error_count += 1
                 errors.append(f"Question {idx}: Unknown mode_id '{mode_id}'")

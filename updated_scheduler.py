@@ -13,16 +13,22 @@ from models import (
 )
 from models import (
     TriviaModeConfig, TriviaQuestionsFreeMode, TriviaQuestionsFreeModeDaily, TriviaFreeModeWinners,
-    TriviaQuestionsFiveDollarMode, TriviaQuestionsFiveDollarModeDaily, TriviaFiveDollarModeWinners
+    TriviaQuestionsBronzeMode, TriviaQuestionsBronzeModeDaily, TriviaBronzeModeWinners,
+    TriviaQuestionsSilverMode, TriviaQuestionsSilverModeDaily, TriviaSilverModeWinners
 )
 from utils.free_mode_rewards import (
     get_eligible_participants_free_mode, rank_participants_by_completion,
     calculate_reward_distribution, distribute_rewards_to_winners, cleanup_old_leaderboard
 )
-from utils.five_dollar_mode_service import (
-    get_eligible_participants_five_dollar_mode, rank_participants_by_submission_time,
-    calculate_total_pool_five_dollar_mode, distribute_rewards_to_winners_five_dollar_mode,
-    cleanup_old_leaderboard_five_dollar_mode
+from utils.bronze_mode_service import (
+    get_eligible_participants_bronze_mode, rank_participants_by_submission_time,
+    calculate_total_pool_bronze_mode, distribute_rewards_to_winners_bronze_mode,
+    cleanup_old_leaderboard_bronze_mode
+)
+from utils.silver_mode_service import (
+    get_eligible_participants_silver_mode, rank_participants_by_submission_time as rank_silver_participants,
+    calculate_total_pool_silver_mode, distribute_rewards_to_winners_silver_mode,
+    cleanup_old_leaderboard_silver_mode
 )
 from utils.trivia_mode_service import get_mode_config, get_active_draw_date, get_date_range_for_query
 from utils.mode_draw_service import register_mode_handler, execute_mode_draw
@@ -366,18 +372,18 @@ def schedule_draws():
     
     # Schedule $5 mode draw job (same time as regular draw)
     scheduler.add_job(
-        run_five_dollar_mode_draw,
+        run_bronze_mode_draw,
         CronTrigger(hour=hour, minute=minute, timezone=timezone),
-        id="five_dollar_mode_draw",
+        id="bronze_mode_draw",
         replace_existing=True,
         misfire_grace_time=3600
     )
     
     # Schedule $5 mode question allocation (1 minute after draw, same as regular questions)
     scheduler.add_job(
-        allocate_five_dollar_mode_questions,
+        allocate_bronze_mode_questions,
         CronTrigger(hour=hour, minute=minute+1, timezone=timezone),
-        id="five_dollar_mode_question_allocation",
+        id="bronze_mode_question_allocation",
         replace_existing=True,
         misfire_grace_time=3600
     )
@@ -713,13 +719,13 @@ async def allocate_free_mode_questions():
     except Exception as e:
         logger.error(f"💥 Error allocating free mode questions: {str(e)}")
 
-async def run_five_dollar_mode_draw():
+async def run_bronze_mode_draw():
     """
-    Process $5 mode draw at the configured draw time.
+    Process bronze mode draw at the configured draw time.
     Uses generic draw service with registered handlers.
     """
     try:
-        logger.info(f"🎯 Starting $5 mode draw at {datetime.now()}")
+        logger.info(f"🎯 Starting bronze mode draw at {datetime.now()}")
         db: Session = SessionLocal()
         
         try:
@@ -727,8 +733,8 @@ async def run_five_dollar_mode_draw():
             yesterday = date.today() - timedelta(days=1)
             
             # Check if draw already performed
-            existing_draw = db.query(TriviaFiveDollarModeWinners).filter(
-                TriviaFiveDollarModeWinners.draw_date == yesterday
+            existing_draw = db.query(TriviaBronzeModeWinners).filter(
+                TriviaBronzeModeWinners.draw_date == yesterday
             ).first()
             
             if existing_draw:
@@ -736,10 +742,10 @@ async def run_five_dollar_mode_draw():
                 return
             
             # Execute draw using generic service
-            result = execute_mode_draw(db, 'five_dollar_mode', yesterday)
+            result = execute_mode_draw(db, 'bronze', yesterday)
             
             if result['status'] == 'no_participants':
-                logger.info(f"📭 No eligible participants for $5 mode draw on {yesterday}")
+                logger.info(f"📭 No eligible participants for bronze mode draw on {yesterday}")
                 return
             
             if result['status'] != 'success':
@@ -747,16 +753,17 @@ async def run_five_dollar_mode_draw():
                 return
             
             # Distribute rewards
-            mode_config = get_mode_config(db, 'five_dollar_mode')
+            mode_config = get_mode_config(db, 'bronze')
             if mode_config:
                 winners = result.get('winners', [])
-                distribution_result = distribute_rewards_to_winners_five_dollar_mode(
-                    db, winners, mode_config, yesterday
+                total_pool = result.get('total_pool', 0.0)
+                distribution_result = distribute_rewards_to_winners_bronze_mode(
+                    db, winners, yesterday, total_pool
                 )
                 
                 # Cleanup old leaderboard
                 previous_draw_date = yesterday - date.resolution
-                cleanup_old_leaderboard_five_dollar_mode(db, previous_draw_date)
+                cleanup_old_leaderboard_bronze_mode(db, previous_draw_date)
                 
                 logger.info("🎉 $5 MODE DRAW COMPLETED SUCCESSFULLY!")
                 logger.info(f"🏆 Winners Selected: {len(winners)}")
@@ -772,20 +779,20 @@ async def run_five_dollar_mode_draw():
     except Exception as e:
         logger.error(f"💥 Error running $5 mode draw: {str(e)}")
 
-async def allocate_five_dollar_mode_questions():
+async def allocate_bronze_mode_questions():
     """
-    Allocate $5 mode question for the new day.
-    Selects a random question from TriviaQuestionsFiveDollarMode and adds it to TriviaQuestionsFiveDollarModeDaily.
+    Allocate bronze mode question for the new day.
+    Selects a random question from TriviaQuestionsBronzeMode and adds it to TriviaQuestionsBronzeModeDaily.
     """
     try:
-        logger.info(f"🔄 Starting $5 mode question allocation at {datetime.now()}")
+        logger.info(f"🔄 Starting bronze mode question allocation at {datetime.now()}")
         db: Session = SessionLocal()
         
         try:
             # Get mode config
-            mode_config = get_mode_config(db, 'five_dollar_mode')
+            mode_config = get_mode_config(db, 'bronze')
             if not mode_config:
-                logger.warning("⚠️ $5 mode config not found, skipping question allocation...")
+                logger.warning("⚠️ Bronze mode config not found, skipping question allocation...")
                 return
             
             target_date = get_active_draw_date()
@@ -794,9 +801,9 @@ async def allocate_five_dollar_mode_questions():
             start_datetime, end_datetime = get_date_range_for_query(target_date)
             
             # Check if question already allocated for this date
-            existing_question = db.query(TriviaQuestionsFiveDollarModeDaily).filter(
-                TriviaQuestionsFiveDollarModeDaily.date >= start_datetime,
-                TriviaQuestionsFiveDollarModeDaily.date <= end_datetime
+            existing_question = db.query(TriviaQuestionsBronzeModeDaily).filter(
+                TriviaQuestionsBronzeModeDaily.date >= start_datetime,
+                TriviaQuestionsBronzeModeDaily.date <= end_datetime
             ).count()
             
             if existing_question > 0:
@@ -804,27 +811,27 @@ async def allocate_five_dollar_mode_questions():
                 return
             
             # Get available questions (prefer unused)
-            unused_questions = db.query(TriviaQuestionsFiveDollarMode).filter(
-                TriviaQuestionsFiveDollarMode.is_used == False
+            unused_questions = db.query(TriviaQuestionsBronzeMode).filter(
+                TriviaQuestionsBronzeMode.is_used == False
             ).all()
             
             # If not enough unused questions, get any questions
             import random
             if len(unused_questions) < 1:
-                all_questions = db.query(TriviaQuestionsFiveDollarMode).all()
+                all_questions = db.query(TriviaQuestionsBronzeMode).all()
                 if len(all_questions) >= 1:
                     selected_question = random.choice(all_questions)
                 else:
-                    logger.warning("⚠️ No questions available for $5 mode")
+                    logger.warning("⚠️ No questions available for bronze mode")
                     return
             else:
                 selected_question = random.choice(unused_questions)
             
             # Allocate question to daily pool
-            daily_question = TriviaQuestionsFiveDollarModeDaily(
+            daily_question = TriviaQuestionsBronzeModeDaily(
                 date=start_datetime,
                 question_id=selected_question.id,
-                question_order=1,  # Always 1 for $5 mode
+                question_order=1,  # Always 1 for bronze mode
                 is_used=False
             )
             db.add(daily_question)
@@ -832,16 +839,16 @@ async def allocate_five_dollar_mode_questions():
             selected_question.is_used = True
             
             db.commit()
-            logger.info(f"✅ Successfully allocated question for $5 mode on {target_date}")
+            logger.info(f"✅ Successfully allocated question for bronze mode on {target_date}")
             
         except Exception as db_error:
             db.rollback()
-            logger.error(f"💥 Database error during $5 mode question allocation: {str(db_error)}")
+            logger.error(f"💥 Database error during bronze mode question allocation: {str(db_error)}")
         finally:
             db.close()
         
     except Exception as e:
-        logger.error(f"💥 Error allocating $5 mode questions: {str(e)}")
+        logger.error(f"💥 Error allocating bronze mode questions: {str(e)}")
 
 def start_scheduler():
     """
@@ -874,10 +881,18 @@ def register_mode_handlers():
     
     # Register $5 mode handler
     register_mode_handler(
-        mode_id='five_dollar_mode',
-        eligibility_func=get_eligible_participants_five_dollar_mode,
+        mode_id='bronze',
+        eligibility_func=get_eligible_participants_bronze_mode,
         ranking_func=rank_participants_by_submission_time,
-        reward_calc_func=calculate_total_pool_five_dollar_mode
+        reward_calc_func=calculate_total_pool_bronze_mode
+    )
+    
+    # Register silver mode handler
+    register_mode_handler(
+        mode_id='silver',
+        eligibility_func=get_eligible_participants_silver_mode,
+        ranking_func=rank_silver_participants,
+        reward_calc_func=calculate_total_pool_silver_mode
     )
     
     logger.info("Mode handlers registered successfully")
