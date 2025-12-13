@@ -56,6 +56,7 @@ class User(Base):
     
     # Added fields for trivia game
     gems = Column(Integer, default=0)  # Track user's gems
+    level = Column(Integer, default=1, nullable=False)  # User level - increases by 1 for every 100 questions answered (right or wrong)
     
     # Daily draw eligibility tracking
     daily_eligibility_flag = Column(Boolean, default=False)  # True if user answered all 3 questions correctly today

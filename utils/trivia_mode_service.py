@@ -398,10 +398,15 @@ def submit_free_mode_answer(
     
     db.commit()
     
+    # Track answer and update user level
+    from utils.user_level_service import track_answer_and_update_level
+    level_info = track_answer_and_update_level(user, db)
+    
     return {
         'status': 'success',
         'is_correct': is_correct,
-        'message': 'Correct!' if is_correct else 'Incorrect. Try again tomorrow!'
+        'message': 'Correct!' if is_correct else 'Incorrect. Try again tomorrow!',
+        'level_info': level_info
     }
 
 

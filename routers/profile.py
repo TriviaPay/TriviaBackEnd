@@ -402,7 +402,8 @@ async def update_extended_profile(
                     "username_updated": user.username_updated,
                     "badge": badge_info,
                     "total_gems": user.gems or 0,  # Total gem count
-                    "total_trivia_coins": wallet_balance_usd  # Total trivia coins (wallet balance in USD)
+                    "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
+                    "level": user.level if user.level else 1  # User level (increases by 1 for every 100 questions answered)
                 }
             }
         except IntegrityError as e:
@@ -494,7 +495,8 @@ async def get_complete_profile(
                 "badge": badge_info,  # Achievement badge
                 "subscription_badges": subscription_badges,  # Array of subscription badge URLs
                 "total_gems": user.gems or 0,  # Total gem count
-                "total_trivia_coins": wallet_balance_usd  # Total trivia coins (wallet balance in USD)
+                "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
+                "level": user.level if user.level else 1  # User level (increases by 1 for every 100 questions answered)
             }
         }
     except HTTPException:
@@ -646,7 +648,8 @@ async def get_profile_summary(
                 "badge": badge_info,  # Achievement badge
                 "subscription_badges": subscription_badges,  # Array of subscription badge URLs
                 "total_gems": user.gems or 0,  # Total gem count
-                "total_trivia_coins": wallet_balance_usd  # Total trivia coins (wallet balance in USD)
+                "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
+                "level": user.level if user.level else 1  # User level (increases by 1 for every 100 questions answered)
             },
         }
     except HTTPException:

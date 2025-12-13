@@ -685,13 +685,18 @@ async def submit_answer(
             rem.status = 'skipped'
     
     db.commit()
+    
+    # Track answer and update user level
+    from utils.user_level_service import track_answer_and_update_level
+    level_info = track_answer_and_update_level(user, db)
 
     return {
         "status": "success",
         "is_correct": is_correct,
         "correct_answer": question.correct_answer,
         "explanation": question.explanation,
-        "daily_completed": is_correct
+        "daily_completed": is_correct,
+        "level_info": level_info
     }
 
 @router.get("/")

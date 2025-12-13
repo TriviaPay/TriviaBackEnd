@@ -312,11 +312,16 @@ async def submit_silver_mode_answer(
     
     db.commit()
     
+    # Track answer and update user level
+    from utils.user_level_service import track_answer_and_update_level
+    level_info = track_answer_and_update_level(user, db)
+    
     return {
         'status': 'success',
         'is_correct': is_correct,
         'submitted_at': datetime.utcnow().isoformat(),
-        'message': 'Answer submitted successfully'
+        'message': 'Answer submitted successfully',
+        'level_info': level_info
     }
 
 
