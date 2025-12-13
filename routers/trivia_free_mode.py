@@ -108,14 +108,25 @@ async def get_free_mode_leaderboard(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Parse draw_date or use today
+    # Parse draw_date or use most recent completed draw
     if draw_date:
         try:
             target_date = date.fromisoformat(draw_date)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
-        target_date = get_active_draw_date() - date.resolution  # Yesterday's draw
+        # Get most recent completed draw date
+        # Before draw time: yesterday's draw (completed yesterday)
+        # After draw time: today's draw (just completed at today's draw time)
+        active_date = get_active_draw_date()
+        from utils.trivia_mode_service import get_today_in_app_timezone
+        today = get_today_in_app_timezone()
+        if active_date == today:
+            # After draw time, show today's completed draw
+            target_date = active_date
+        else:
+            # Before draw time, show yesterday's completed draw
+            target_date = active_date
     
     # Get leaderboard entries
     leaderboard_entries = db.query(TriviaFreeModeLeaderboard).filter(
@@ -125,17 +136,36 @@ async def get_free_mode_leaderboard(
         TriviaFreeModeLeaderboard.completed_at
     ).all()
     
-    # Get user details
+    # Get user details with profile information
+    from utils.chat_helpers import get_user_chat_profile_data
+    from models import Badge
+    
     result = []
     for entry in leaderboard_entries:
         user_obj = db.query(User).filter(User.account_id == entry.account_id).first()
         if user_obj:
+            # Get profile data
+            profile_data = get_user_chat_profile_data(user_obj, db)
+            
+            # Get achievement badge image URL
+            badge_image_url = None
+            if user_obj.badge_id:
+                badge = db.query(Badge).filter(Badge.id == user_obj.badge_id).first()
+                if badge:
+                    badge_image_url = badge.image_url
+            
             result.append({
                 'position': entry.position,
                 'username': user_obj.username,
                 'user_id': entry.account_id,
                 'gems_awarded': entry.gems_awarded,
-                'completed_at': entry.completed_at.isoformat() if entry.completed_at else None
+                'completed_at': entry.completed_at.isoformat() if entry.completed_at else None,
+                'profile_pic': profile_data.get('profile_pic_url'),
+                'badge_image_url': badge_image_url,
+                'avatar_url': profile_data.get('avatar_url'),
+                'frame_url': profile_data.get('frame_url'),
+                'subscription_badges': profile_data.get('subscription_badges', []),
+                'date_won': target_date.isoformat()
             })
     
     return {
@@ -242,11 +272,20 @@ async def get_free_mode_status(
             'answered_at': attempt.answered_at.isoformat() if attempt.answered_at else None
         })
     
-    # Check if user is a winner
-    yesterday_draw = target_date - date.resolution
+    # Check if user is a winner for the most recent completed draw
+    # Before draw time: check yesterday's draw
+    # After draw time: check today's draw (just completed)
+    from utils.trivia_mode_service import get_today_in_app_timezone
+    today = get_today_in_app_timezone()
+    if target_date == today:
+        # After draw time, check today's completed draw
+        winner_draw_date = target_date
+    else:
+        # Before draw time, check yesterday's completed draw
+        winner_draw_date = target_date
     is_winner = db.query(TriviaFreeModeWinners).filter(
         TriviaFreeModeWinners.account_id == user.account_id,
-        TriviaFreeModeWinners.draw_date == yesterday_draw
+        TriviaFreeModeWinners.draw_date == winner_draw_date
     ).first() is not None
     
     return {

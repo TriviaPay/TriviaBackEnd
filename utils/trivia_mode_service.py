@@ -44,10 +44,36 @@ def get_today_in_app_timezone() -> date:
 def get_active_draw_date() -> date:
     """
     Get the draw date for which users should see questions.
-    Questions are always allocated for the NEXT draw date.
+    
+    Logic:
+    - Before draw time: return yesterday's date
+    - After draw time: return today's date
+    - After 12 AM (midnight): return yesterday again until draw time
+    
+    This ensures that:
+    - Before draw time, users see questions for the current draw period (yesterday's date)
+    - After draw time, users see questions for the next draw period (today's date)
     """
-    today = get_today_in_app_timezone()
-    return today + timedelta(days=1)
+    timezone_str = os.getenv("DRAW_TIMEZONE", "US/Eastern")
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    today = now.date()
+    
+    # Get draw time configuration
+    draw_time_hour = int(os.getenv("DRAW_TIME_HOUR", "18"))  # Default 6 PM
+    draw_time_minute = int(os.getenv("DRAW_TIME_MINUTE", "0"))
+    
+    # Create draw time for today
+    draw_time = now.replace(hour=draw_time_hour, minute=draw_time_minute, second=0, microsecond=0)
+    
+    # If current time is before draw time, return yesterday
+    # If current time is after draw time, return today
+    if now < draw_time:
+        # Before draw time: return yesterday
+        return today - timedelta(days=1)
+    else:
+        # After draw time: return today
+        return today
 
 
 def get_date_range_for_query(target_date: date):

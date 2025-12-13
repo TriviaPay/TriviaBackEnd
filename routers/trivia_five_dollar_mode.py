@@ -345,11 +345,18 @@ async def get_bronze_mode_status(
         TriviaUserBronzeModeDaily.date == target_date
     ).first()
     
-    # Check if user is a winner for yesterday's draw
-    yesterday_draw = target_date - date.resolution
+    # Check if user is a winner for the most recent completed draw
+    from utils.trivia_mode_service import get_today_in_app_timezone
+    today = get_today_in_app_timezone()
+    if target_date == today:
+        # After draw time, check today's completed draw
+        winner_draw_date = target_date
+    else:
+        # Before draw time, check yesterday's completed draw
+        winner_draw_date = target_date
     is_winner = db.query(TriviaBronzeModeWinners).filter(
         TriviaBronzeModeWinners.account_id == user.account_id,
-        TriviaBronzeModeWinners.draw_date == yesterday_draw
+        TriviaBronzeModeWinners.draw_date == winner_draw_date
     ).first() is not None
     
     return {
@@ -377,14 +384,23 @@ async def get_bronze_mode_leaderboard(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Parse draw_date or use yesterday's draw
+    # Parse draw_date or use most recent completed draw
     if draw_date:
         try:
             target_date = date.fromisoformat(draw_date)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
-        target_date = get_active_draw_date() - date.resolution  # Yesterday's draw
+        # Get most recent completed draw date
+        active_date = get_active_draw_date()
+        from utils.trivia_mode_service import get_today_in_app_timezone
+        today = get_today_in_app_timezone()
+        if active_date == today:
+            # After draw time, show today's completed draw
+            target_date = active_date
+        else:
+            # Before draw time, show yesterday's completed draw
+            target_date = active_date
     
     # Get leaderboard entries
     leaderboard_entries = db.query(TriviaBronzeModeLeaderboard).filter(
@@ -394,17 +410,36 @@ async def get_bronze_mode_leaderboard(
         TriviaBronzeModeLeaderboard.submitted_at
     ).all()
     
-    # Get user details
+    # Get user details with profile information
+    from utils.chat_helpers import get_user_chat_profile_data
+    from models import Badge
+    
     result = []
     for entry in leaderboard_entries:
         user_obj = db.query(User).filter(User.account_id == entry.account_id).first()
         if user_obj:
+            # Get profile data
+            profile_data = get_user_chat_profile_data(user_obj, db)
+            
+            # Get achievement badge image URL
+            badge_image_url = None
+            if user_obj.badge_id:
+                badge = db.query(Badge).filter(Badge.id == user_obj.badge_id).first()
+                if badge:
+                    badge_image_url = badge.image_url
+            
             result.append({
                 'position': entry.position,
                 'username': user_obj.username,
                 'user_id': entry.account_id,
                 'money_awarded': entry.money_awarded,
-                'submitted_at': entry.submitted_at.isoformat() if entry.submitted_at else None
+                'submitted_at': entry.submitted_at.isoformat() if entry.submitted_at else None,
+                'profile_pic': profile_data.get('profile_pic_url'),
+                'badge_image_url': badge_image_url,
+                'avatar_url': profile_data.get('avatar_url'),
+                'frame_url': profile_data.get('frame_url'),
+                'subscription_badges': profile_data.get('subscription_badges', []),
+                'date_won': target_date.isoformat()
             })
     
     return {

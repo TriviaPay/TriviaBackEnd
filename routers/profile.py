@@ -376,6 +376,10 @@ async def update_extended_profile(
             # Get badge information
             badge_info = get_badge_info(user, db)
             
+            # Get wallet balance (trivia coins) - use wallet_balance_minor if available, otherwise convert wallet_balance
+            wallet_balance_minor = user.wallet_balance_minor if hasattr(user, 'wallet_balance_minor') and user.wallet_balance_minor is not None else int((user.wallet_balance or 0) * 100)
+            wallet_balance_usd = wallet_balance_minor / 100.0 if wallet_balance_minor else 0.0
+            
             # Return success response with updated profile details
             return {
                 "status": "success",
@@ -396,7 +400,9 @@ async def update_extended_profile(
                         "country": user.country
                     },
                     "username_updated": user.username_updated,
-                    "badge": badge_info
+                    "badge": badge_info,
+                    "total_gems": user.gems or 0,  # Total gem count
+                    "total_trivia_coins": wallet_balance_usd  # Total trivia coins (wallet balance in USD)
                 }
             }
         except IntegrityError as e:
@@ -453,6 +459,10 @@ async def get_complete_profile(
         # Get subscription badges
         subscription_badges = get_subscription_badges(user, db)
         
+        # Get wallet balance (trivia coins) - use wallet_balance_minor if available, otherwise convert wallet_balance
+        wallet_balance_minor = user.wallet_balance_minor if hasattr(user, 'wallet_balance_minor') and user.wallet_balance_minor is not None else int((user.wallet_balance or 0) * 100)
+        wallet_balance_usd = wallet_balance_minor / 100.0 if wallet_balance_minor else 0.0
+        
         # Return all user fields
         return {
             "status": "success",
@@ -482,7 +492,9 @@ async def get_complete_profile(
                 "referral_code": user.referral_code,
                 "is_referred": bool(user.referred_by),
                 "badge": badge_info,  # Achievement badge
-                "subscription_badges": subscription_badges  # Array of subscription badge URLs
+                "subscription_badges": subscription_badges,  # Array of subscription badge URLs
+                "total_gems": user.gems or 0,  # Total gem count
+                "total_trivia_coins": wallet_balance_usd  # Total trivia coins (wallet balance in USD)
             }
         }
     except HTTPException:
@@ -590,6 +602,10 @@ async def get_profile_summary(
         # Get subscription badges
         subscription_badges = get_subscription_badges(user, db)
         
+        # Get wallet balance (trivia coins) - use wallet_balance_minor if available, otherwise convert wallet_balance
+        wallet_balance_minor = user.wallet_balance_minor if hasattr(user, 'wallet_balance_minor') and user.wallet_balance_minor is not None else int((user.wallet_balance or 0) * 100)
+        wallet_balance_usd = wallet_balance_minor / 100.0 if wallet_balance_minor else 0.0
+        
         # Determine which profile picture type is active
         profile_pic_type = None
         if user.profile_pic_url:
@@ -629,6 +645,8 @@ async def get_profile_summary(
                 "frame": frame_payload,
                 "badge": badge_info,  # Achievement badge
                 "subscription_badges": subscription_badges,  # Array of subscription badge URLs
+                "total_gems": user.gems or 0,  # Total gem count
+                "total_trivia_coins": wallet_balance_usd  # Total trivia coins (wallet balance in USD)
             },
         }
     except HTTPException:
