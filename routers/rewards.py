@@ -118,16 +118,16 @@ def get_badge_info_for_winner(user: User, db: Session) -> Optional[Dict[str, Any
 
 def get_winner_profile_data(user: User, db: Session) -> Dict[str, Any]:
     """
-    Get complete profile data for a winner including avatar, frame, and badge.
+    Get complete profile data for a winner including avatar, frame, badge, and subscription badges.
     
     Args:
         user: User object
         db: Database session
         
     Returns:
-        Dictionary with username, profile_pic, profile_frame, avatar, and badge
+        Dictionary with username, profile_pic, profile_frame, avatar, badge, and subscription_badges
     """
-    # Get badge information
+    # Get badge information (achievement badge)
     badge_info = get_badge_info_for_winner(user, db)
     
     # Get avatar URL (presigned)
@@ -156,12 +156,87 @@ def get_winner_profile_data(user: User, db: Session) -> Dict[str, Any]:
                 except Exception as e:
                     logging.warning(f"Failed to presign frame {frame_obj.id}: {e}")
     
+    # Get subscription badges
+    subscription_badges = []
+    from models import UserSubscription, SubscriptionPlan, Badge
+    from sqlalchemy import and_, or_
+    from datetime import datetime
+    
+    # Check for active bronze ($5) subscription
+    bronze_subscription = db.query(UserSubscription).join(SubscriptionPlan).filter(
+        and_(
+            UserSubscription.user_id == user.account_id,
+            UserSubscription.status == 'active',
+            or_(
+                SubscriptionPlan.unit_amount_minor == 500,  # $5.00 in cents
+                SubscriptionPlan.price_usd == 5.0
+            ),
+            UserSubscription.current_period_end > datetime.utcnow()
+        )
+    ).first()
+    
+    if bronze_subscription:
+        # Get bronze badge - try multiple possible badge ID patterns or match by name
+        bronze_badge = None
+        # First try exact matches
+        for badge_id in ['bronze', 'bronze_badge', 'brone_badge', 'brone']:
+            bronze_badge = db.query(Badge).filter(Badge.id == badge_id).first()
+            if bronze_badge:
+                break
+        # If not found, try case-insensitive name match
+        if not bronze_badge:
+            bronze_badge = db.query(Badge).filter(Badge.name.ilike('%bronze%')).first()
+        
+        if bronze_badge:
+            subscription_badges.append({
+                "id": bronze_badge.id,
+                "name": bronze_badge.name,
+                "image_url": bronze_badge.image_url,
+                "subscription_type": "bronze",
+                "price": 5.0
+            })
+    
+    # Check for active silver ($10) subscription
+    silver_subscription = db.query(UserSubscription).join(SubscriptionPlan).filter(
+        and_(
+            UserSubscription.user_id == user.account_id,
+            UserSubscription.status == 'active',
+            or_(
+                SubscriptionPlan.unit_amount_minor == 1000,  # $10.00 in cents
+                SubscriptionPlan.price_usd == 10.0
+            ),
+            UserSubscription.current_period_end > datetime.utcnow()
+        )
+    ).first()
+    
+    if silver_subscription:
+        # Get silver badge - try multiple possible badge ID patterns or match by name
+        silver_badge = None
+        # First try exact matches
+        for badge_id in ['silver', 'silver_badge']:
+            silver_badge = db.query(Badge).filter(Badge.id == badge_id).first()
+            if silver_badge:
+                break
+        # If not found, try case-insensitive name match
+        if not silver_badge:
+            silver_badge = db.query(Badge).filter(Badge.name.ilike('%silver%')).first()
+        
+        if silver_badge:
+            subscription_badges.append({
+                "id": silver_badge.id,
+                "name": silver_badge.name,
+                "image_url": silver_badge.image_url,
+                "subscription_type": "silver",
+                "price": 10.0
+            })
+    
     return {
         "username": user.username or f"User{user.account_id}",
         "profile_pic": user.profile_pic_url,
         "profile_frame": frame_url,  # Presigned URL or None
         "avatar": avatar_url,  # Presigned URL or None
-        "badge": badge_info  # Badge object (id, name, image_url) or None
+        "badge": badge_info,  # Achievement badge object (id, name, image_url) or None
+        "subscription_badges": subscription_badges  # Array of subscription badge URLs
     }
 
 def get_eligible_users_wrapper(db: Session, draw_date: date) -> List[User]:

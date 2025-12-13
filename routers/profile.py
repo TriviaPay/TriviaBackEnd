@@ -4,15 +4,18 @@ from sqlalchemy.exc import IntegrityError
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime, date
+from sqlalchemy import and_, or_
 import uuid
 import os
 from db import get_db
-from models import User, Badge, Avatar, Frame
+from models import User, Badge, Avatar, Frame, UserSubscription, SubscriptionPlan
 from utils.storage import presign_get, upload_file, delete_file
 from routers.dependencies import get_current_user
 import logging
 from utils import get_letter_profile_pic
 from descope import DescopeClient
+from datetime import datetime
+from sqlalchemy import and_, or_
 from config import (
     DESCOPE_PROJECT_ID,
     DESCOPE_MANAGEMENT_KEY,
@@ -30,7 +33,7 @@ client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MAN
 
 def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
     """
-    Get badge information for a user.
+    Get badge information for a user (achievement badge).
     Returns badge id, name, and image_url (public S3 URL).
     
     Args:
@@ -52,6 +55,91 @@ def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
         "name": badge.name,
         "image_url": badge.image_url  # Public URL, no presigning needed
     }
+
+
+def get_subscription_badges(user: User, db: Session) -> List[Dict[str, Any]]:
+    """
+    Get subscription badge URLs for a user based on their active subscriptions.
+    Returns a list of badge info dictionaries for bronze ($5) and silver ($10) subscriptions.
+    
+    Args:
+        user: User object
+        db: Database session
+        
+    Returns:
+        List of dictionaries with badge info (id, name, image_url) for each active subscription
+    """
+    subscription_badges = []
+    
+    # Check for active bronze ($5) subscription
+    bronze_subscription = db.query(UserSubscription).join(SubscriptionPlan).filter(
+        and_(
+            UserSubscription.user_id == user.account_id,
+            UserSubscription.status == 'active',
+            or_(
+                SubscriptionPlan.unit_amount_minor == 500,  # $5.00 in cents
+                SubscriptionPlan.price_usd == 5.0
+            ),
+            UserSubscription.current_period_end > datetime.utcnow()
+        )
+    ).first()
+    
+    if bronze_subscription:
+        # Get bronze badge - try multiple possible badge ID patterns or match by name
+        bronze_badge = None
+        # First try exact matches
+        for badge_id in ['bronze', 'bronze_badge', 'brone_badge', 'brone']:
+            bronze_badge = db.query(Badge).filter(Badge.id == badge_id).first()
+            if bronze_badge:
+                break
+        # If not found, try case-insensitive name match
+        if not bronze_badge:
+            bronze_badge = db.query(Badge).filter(Badge.name.ilike('%bronze%')).first()
+        
+        if bronze_badge:
+            subscription_badges.append({
+                "id": bronze_badge.id,
+                "name": bronze_badge.name,
+                "image_url": bronze_badge.image_url,
+                "subscription_type": "bronze",
+                "price": 5.0
+            })
+    
+    # Check for active silver ($10) subscription
+    silver_subscription = db.query(UserSubscription).join(SubscriptionPlan).filter(
+        and_(
+            UserSubscription.user_id == user.account_id,
+            UserSubscription.status == 'active',
+            or_(
+                SubscriptionPlan.unit_amount_minor == 1000,  # $10.00 in cents
+                SubscriptionPlan.price_usd == 10.0
+            ),
+            UserSubscription.current_period_end > datetime.utcnow()
+        )
+    ).first()
+    
+    if silver_subscription:
+        # Get silver badge - try multiple possible badge ID patterns or match by name
+        silver_badge = None
+        # First try exact matches
+        for badge_id in ['silver', 'silver_badge']:
+            silver_badge = db.query(Badge).filter(Badge.id == badge_id).first()
+            if silver_badge:
+                break
+        # If not found, try case-insensitive name match
+        if not silver_badge:
+            silver_badge = db.query(Badge).filter(Badge.name.ilike('%silver%')).first()
+        
+        if silver_badge:
+            subscription_badges.append({
+                "id": silver_badge.id,
+                "name": silver_badge.name,
+                "image_url": silver_badge.image_url,
+                "subscription_type": "silver",
+                "price": 10.0
+            })
+    
+    return subscription_badges
 
 # Badge related models
 class BadgeAssignment(BaseModel):
@@ -178,14 +266,18 @@ async def get_user_gems(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        # Get badge information
+        # Get badge information (achievement badge)
         badge_info = get_badge_info(user, db)
+        
+        # Get subscription badges
+        subscription_badges = get_subscription_badges(user, db)
         
         return {
             "status": "success",
             "username": user.username,
             "gems": user.gems,
-            "badge": badge_info
+            "badge": badge_info,  # Achievement badge
+            "subscription_badges": subscription_badges  # Array of subscription badge URLs
         }
     except HTTPException:
         raise
@@ -342,11 +434,24 @@ async def get_complete_profile(
             raise HTTPException(status_code=404, detail=f"User not found")
         
         # Format the date of birth if it exists
-        dob_formatted = user.date_of_birth.isoformat() if user.date_of_birth else None
-        signup_date_formatted = user.sign_up_date.isoformat() if user.sign_up_date else None
+        def _safe_iso_format(value):
+            """Safely format a date/datetime value to ISO format string."""
+            if not value:
+                return None
+            if isinstance(value, str):
+                return value  # Already a string
+            if hasattr(value, "isoformat"):
+                return value.isoformat()
+            return str(value)
         
-        # Get badge information
+        dob_formatted = _safe_iso_format(user.date_of_birth)
+        signup_date_formatted = _safe_iso_format(user.sign_up_date)
+        
+        # Get badge information (achievement badge)
         badge_info = get_badge_info(user, db)
+        
+        # Get subscription badges
+        subscription_badges = get_subscription_badges(user, db)
         
         # Return all user fields
         return {
@@ -376,7 +481,8 @@ async def get_complete_profile(
                 "username_updated": user.username_updated,
                 "referral_code": user.referral_code,
                 "is_referred": bool(user.referred_by),
-                "badge": badge_info
+                "badge": badge_info,  # Achievement badge
+                "subscription_badges": subscription_badges  # Array of subscription badge URLs
             }
         }
     except HTTPException:
@@ -478,8 +584,11 @@ async def get_profile_summary(
                 "mime_type": getattr(frame_obj, "mime_type", None)
             }
 
-        # Get badge information
+        # Get badge information (achievement badge)
         badge_info = get_badge_info(user, db)
+        
+        # Get subscription badges
+        subscription_badges = get_subscription_badges(user, db)
         
         # Determine which profile picture type is active
         profile_pic_type = None
@@ -518,7 +627,8 @@ async def get_profile_summary(
                 "profile_pic_type": profile_pic_type,  # "custom", "avatar", or "default"
                 "avatar": avatar_payload,
                 "frame": frame_payload,
-                "badge": badge_info,
+                "badge": badge_info,  # Achievement badge
+                "subscription_badges": subscription_badges,  # Array of subscription badge URLs
             },
         }
     except HTTPException:
