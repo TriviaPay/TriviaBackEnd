@@ -8,7 +8,10 @@ from sqlalchemy import and_, or_
 import uuid
 import os
 from db import get_db
-from models import User, Badge, Avatar, Frame, UserSubscription, SubscriptionPlan
+from models import (
+    User, Badge, Avatar, Frame, UserSubscription, SubscriptionPlan,
+    TriviaBronzeModeLeaderboard, TriviaSilverModeLeaderboard
+)
 from utils.storage import presign_get, upload_file, delete_file
 from routers.dependencies import get_current_user
 import logging
@@ -25,6 +28,7 @@ from config import (
 )
 from utils.referrals import get_unique_referral_code
 from utils.user_level_service import get_level_progress
+from utils.trivia_mode_service import get_active_draw_date, get_today_in_app_timezone
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
@@ -56,6 +60,56 @@ def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
         "name": badge.name,
         "image_url": badge.image_url  # Public URL, no presigning needed
     }
+
+
+def get_recent_draw_earnings(user: User, db: Session) -> float:
+    """
+    Get the amount earned by the user in the most recent completed draw.
+    Checks both bronze and silver mode leaderboards.
+    
+    Args:
+        user: User object
+        db: Database session
+        
+    Returns:
+        Total amount earned in the most recent draw (0 if no earnings)
+    """
+    try:
+        # Get the most recent completed draw date
+        active_date = get_active_draw_date()
+        today = get_today_in_app_timezone()
+        
+        # Determine the draw date for winners
+        if active_date == today:
+            # After draw time, show today's completed draw
+            draw_date = active_date
+        else:
+            # Before draw time, show yesterday's completed draw
+            draw_date = active_date
+        
+        # Check bronze mode leaderboard
+        bronze_entry = db.query(TriviaBronzeModeLeaderboard).filter(
+            TriviaBronzeModeLeaderboard.account_id == user.account_id,
+            TriviaBronzeModeLeaderboard.draw_date == draw_date
+        ).first()
+        
+        # Check silver mode leaderboard
+        silver_entry = db.query(TriviaSilverModeLeaderboard).filter(
+            TriviaSilverModeLeaderboard.account_id == user.account_id,
+            TriviaSilverModeLeaderboard.draw_date == draw_date
+        ).first()
+        
+        # Sum up earnings from both modes
+        total_earnings = 0.0
+        if bronze_entry:
+            total_earnings += float(bronze_entry.money_awarded or 0)
+        if silver_entry:
+            total_earnings += float(silver_entry.money_awarded or 0)
+        
+        return round(total_earnings, 2)
+    except Exception as e:
+        logging.error(f"Error getting recent draw earnings for user {user.account_id}: {str(e)}")
+        return 0.0
 
 
 def get_subscription_badges(user: User, db: Session) -> List[Dict[str, Any]]:
@@ -273,12 +327,16 @@ async def get_user_gems(
         # Get subscription badges
         subscription_badges = get_subscription_badges(user, db)
         
+        # Get recent draw earnings
+        recent_draw_earnings = get_recent_draw_earnings(user, db)
+        
         return {
             "status": "success",
             "username": user.username,
             "gems": user.gems,
             "badge": badge_info,  # Achievement badge
-            "subscription_badges": subscription_badges  # Array of subscription badge URLs
+            "subscription_badges": subscription_badges,  # Array of subscription badge URLs
+            "recent_draw_earnings": recent_draw_earnings  # Amount earned in most recent draw
         }
     except HTTPException:
         raise
@@ -381,6 +439,9 @@ async def update_extended_profile(
             wallet_balance_minor = user.wallet_balance_minor if hasattr(user, 'wallet_balance_minor') and user.wallet_balance_minor is not None else int((user.wallet_balance or 0) * 100)
             wallet_balance_usd = wallet_balance_minor / 100.0 if wallet_balance_minor else 0.0
             
+            # Get recent draw earnings
+            recent_draw_earnings = get_recent_draw_earnings(user, db)
+            
             # Return success response with updated profile details
             return {
                 "status": "success",
@@ -405,7 +466,8 @@ async def update_extended_profile(
                     "total_gems": user.gems or 0,  # Total gem count
                     "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
                     "level": user.level if user.level else 1,  # User level (increases by 1 for every 100 correct answers)
-                    "level_progress": get_level_progress(user, db)["progress"]  # Level progress string (e.g., "2/100")
+                    "level_progress": get_level_progress(user, db)["progress"],  # Level progress string (e.g., "2/100")
+                    "recent_draw_earnings": recent_draw_earnings  # Amount earned in most recent draw
                 }
             }
         except IntegrityError as e:
@@ -466,6 +528,9 @@ async def get_complete_profile(
         wallet_balance_minor = user.wallet_balance_minor if hasattr(user, 'wallet_balance_minor') and user.wallet_balance_minor is not None else int((user.wallet_balance or 0) * 100)
         wallet_balance_usd = wallet_balance_minor / 100.0 if wallet_balance_minor else 0.0
         
+        # Get recent draw earnings
+        recent_draw_earnings = get_recent_draw_earnings(user, db)
+        
         # Return all user fields
         return {
             "status": "success",
@@ -499,7 +564,8 @@ async def get_complete_profile(
                 "total_gems": user.gems or 0,  # Total gem count
                 "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
                 "level": user.level if user.level else 1,  # User level (increases by 1 for every 100 correct answers)
-                "level_progress": get_level_progress(user, db)["progress"]  # Level progress string (e.g., "2/100")
+                "level_progress": get_level_progress(user, db)["progress"],  # Level progress string (e.g., "2/100")
+                "recent_draw_earnings": recent_draw_earnings  # Amount earned in most recent draw
             }
         }
     except HTTPException:
@@ -611,6 +677,9 @@ async def get_profile_summary(
         wallet_balance_minor = user.wallet_balance_minor if hasattr(user, 'wallet_balance_minor') and user.wallet_balance_minor is not None else int((user.wallet_balance or 0) * 100)
         wallet_balance_usd = wallet_balance_minor / 100.0 if wallet_balance_minor else 0.0
         
+        # Get recent draw earnings
+        recent_draw_earnings = get_recent_draw_earnings(user, db)
+        
         # Determine which profile picture type is active
         profile_pic_type = None
         if user.profile_pic_url:
@@ -653,7 +722,8 @@ async def get_profile_summary(
                 "total_gems": user.gems or 0,  # Total gem count
                 "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
                 "level": user.level if user.level else 1,  # User level (increases by 1 for every 100 correct answers)
-                "level_progress": get_level_progress(user, db)["progress"]  # Level progress string (e.g., "2/100")
+                "level_progress": get_level_progress(user, db)["progress"],  # Level progress string (e.g., "2/100")
+                "recent_draw_earnings": recent_draw_earnings  # Amount earned in most recent draw
             },
         }
     except HTTPException:
