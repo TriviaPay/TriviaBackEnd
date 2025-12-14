@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import date, timedelta, datetime
 import os
 import pytz
@@ -10,7 +11,7 @@ import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
 from models import (
     GlobalChatMessage, User, OneSignalPlayer, TriviaUserDaily,
-    TriviaFreeModeWinners, TriviaBronzeModeWinners, TriviaSilverModeWinners
+    TriviaFreeModeWinners, TriviaBronzeModeWinners, TriviaSilverModeWinners, Notification
 )
 from utils.trivia_mode_service import get_mode_config
 from utils.free_mode_rewards import (
@@ -21,6 +22,7 @@ from utils.trivia_mode_service import get_mode_config, get_active_draw_date
 from utils.pusher_client import publish_chat_message_sync
 from utils.chat_helpers import get_user_chat_profile_data
 from utils.onesignal_client import send_push_notification_async
+from utils.notification_storage import create_notifications_batch
 from config import GLOBAL_CHAT_ENABLED, ONESIGNAL_ENABLED
 
 router = APIRouter(prefix="/internal", tags=["Internal"])
@@ -602,6 +604,14 @@ async def send_trivia_reminder(
     if not ONESIGNAL_ENABLED:
         raise HTTPException(status_code=403, detail="OneSignal is disabled")
 
+    # Check if OneSignal credentials are configured
+    from config import ONESIGNAL_APP_ID, ONESIGNAL_REST_API_KEY
+    if not ONESIGNAL_APP_ID or not ONESIGNAL_REST_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="OneSignal credentials not configured. Please set ONESIGNAL_APP_ID and ONESIGNAL_REST_API_KEY environment variables."
+        )
+
     try:
         # Import here to avoid circular imports
         from routers.trivia import get_active_draw_date
@@ -630,6 +640,12 @@ async def send_trivia_reminder(
 
         players = players_q.all()
         player_ids = [p.player_id for p in players]
+        
+        # Log which users are being targeted
+        unique_user_ids = list(set([p.user_id for p in players]))
+        logging.info(f"📋 Targeting {len(unique_user_ids)} unique users with {len(player_ids)} OneSignal players for trivia reminder")
+        if unique_user_ids:
+            logging.info(f"📋 Sample targeted user_ids: {unique_user_ids[:5]}..." if len(unique_user_ids) > 5 else f"📋 Targeted user_ids: {unique_user_ids}")
 
         if not player_ids:
             logging.warning(
@@ -675,6 +691,47 @@ async def send_trivia_reminder(
                 failed_batches += 1
                 logging.warning(f"⚠️ Failed to send trivia reminder to batch of {len(batch)} players")
 
+        # Store notifications in database for all targeted users
+        # Get unique user_ids (in case same user has multiple OneSignal players)
+        user_ids = list(set([p.user_id for p in players]))
+        if user_ids:
+            logging.info(f"📝 Storing notifications for {len(user_ids)} unique users. Sample user_ids: {user_ids[:5]}..." if len(user_ids) > 5 else f"📝 Storing notifications for user_ids: {user_ids}")
+            notifications_created = create_notifications_batch(
+                db=db,
+                user_ids=user_ids,
+                title=heading,
+                body=content,
+                notification_type="trivia_reminder",
+                data=data
+            )
+            logging.info(f"📝 Stored {notifications_created} trivia reminder notifications in database for {len(user_ids)} users")
+            
+            # Verify notifications were actually created
+            verification_count = db.query(Notification).filter(
+                Notification.type == "trivia_reminder",
+                Notification.user_id.in_(user_ids[:5])  # Check first 5
+            ).count()
+            logging.info(f"🔍 Verification: Found {verification_count} trivia_reminder notifications in DB for sample users (checked {min(5, len(user_ids))} user_ids)")
+            
+            # Additional verification: Check if any notifications exist at all for this type
+            total_trivia_reminders = db.query(func.count(Notification.id)).filter(
+                Notification.type == "trivia_reminder"
+            ).scalar() or 0
+            logging.info(f"🔍 Total trivia_reminder notifications in database: {total_trivia_reminders}")
+            
+            # Sample a few user_ids to verify they match User.account_id
+            if user_ids:
+                sample_user_id = user_ids[0]
+                user_exists = db.query(User).filter(User.account_id == sample_user_id).first()
+                if user_exists:
+                    user_notifications = db.query(func.count(Notification.id)).filter(
+                        Notification.user_id == sample_user_id,
+                        Notification.type == "trivia_reminder"
+                    ).scalar() or 0
+                    logging.info(f"🔍 Sample user_id {sample_user_id}: User exists, has {user_notifications} trivia_reminder notifications")
+                else:
+                    logging.warning(f"⚠️ Sample user_id {sample_user_id}: User NOT FOUND in users table!")
+
         # Only log success if we actually sent to some players
         if total_sent > 0:
             logging.info(
@@ -688,13 +745,35 @@ async def send_trivia_reminder(
                 f"Check OneSignal credentials and API configuration."
             )
 
-        return {
-            "status": "success",
-            "sent_to": total_sent,
-            "targeted_players": len(player_ids),
-            "draw_date": active_draw_date.isoformat(),
-            "only_incomplete_users": request.only_incomplete_users,
-        }
+        # Return appropriate status based on whether pushes were sent
+        if total_sent == 0:
+            return {
+                "status": "failed",
+                "sent_to": 0,
+                "targeted_players": len(player_ids),
+                "failed_batches": failed_batches,
+                "draw_date": active_draw_date.isoformat(),
+                "only_incomplete_users": request.only_incomplete_users,
+                "error": "Failed to send push notifications. Check OneSignal credentials and API configuration."
+            }
+        elif total_sent < len(player_ids):
+            return {
+                "status": "partial_success",
+                "sent_to": total_sent,
+                "targeted_players": len(player_ids),
+                "failed_batches": failed_batches,
+                "draw_date": active_draw_date.isoformat(),
+                "only_incomplete_users": request.only_incomplete_users,
+                "warning": f"Only {total_sent} out of {len(player_ids)} notifications were sent successfully."
+            }
+        else:
+            return {
+                "status": "success",
+                "sent_to": total_sent,
+                "targeted_players": len(player_ids),
+                "draw_date": active_draw_date.isoformat(),
+                "only_incomplete_users": request.only_incomplete_users,
+            }
     except HTTPException:
         # Pass through HTTP errors unchanged
         raise

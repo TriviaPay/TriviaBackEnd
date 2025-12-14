@@ -56,9 +56,30 @@ async def get_notifications(
     
     Supports pagination and filtering by read status.
     """
+    logger.info(f"🔍 Querying notifications for account_id={current_user.account_id} (descope_user_id={current_user.descope_user_id}, type: {type(current_user.account_id)})")
     query = db.query(Notification).filter(
         Notification.user_id == current_user.account_id
     )
+    
+    # Debug: Check if any notifications exist for this user
+    total_before_filter = db.query(func.count(Notification.id)).filter(
+        Notification.user_id == current_user.account_id
+    ).scalar() or 0
+    logger.info(f"🔍 Total notifications for account_id {current_user.account_id} before filters: {total_before_filter}")
+    
+    # Also check what notifications exist in general
+    all_notifications_count = db.query(func.count(Notification.id)).scalar() or 0
+    logger.info(f"🔍 Total notifications in database: {all_notifications_count}")
+    
+    # Sample a few notifications to see what user_ids they have
+    sample_notifications = db.query(Notification.user_id).distinct().limit(5).all()
+    logger.info(f"🔍 Sample user_ids in notifications table: {[n[0] for n in sample_notifications]}")
+    
+    # Check if current user has ANY notifications (any type)
+    any_notifications = db.query(func.count(Notification.id)).filter(
+        Notification.user_id == current_user.account_id
+    ).scalar() or 0
+    logger.info(f"🔍 Current user (account_id={current_user.account_id}) has {any_notifications} total notifications of any type")
     
     if unread_only:
         query = query.filter(Notification.read == False)
@@ -226,4 +247,48 @@ async def delete_all_notifications(
         "message": f"Deleted {deleted_count} notification(s)",
         "deleted_count": deleted_count
     }
+
+
+# ======== Test/Development Endpoints ========
+
+class CreateTestNotificationRequest(BaseModel):
+    title: str = Field(..., description="Notification title")
+    body: str = Field(..., description="Notification body")
+    notification_type: str = Field(default="test", description="Notification type")
+    data: Optional[dict] = None
+
+
+@router.post("/test", response_model=NotificationResponse)
+async def create_test_notification(
+    request: CreateTestNotificationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Create a test notification for the current user.
+    Useful for testing the notification system without needing OneSignal.
+    """
+    from utils.notification_storage import create_notification
+    
+    notification = create_notification(
+        db=db,
+        user_id=current_user.account_id,
+        title=request.title,
+        body=request.body,
+        notification_type=request.notification_type,
+        data=request.data
+    )
+    
+    logger.info(f"Created test notification {notification.id} for user {current_user.account_id}")
+    
+    return NotificationResponse(
+        id=notification.id,
+        title=notification.title,
+        body=notification.body,
+        type=notification.type,
+        data=notification.data,
+        read=notification.read,
+        read_at=notification.read_at.isoformat() if notification.read_at else None,
+        created_at=notification.created_at.isoformat()
+    )
 

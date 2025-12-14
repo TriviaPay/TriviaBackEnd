@@ -91,12 +91,12 @@ def create_notifications_batch(
             )
             for user_id in user_ids
         ]
-        db.bulk_save_objects(notifications)
+        db.add_all(notifications)
         db.commit()
-        logger.debug(f"Created {len(notifications)} notifications (type: {notification_type})")
+        logger.debug(f"Created {len(notifications)} notifications (type: {notification_type}) for user_ids: {user_ids[:5]}..." if len(user_ids) > 5 else f"Created {len(notifications)} notifications (type: {notification_type}) for user_ids: {user_ids}")
         return len(notifications)
     except Exception as e:
-        logger.error(f"Failed to create batch notifications: {e}")
+        logger.error(f"Failed to create batch notifications: {e}", exc_info=True)
         db.rollback()
         return 0
 
