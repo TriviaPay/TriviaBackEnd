@@ -735,7 +735,9 @@ async def get_private_messages(
                     "sender_avatar_url": replied_sender_profile["avatar_url"],
                     "sender_frame_url": replied_sender_profile["frame_url"],
                     "sender_badge": replied_sender_profile["badge"],
-                    "created_at": replied_msg.created_at.isoformat()
+                    "created_at": replied_msg.created_at.isoformat(),
+                    "sender_level": replied_sender_profile.get("level", 1),
+                    "sender_level_progress": replied_sender_profile.get("level_progress", "0/100")
                 }
         
         result_messages.append({
@@ -751,7 +753,9 @@ async def get_private_messages(
             "created_at": msg.created_at.isoformat(),
             "delivered_at": msg.delivered_at.isoformat() if msg.delivered_at else None,
             "is_read": is_read,
-            "reply_to": reply_info
+            "reply_to": reply_info,
+            "sender_level": sender_profile_data.get("level", 1),
+            "sender_level_progress": sender_profile_data.get("level_progress", "0/100")
         })
     
     return {
@@ -889,7 +893,9 @@ async def get_conversation(
         "created_at": conversation.created_at.isoformat(),
         "peer_online": peer_online,
         "peer_last_seen": peer_last_seen,
-        "last_message_at": conversation.last_message_at.isoformat() if conversation.last_message_at else None
+        "last_message_at": conversation.last_message_at.isoformat() if conversation.last_message_at else None,
+        "peer_level": peer_profile_data.get("level", 1) if peer_user else None,
+        "peer_level_progress": peer_profile_data.get("level_progress", "0/100") if peer_user else None
     }
 
 

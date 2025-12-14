@@ -41,6 +41,8 @@ class WinnerResponse(BaseModel):
     frame_url: Optional[str] = None
     position: int
     date_won: Optional[str] = None  # Date when the win occurred (ISO format)
+    level: int = 1  # User level
+    level_progress: str = "0/100"  # Level progress (e.g., "2/100", "120/200")
 
 class DrawConfigResponse(BaseModel):
     is_custom: bool
@@ -230,13 +232,19 @@ def get_winner_profile_data(user: User, db: Session) -> Dict[str, Any]:
                 "price": 10.0
             })
     
+    # Get level and progress
+    from utils.user_level_service import get_level_progress
+    level_progress = get_level_progress(user, db)
+    
     return {
         "username": user.username or f"User{user.account_id}",
         "profile_pic": user.profile_pic_url,
         "profile_frame": frame_url,  # Presigned URL or None
         "avatar": avatar_url,  # Presigned URL or None
         "badge": badge_info,  # Achievement badge object (id, name, image_url) or None
-        "subscription_badges": subscription_badges  # Array of subscription badge URLs
+        "subscription_badges": subscription_badges,  # Array of subscription badge URLs
+        "level": level_progress['level'],
+        "level_progress": level_progress['progress']  # e.g., "2/100", "120/200"
     }
 
 def get_eligible_users_wrapper(db: Session, draw_date: date) -> List[User]:
@@ -497,7 +505,9 @@ async def get_all_winners(
                 avatar_url=profile_data["avatar"],
                 frame_url=profile_data["profile_frame"],
                 position=winner.position,
-                date_won=winner.draw_date.isoformat() if winner.draw_date else None
+                date_won=winner.draw_date.isoformat() if winner.draw_date else None,
+                level=profile_data.get("level", 1),
+                level_progress=profile_data.get("level_progress", "0/100")
             ))
         
         return result
@@ -727,7 +737,9 @@ async def today_winners_reveal(
                 "prize_amount": round_down(float(winner.prize_amount), 2),
                 "badge": profile_data["badge"],
                 "total_amount_won": round_down(float(total_won), 2),
-                "position": winner.position
+                "position": winner.position,
+                "level": profile_data.get("level", 1),
+                "level_progress": profile_data.get("level_progress", "0/100")
             })
         
         return {
@@ -843,7 +855,9 @@ async def trigger_draw(
                 avatar_url=profile_data.get("avatar"),
                 frame_url=profile_data.get("profile_frame"),
                 position=winner_data.get("position", 0),
-                date_won=None
+                date_won=None,
+                level=profile_data.get("level", 1),
+                level_progress=profile_data.get("level_progress", "0/100")
             ))
         
         return DrawResponse(

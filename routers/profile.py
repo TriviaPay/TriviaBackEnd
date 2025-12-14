@@ -24,6 +24,7 @@ from config import (
     REFERRAL_APP_LINK,
 )
 from utils.referrals import get_unique_referral_code
+from utils.user_level_service import get_level_progress
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
@@ -403,7 +404,8 @@ async def update_extended_profile(
                     "badge": badge_info,
                     "total_gems": user.gems or 0,  # Total gem count
                     "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
-                    "level": user.level if user.level else 1  # User level (increases by 1 for every 100 questions answered)
+                    "level": user.level if user.level else 1,  # User level (increases by 1 for every 100 correct answers)
+                    "level_progress": get_level_progress(user, db)["progress"]  # Level progress string (e.g., "2/100")
                 }
             }
         except IntegrityError as e:
@@ -496,7 +498,8 @@ async def get_complete_profile(
                 "subscription_badges": subscription_badges,  # Array of subscription badge URLs
                 "total_gems": user.gems or 0,  # Total gem count
                 "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
-                "level": user.level if user.level else 1  # User level (increases by 1 for every 100 questions answered)
+                "level": user.level if user.level else 1,  # User level (increases by 1 for every 100 correct answers)
+                "level_progress": get_level_progress(user, db)["progress"]  # Level progress string (e.g., "2/100")
             }
         }
     except HTTPException:
@@ -649,7 +652,8 @@ async def get_profile_summary(
                 "subscription_badges": subscription_badges,  # Array of subscription badge URLs
                 "total_gems": user.gems or 0,  # Total gem count
                 "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
-                "level": user.level if user.level else 1  # User level (increases by 1 for every 100 questions answered)
+                "level": user.level if user.level else 1,  # User level (increases by 1 for every 100 correct answers)
+                "level_progress": get_level_progress(user, db)["progress"]  # Level progress string (e.g., "2/100")
             },
         }
     except HTTPException:

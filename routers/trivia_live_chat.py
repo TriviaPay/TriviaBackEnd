@@ -614,7 +614,9 @@ async def get_trivia_live_messages(
                     "sender_avatar_url": replied_sender_profile["avatar_url"],
                     "sender_frame_url": replied_sender_profile["frame_url"],
                     "sender_badge": replied_sender_profile["badge"],
-                    "created_at": replied_msg.created_at.isoformat()
+                    "created_at": replied_msg.created_at.isoformat(),
+                    "sender_level": replied_sender_profile.get("level", 1),
+                    "sender_level_progress": replied_sender_profile.get("level_progress", "0/100")
                 }
         
         result_messages.append({
@@ -627,7 +629,9 @@ async def get_trivia_live_messages(
             "badge": profile_data["badge"],
             "message": msg.message,
             "created_at": msg.created_at.isoformat(),
-            "reply_to": reply_info
+            "reply_to": reply_info,
+            "level": profile_data.get("level", 1),
+            "level_progress": profile_data.get("level_progress", "0/100")
         })
     
     return {

@@ -165,7 +165,9 @@ async def get_free_mode_leaderboard(
                 'avatar_url': profile_data.get('avatar_url'),
                 'frame_url': profile_data.get('frame_url'),
                 'subscription_badges': profile_data.get('subscription_badges', []),
-                'date_won': target_date.isoformat()
+                'date_won': target_date.isoformat(),
+                'level': profile_data.get('level', 1),
+                'level_progress': profile_data.get('level_progress', '0/100')
             })
     
     return {

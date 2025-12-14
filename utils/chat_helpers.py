@@ -142,11 +142,17 @@ def get_user_chat_profile_data(user: User, db: Session) -> Dict:
                 "price": 10.0
             })
     
+    # Get level and progress
+    from utils.user_level_service import get_level_progress
+    level_progress = get_level_progress(user, db)
+    
     return {
         "profile_pic_url": profile_pic_url,
         "avatar_url": avatar_url,
         "frame_url": frame_url,
         "badge": badge_info,  # Achievement badge
-        "subscription_badges": subscription_badges  # Array of subscription badge URLs
+        "subscription_badges": subscription_badges,  # Array of subscription badge URLs
+        "level": level_progress['level'],
+        "level_progress": level_progress['progress']  # e.g., "2/100", "120/200"
     }
 
