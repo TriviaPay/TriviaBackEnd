@@ -10,8 +10,12 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 from db import get_db
-from models import User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsDaily, Trivia, Badge, Avatar, Frame, TriviaQuestionsEntries, TriviaUserDaily, UserSubscription
+from models import (
+    User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsDaily, Trivia, Badge, Avatar, Frame, 
+    TriviaQuestionsEntries, TriviaUserDaily, UserSubscription, TriviaBronzeModeLeaderboard, TriviaSilverModeLeaderboard
+)
 from routers.dependencies import get_current_user, get_admin_user
+from utils.trivia_mode_service import get_active_draw_date, get_today_in_app_timezone
 from utils.storage import presign_get
 from sqlalchemy.sql import extract
 import os
@@ -1248,3 +1252,144 @@ async def claim_compensation(
         gems_added=gems_to_add,
         new_gem_balance=user.gems
     )
+
+
+@router.get("/recent-winners")
+async def get_recent_winners(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get recent winners from bronze and silver modes.
+    Returns top 10 winners from each mode (max 20 total) for the most recent completed draw.
+    """
+    try:
+        # Get the most recent draw_date that has winners in either bronze or silver mode
+        from sqlalchemy import func
+        
+        # Find the most recent draw_date from bronze leaderboard
+        bronze_max_date = db.query(func.max(TriviaBronzeModeLeaderboard.draw_date)).scalar()
+        
+        # Find the most recent draw_date from silver leaderboard
+        silver_max_date = db.query(func.max(TriviaSilverModeLeaderboard.draw_date)).scalar()
+        
+        # Use the most recent date between the two
+        if bronze_max_date and silver_max_date:
+            draw_date = max(bronze_max_date, silver_max_date)
+        elif bronze_max_date:
+            draw_date = bronze_max_date
+        elif silver_max_date:
+            draw_date = silver_max_date
+        else:
+            # Fallback to calculated date if no winners exist
+            active_date = get_active_draw_date()
+            today = get_today_in_app_timezone()
+            if active_date == today:
+                draw_date = active_date
+            else:
+                draw_date = active_date
+        
+        # Get top 10 bronze mode winners from leaderboard
+        bronze_winners = db.query(TriviaBronzeModeLeaderboard).filter(
+            TriviaBronzeModeLeaderboard.draw_date == draw_date
+        ).order_by(TriviaBronzeModeLeaderboard.position).limit(10).all()
+        
+        # Get top 10 silver mode winners from leaderboard
+        silver_winners = db.query(TriviaSilverModeLeaderboard).filter(
+            TriviaSilverModeLeaderboard.draw_date == draw_date
+        ).order_by(TriviaSilverModeLeaderboard.position).limit(10).all()
+        
+        # Get all unique user IDs
+        all_user_ids = set()
+        for winner in bronze_winners:
+            all_user_ids.add(winner.account_id)
+        for winner in silver_winners:
+            all_user_ids.add(winner.account_id)
+        
+        # Batch load users
+        users = {u.account_id: u for u in db.query(User).filter(User.account_id.in_(list(all_user_ids))).all()}
+        
+        # Get profile data for all users
+        from utils.chat_helpers import get_user_chat_profile_data
+        from models import Badge
+        
+        result = []
+        
+        # Process bronze winners
+        for winner in bronze_winners:
+            user = users.get(winner.account_id)
+            if not user:
+                continue
+            
+            profile_data = get_user_chat_profile_data(user, db)
+            
+            # Get achievement badge image URL
+            badge_image_url = None
+            if user.badge_id:
+                badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
+                if badge:
+                    badge_image_url = badge.image_url
+            
+            result.append({
+                'mode': 'bronze',
+                'position': winner.position,
+                'username': user.username,
+                'user_id': winner.account_id,
+                'money_awarded': round_down(float(winner.money_awarded), 2),
+                'submitted_at': winner.submitted_at.isoformat() if winner.submitted_at else None,
+                'profile_pic': profile_data.get('profile_pic_url'),
+                'badge_image_url': badge_image_url,
+                'avatar_url': profile_data.get('avatar_url'),
+                'frame_url': profile_data.get('frame_url'),
+                'subscription_badges': profile_data.get('subscription_badges', []),
+                'level': profile_data.get('level', 1),
+                'level_progress': profile_data.get('level_progress', '0/100'),
+                'draw_date': draw_date.isoformat()
+            })
+        
+        # Process silver winners
+        for winner in silver_winners:
+            user = users.get(winner.account_id)
+            if not user:
+                continue
+            
+            profile_data = get_user_chat_profile_data(user, db)
+            
+            # Get achievement badge image URL
+            badge_image_url = None
+            if user.badge_id:
+                badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
+                if badge:
+                    badge_image_url = badge.image_url
+            
+            result.append({
+                'mode': 'silver',
+                'position': winner.position,
+                'username': user.username,
+                'user_id': winner.account_id,
+                'money_awarded': round_down(float(winner.money_awarded), 2),
+                'submitted_at': winner.submitted_at.isoformat() if winner.submitted_at else None,
+                'profile_pic': profile_data.get('profile_pic_url'),
+                'badge_image_url': badge_image_url,
+                'avatar_url': profile_data.get('avatar_url'),
+                'frame_url': profile_data.get('frame_url'),
+                'subscription_badges': profile_data.get('subscription_badges', []),
+                'level': profile_data.get('level', 1),
+                'level_progress': profile_data.get('level_progress', '0/100'),
+                'draw_date': draw_date.isoformat()
+            })
+        
+        return {
+            'draw_date': draw_date.isoformat(),
+            'total_winners': len(result),
+            'bronze_winners': len([w for w in result if w['mode'] == 'bronze']),
+            'silver_winners': len([w for w in result if w['mode'] == 'silver']),
+            'winners': result
+        }
+    
+    except Exception as e:
+        logging.error(f"Error getting recent winners: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving recent winners: {str(e)}"
+        )
