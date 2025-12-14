@@ -417,10 +417,10 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
     if badge_ids:
         badges = {b.id: b for b in db.query(Badge).filter(Badge.id.in_(list(badge_ids))).all()}
     
-    # Batch load all active subscriptions
+    # Batch load all active subscriptions with plans eagerly loaded
     active_subscriptions = {}
     if user_ids:
-        subs = db.query(UserSubscription).join(SubscriptionPlan).filter(
+        subs = db.query(UserSubscription).options(joinedload(UserSubscription.plan)).join(SubscriptionPlan).filter(
             and_(
                 UserSubscription.user_id.in_(list(user_ids)),
                 UserSubscription.status == 'active',
@@ -490,7 +490,7 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
         subscription_badges = []
         user_subs = active_subscriptions.get(user.account_id, [])
         for sub in user_subs:
-            plan = sub.subscription_plan
+            plan = sub.plan  # Use 'plan' relationship, not 'subscription_plan'
             if not plan:
                 continue
             
