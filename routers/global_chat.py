@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_
 from datetime import datetime, timedelta
 from typing import Optional, Union
 
 from db import get_db
-from models import User, GlobalChatMessage, GlobalChatViewer
+from models import User, GlobalChatMessage, GlobalChatViewer, Avatar, Frame, Badge, UserSubscription, SubscriptionPlan
 from routers.dependencies import get_current_user
 from config import (
     GLOBAL_CHAT_ENABLED,
@@ -19,6 +19,8 @@ from config import (
 from utils.pusher_client import publish_chat_message_sync
 from utils.message_sanitizer import sanitize_message
 from utils.chat_helpers import get_user_chat_profile_data
+from utils.storage import presign_get
+from utils.user_level_service import get_level_progress
 from utils.onesignal_client import send_push_notification_async, should_send_push, get_user_player_ids, is_user_active
 from utils.chat_mute import is_chat_muted
 from utils.chat_redis import check_burst_limit, check_rate_limit, enqueue_chat_event
@@ -386,6 +388,171 @@ async def send_global_message(
     }
 
 
+def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, dict]:
+    """
+    Batch load profile data for multiple users to avoid N+1 queries.
+    Returns a dict mapping user_id -> profile_data.
+    """
+    if not users:
+        return {}
+    
+    user_ids = [u.account_id for u in users]
+    profile_cache = {}
+    
+    # Batch load all avatars
+    avatar_ids = {u.selected_avatar_id for u in users if u.selected_avatar_id}
+    avatars = {}
+    if avatar_ids:
+        avatars = {a.id: a for a in db.query(Avatar).filter(Avatar.id.in_(list(avatar_ids))).all()}
+    
+    # Batch load all frames
+    frame_ids = {u.selected_frame_id for u in users if u.selected_frame_id}
+    frames = {}
+    if frame_ids:
+        frames = {f.id: f for f in db.query(Frame).filter(Frame.id.in_(list(frame_ids))).all()}
+    
+    # Batch load all badges
+    badge_ids = {u.badge_id for u in users if u.badge_id}
+    badges = {}
+    if badge_ids:
+        badges = {b.id: b for b in db.query(Badge).filter(Badge.id.in_(list(badge_ids))).all()}
+    
+    # Batch load all active subscriptions
+    active_subscriptions = {}
+    if user_ids:
+        subs = db.query(UserSubscription).join(SubscriptionPlan).filter(
+            and_(
+                UserSubscription.user_id.in_(list(user_ids)),
+                UserSubscription.status == 'active',
+                UserSubscription.current_period_end > datetime.utcnow()
+            )
+        ).all()
+        for sub in subs:
+            if sub.user_id not in active_subscriptions:
+                active_subscriptions[sub.user_id] = []
+            active_subscriptions[sub.user_id].append(sub)
+    
+    # Batch load subscription badges (bronze and silver)
+    subscription_badge_ids = ['bronze', 'bronze_badge', 'brone_badge', 'brone', 'silver', 'silver_badge']
+    subscription_badges_dict = {b.id: b for b in db.query(Badge).filter(
+        Badge.id.in_(list(subscription_badge_ids))
+    ).all()}
+    # Also try name-based matching
+    name_based_badges = {b.id: b for b in db.query(Badge).filter(
+        Badge.name.ilike('%bronze%') | Badge.name.ilike('%silver%')
+    ).all()}
+    subscription_badges_dict.update(name_based_badges)
+    
+    # Generate presigned URLs in batch
+    presigned_avatars = {}
+    presigned_frames = {}
+    for avatar_id, avatar in avatars.items():
+        bucket = getattr(avatar, "bucket", None)
+        object_key = getattr(avatar, "object_key", None)
+        if bucket and object_key:
+            try:
+                presigned_avatars[avatar_id] = presign_get(bucket, object_key, expires=900)
+            except Exception as e:
+                logger.warning(f"Failed to presign avatar {avatar_id}: {e}")
+    
+    for frame_id, frame in frames.items():
+        bucket = getattr(frame, "bucket", None)
+        object_key = getattr(frame, "object_key", None)
+        if bucket and object_key:
+            try:
+                presigned_frames[frame_id] = presign_get(bucket, object_key, expires=900)
+            except Exception as e:
+                logger.warning(f"Failed to presign frame {frame_id}: {e}")
+    
+    # Build profile data for each user
+    for user in users:
+        # Avatar URL
+        avatar_url = None
+        if user.selected_avatar_id and user.selected_avatar_id in presigned_avatars:
+            avatar_url = presigned_avatars[user.selected_avatar_id]
+        
+        # Frame URL
+        frame_url = None
+        if user.selected_frame_id and user.selected_frame_id in presigned_frames:
+            frame_url = presigned_frames[user.selected_frame_id]
+        
+        # Badge info
+        badge_info = None
+        if user.badge_id and user.badge_id in badges:
+            badge = badges[user.badge_id]
+            badge_info = {
+                "id": badge.id,
+                "name": badge.name,
+                "image_url": badge.image_url
+            }
+        
+        # Subscription badges
+        subscription_badges = []
+        user_subs = active_subscriptions.get(user.account_id, [])
+        for sub in user_subs:
+            plan = sub.subscription_plan
+            if not plan:
+                continue
+            
+            # Check for bronze ($5)
+            if (getattr(plan, 'unit_amount_minor', None) == 500 or 
+                getattr(plan, 'price_usd', None) == 5.0):
+                bronze_badge = (subscription_badges_dict.get('bronze') or 
+                              subscription_badges_dict.get('bronze_badge') or
+                              subscription_badges_dict.get('brone_badge') or
+                              subscription_badges_dict.get('brone'))
+                if not bronze_badge:
+                    # Try name-based match
+                    for bid, b in subscription_badges_dict.items():
+                        if 'bronze' in b.name.lower():
+                            bronze_badge = b
+                            break
+                if bronze_badge:
+                    subscription_badges.append({
+                        "id": bronze_badge.id,
+                        "name": bronze_badge.name,
+                        "image_url": bronze_badge.image_url,
+                        "subscription_type": "bronze",
+                        "price": 5.0
+                    })
+            
+            # Check for silver ($10)
+            if (getattr(plan, 'unit_amount_minor', None) == 1000 or 
+                getattr(plan, 'price_usd', None) == 10.0):
+                silver_badge = (subscription_badges_dict.get('silver') or 
+                              subscription_badges_dict.get('silver_badge'))
+                if not silver_badge:
+                    # Try name-based match
+                    for bid, b in subscription_badges_dict.items():
+                        if 'silver' in b.name.lower():
+                            silver_badge = b
+                            break
+                if silver_badge:
+                    subscription_badges.append({
+                        "id": silver_badge.id,
+                        "name": silver_badge.name,
+                        "image_url": silver_badge.image_url,
+                        "subscription_type": "silver",
+                        "price": 10.0
+                    })
+        
+        # Level progress (still needs to be calculated per user, but we'll do it lazily)
+        # For now, use a simple approach - cache it per user
+        level_progress = get_level_progress(user, db)
+        
+        profile_cache[user.account_id] = {
+            "profile_pic_url": user.profile_pic_url,
+            "avatar_url": avatar_url,
+            "frame_url": frame_url,
+            "badge": badge_info,
+            "subscription_badges": subscription_badges,
+            "level": level_progress['level'],
+            "level_progress": level_progress['progress']
+        }
+    
+    return profile_cache
+
+
 @router.get("/messages")
 async def get_global_messages(
     limit: int = Query(50, ge=1, le=100),
@@ -397,7 +564,8 @@ async def get_global_messages(
     if not GLOBAL_CHAT_ENABLED:
         raise HTTPException(status_code=403, detail="Global chat is disabled")
     
-    query = db.query(GlobalChatMessage).order_by(GlobalChatMessage.created_at.desc())
+    # Eagerly load users to avoid N+1 queries
+    query = db.query(GlobalChatMessage).options(joinedload(GlobalChatMessage.user)).order_by(GlobalChatMessage.created_at.desc())
     
     if before:
         before_msg = db.query(GlobalChatMessage).filter(GlobalChatMessage.id == before).first()
@@ -427,32 +595,62 @@ async def get_global_messages(
         GlobalChatViewer.last_seen >= cutoff_time
     ).count()
     
-    # Get profile data for all message senders
+    # Collect all unique users and reply message IDs
+    unique_users = {msg.user for msg in messages if msg.user}
+    reply_message_ids = {msg.reply_to_message_id for msg in messages if msg.reply_to_message_id}
+    
+    # Batch load all replied messages with their users
+    replied_messages = {}
+    if reply_message_ids:
+        replied_msgs = db.query(GlobalChatMessage).options(joinedload(GlobalChatMessage.user)).filter(
+            GlobalChatMessage.id.in_(list(reply_message_ids))
+        ).all()
+        replied_messages = {msg.id: msg for msg in replied_msgs}
+        # Add replied message users to unique_users set
+        unique_users.update({msg.user for msg in replied_msgs if msg.user})
+    
+    # Batch load profile data for all unique users
+    profile_cache = _batch_get_user_profile_data(list(unique_users), db)
+    
+    # Build response
     result_messages = []
     for msg in reversed(messages):
-        profile_data = get_user_chat_profile_data(msg.user, db)
+        profile_data = profile_cache.get(msg.user_id, {
+            "profile_pic_url": None,
+            "avatar_url": None,
+            "frame_url": None,
+            "badge": None,
+            "subscription_badges": [],
+            "level": 1,
+            "level_progress": "0/100"
+        })
         
         # Get reply information if this message is a reply
         reply_info = None
-        if msg.reply_to_message_id:
-            replied_msg = db.query(GlobalChatMessage).filter(
-                GlobalChatMessage.id == msg.reply_to_message_id
-            ).first()
-            if replied_msg:
-                replied_sender_profile = get_user_chat_profile_data(replied_msg.user, db)
-                reply_info = {
-                    "message_id": replied_msg.id,
-                    "sender_id": replied_msg.user_id,
-                    "sender_username": get_display_username(replied_msg.user),
-                    "message": replied_msg.message,
-                    "sender_profile_pic": replied_sender_profile["profile_pic_url"],
-                    "sender_avatar_url": replied_sender_profile["avatar_url"],
-                    "sender_frame_url": replied_sender_profile["frame_url"],
-                    "sender_badge": replied_sender_profile["badge"],
-                    "created_at": replied_msg.created_at.isoformat(),
-                    "sender_level": replied_sender_profile.get("level", 1),
-                    "sender_level_progress": replied_sender_profile.get("level_progress", "0/100")
-                }
+        if msg.reply_to_message_id and msg.reply_to_message_id in replied_messages:
+            replied_msg = replied_messages[msg.reply_to_message_id]
+            replied_profile = profile_cache.get(replied_msg.user_id, {
+                "profile_pic_url": None,
+                "avatar_url": None,
+                "frame_url": None,
+                "badge": None,
+                "subscription_badges": [],
+                "level": 1,
+                "level_progress": "0/100"
+            })
+            reply_info = {
+                "message_id": replied_msg.id,
+                "sender_id": replied_msg.user_id,
+                "sender_username": get_display_username(replied_msg.user),
+                "message": replied_msg.message,
+                "sender_profile_pic": replied_profile["profile_pic_url"],
+                "sender_avatar_url": replied_profile["avatar_url"],
+                "sender_frame_url": replied_profile["frame_url"],
+                "sender_badge": replied_profile["badge"],
+                "created_at": replied_msg.created_at.isoformat(),
+                "sender_level": replied_profile.get("level", 1),
+                "sender_level_progress": replied_profile.get("level_progress", "0/100")
+            }
         
         result_messages.append({
             "id": msg.id,
