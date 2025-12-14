@@ -424,7 +424,7 @@ async def send_private_message(
         message=sanitized_message,
         status='sent',
         client_message_id=request.client_message_id,
-        reply_to_message_id=request.reply_to_message_id if reply_to_message else None
+        reply_to_message_id=request.reply_to_message_id  # Use directly since validation ensures it exists if provided
     )
     
     db.add(new_message)

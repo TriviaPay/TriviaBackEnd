@@ -290,7 +290,7 @@ async def send_global_message(
         user_id=current_user.account_id,
         message=message_text,
         client_message_id=request.client_message_id,
-        reply_to_message_id=request.reply_to_message_id if reply_to_message else None
+        reply_to_message_id=request.reply_to_message_id  # Use directly since validation ensures it exists if provided
     )
     
     db.add(new_message)
