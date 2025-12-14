@@ -191,6 +191,7 @@ def send_push_if_needed_sync(recipient_id: int, conversation_id: int, sender_id:
     """Background task wrapper to send push notification (in-app if active, system if inactive)"""
     import asyncio
     from db import get_db
+    from utils.notification_storage import create_notification
     
     db = next(get_db())
     try:
@@ -246,6 +247,16 @@ def send_push_if_needed_sync(recipient_id: int, conversation_id: int, sender_id:
                 data=data,
                 is_in_app_notification=is_active
             )
+        )
+        
+        # Store notification in database
+        create_notification(
+            db=db,
+            user_id=recipient_id,
+            title=heading,
+            body=content,
+            notification_type="chat_private" if not is_new_conversation else "chat_request",
+            data=data
         )
         
         notification_type = "in-app" if is_active else "system"

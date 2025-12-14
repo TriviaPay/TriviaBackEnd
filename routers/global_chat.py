@@ -85,6 +85,7 @@ def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_usern
     """Background task to send push notifications for global chat to all users (except sender)"""
     import asyncio
     from db import get_db
+    from utils.notification_storage import create_notifications_batch
     
     db = next(get_db())
     try:
@@ -182,6 +183,19 @@ def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_usern
         
         total_active = sum(len(b) for b in active_player_batches)
         total_inactive = sum(len(b) for b in inactive_player_batches)
+        
+        # Store notifications in database for all recipients
+        all_recipient_ids = [p.user_id for p in all_players if not is_chat_muted(p.user_id, 'global', db)]
+        if all_recipient_ids:
+            create_notifications_batch(
+                db=db,
+                user_ids=all_recipient_ids,
+                title=heading,
+                body=content,
+                notification_type="chat_global",
+                data=data
+            )
+        
         logger.info(
             f"Sent global chat push notifications | in-app={total_active} | system={total_inactive} | "
             f"sender_id={sender_id} | message_id={message_id}"

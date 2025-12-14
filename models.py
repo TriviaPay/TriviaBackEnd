@@ -1245,6 +1245,31 @@ class OneSignalPlayer(Base):
 
 
 # =================================
+#  Notifications Table
+# =================================
+class Notification(Base):
+    __tablename__ = "notifications"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    title = Column(String, nullable=False)  # Notification title/heading
+    body = Column(Text, nullable=False)  # Notification body/content
+    type = Column(String, nullable=False)  # "chat_global", "chat_private", "chat_trivia_live", "system", "reward", etc.
+    data = Column(JSONB, nullable=True)  # Additional data (e.g., message_id, conversation_id, etc.)
+    read = Column(Boolean, default=False, nullable=False, index=True)
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    # Relationships
+    user = relationship("User", backref="notifications")
+    
+    __table_args__ = (
+        # Index for efficient querying of unread notifications
+        # Note: PostgreSQL will create this automatically, but we document it here
+    )
+
+
+# =================================
 #  Wallet Transaction Table
 # =================================
 class WalletTransaction(Base):
