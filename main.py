@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
-from routers import draw, updates, trivia, entries, login, refresh, store, profile, cosmetics, badges, rewards, admin, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute, trivia_free_mode, trivia_five_dollar_mode, trivia_silver_mode, notifications
+from routers import draw, trivia, login, refresh, store, profile, cosmetics, badges, rewards, admin, internal, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute, trivia_free_mode, trivia_five_dollar_mode, trivia_silver_mode, notifications
+# entries router removed - legacy /entries endpoint deleted
 from config import PRESENCE_ENABLED
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -266,10 +267,8 @@ app.include_router(cosmetics.router) # Avatars and Frames management
 app.include_router(badges.router)    # Badges management
 app.include_router(rewards.router)   # Rewards system
 app.include_router(admin.router)     # Admin controls
-app.include_router(updates.router)   # Live updates
-app.include_router(entries.router)   # Entries management
+# entries.router removed - legacy /entries endpoint deleted
 app.include_router(internal.router)  # Internal endpoints for external cron
-app.include_router(live_chat.router) # Live chat endpoints
 app.include_router(global_chat.router) # Global chat endpoints
 app.include_router(private_chat.router) # Private chat endpoints
 app.include_router(trivia_live_chat.router) # Trivia live chat endpoints
@@ -290,9 +289,9 @@ app.include_router(notifications.router) # Notifications endpoints
 # Presence router (gated behind feature flag)
 if PRESENCE_ENABLED:
     try:
-        from routers import presence
-        app.include_router(presence.router)          # Presence/privacy settings
-        logger.info("Presence feature enabled - routers registered")
+    from routers import presence
+    app.include_router(presence.router)          # Presence/privacy settings
+    logger.info("Presence feature enabled - routers registered")
     except ImportError as e:
         logger.warning(f"Presence feature enabled but required models are missing: {e}. Disabling Presence router.")
 else:

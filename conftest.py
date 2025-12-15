@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from models import Base, User, Letter
+from models import Base, User
 from db import get_db
 import os
 import urllib.parse
@@ -98,36 +98,7 @@ def test_db(test_engine):
     db = TestingSessionLocal()
     
     try:
-        # Seed letter data
-        letters = [
-            Letter(letter='a', image_url='https://example.com/a.png'),
-            Letter(letter='b', image_url='https://example.com/b.png'),
-            Letter(letter='c', image_url='https://example.com/c.png'),
-            Letter(letter='d', image_url='https://example.com/d.png'),
-            Letter(letter='e', image_url='https://example.com/e.png'),
-            Letter(letter='f', image_url='https://example.com/f.png'),
-            Letter(letter='g', image_url='https://example.com/g.png'),
-            Letter(letter='h', image_url='https://example.com/h.png'),
-            Letter(letter='i', image_url='https://example.com/i.png'),
-            Letter(letter='j', image_url='https://example.com/j.png'),
-            Letter(letter='k', image_url='https://example.com/k.png'),
-            Letter(letter='l', image_url='https://example.com/l.png'),
-            Letter(letter='m', image_url='https://example.com/m.png'),
-            Letter(letter='n', image_url='https://example.com/n.png'),
-            Letter(letter='o', image_url='https://example.com/o.png'),
-            Letter(letter='p', image_url='https://example.com/p.png'),
-            Letter(letter='q', image_url='https://example.com/q.png'),
-            Letter(letter='r', image_url='https://example.com/r.png'),
-            Letter(letter='s', image_url='https://example.com/s.png'),
-            Letter(letter='t', image_url='https://example.com/t.png'),
-            Letter(letter='u', image_url='https://example.com/u.png'),
-            Letter(letter='v', image_url='https://example.com/v.png'),
-            Letter(letter='w', image_url='https://example.com/w.png'),
-            Letter(letter='x', image_url='https://example.com/x.png'),
-            Letter(letter='y', image_url='https://example.com/y.png'),
-            Letter(letter='z', image_url='https://example.com/z.png'),
-        ]
-        db.add_all(letters)
+        # Letters table removed - no longer seeding letter data
         
         # Add some test users
         test_users = [

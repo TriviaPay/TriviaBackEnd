@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from db import get_db
-from models import User, GemPackageConfig, BoostConfig, UserGemPurchase
+from models import User, GemPackageConfig, UserGemPurchase
 from routers.dependencies import get_current_user
 from utils.storage import presign_get
 import logging

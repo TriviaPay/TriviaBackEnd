@@ -6,11 +6,14 @@ from datetime import date, timedelta, datetime
 import os
 import pytz
 from db import get_db
-from rewards_logic import perform_draw, reset_monthly_subscriptions, reset_weekly_daily_rewards
+from rewards_logic import reset_monthly_subscriptions, reset_weekly_daily_rewards
+# Legacy perform_draw removed - use mode-specific draws instead
 import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
+# Note: get_detailed_reset_metrics simplified - legacy tables removed
 from models import (
-    GlobalChatMessage, User, OneSignalPlayer, TriviaUserDaily,
+    GlobalChatMessage, User, OneSignalPlayer,
+    # TriviaUserDaily removed - legacy table
     TriviaFreeModeWinners, TriviaBronzeModeWinners, TriviaSilverModeWinners, Notification
 )
 from utils.trivia_mode_service import get_mode_config
@@ -197,95 +200,9 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
     except Exception as e:
         logging.error(f"Failed to publish winner announcement to Pusher: {e}")
 
-@router.post("/daily-draw")
-async def internal_daily_draw(
-    secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
-    db: Session = Depends(get_db)
-):
-    """
-    Internal endpoint for daily draw triggered by external cron.
-    
-    Determines draw date based on current time and configured draw time:
-    - If called after draw time - 12 AM: triggers draw for today (the draw that happened at draw time)
-    - If called between 12 AM - draw time: triggers draw for today (today's draw, which will happen at draw time)
-    
-    Draw time is configured via DRAW_TIME_HOUR and DRAW_TIME_MINUTE environment variables.
-    
-    Returns clean response with winner emails.
-    """
-    if secret != os.getenv("INTERNAL_SECRET"):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    
-    try:
-        # Determine which draw date to use based on current time
-        draw_date = get_draw_date_for_today()
-        
-        logging.info(f"🎯 Starting daily draw for {draw_date} via external cron")
-        
-        # Perform the draw
-        logging.info("🎲 Performing draw...")
-        result = perform_draw(db, draw_date)
-        logging.info(f"✅ Draw completed: {result.get('status', 'unknown')} - {result.get('total_participants', 0)} participants, {result.get('total_winners', 0)} winners")
-        
-        # Handle different draw result statuses
-        if result.get('status') == 'already_performed':
-            return {
-                "status": "already_performed",
-                "draw_date": draw_date.isoformat(),
-                "message": f"Draw for {draw_date} has already been performed"
-            }
-        
-        if result.get('status') == 'no_participants':
-            return {
-                "status": "no_participants",
-                "draw_date": draw_date.isoformat(),
-                "message": f"No eligible participants for draw on {draw_date}",
-                "total_participants": 0
-            }
-        
-        if result.get('status') != 'success':
-            return {
-                "status": result.get('status', 'error'),
-                "draw_date": draw_date.isoformat(),
-                "message": result.get('message', 'Unknown error')
-            }
-        
-        # Get winner details with emails
-        winners_data = []
-        for winner in result.get('winners', []):
-            user = db.query(User).filter(User.account_id == winner['account_id']).first()
-            if user:
-                winners_data.append({
-                    "position": winner.get('position'),
-                    "username": winner.get('username'),
-                    "email": user.email if user.email else None,
-                    "prize_amount": winner.get('prize_amount', 0)
-                })
-        
-        # Send winner announcement to global chat if draw was successful
-        if winners_data:
-            try:
-                send_winner_announcement(db, draw_date, result.get('winners', []))
-                logging.info("✅ Winner announcement sent to global chat")
-            except Exception as announcement_error:
-                logging.error(f"❌ Failed to send winner announcement: {str(announcement_error)}", exc_info=True)
-                # Don't fail the draw if announcement fails
-        
-        # Return clean, simplified response
-        return {
-            "status": "success",
-            "draw_date": draw_date.isoformat(),
-            "total_participants": result.get('total_participants', 0),
-            "total_winners": result.get('total_winners', 0),
-            "prize_pool": result.get('prize_pool', 0),
-            "winners": winners_data
-        }
-    except Exception as e:
-        logging.error(f"💥 Fatal error in daily draw: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error in daily draw: {str(e)}"
-        )
+# Legacy /daily-draw endpoint removed - use mode-specific draws instead:
+# - /internal/free-mode-draw
+# - /internal/mode-draw/{mode_id}
 
 
 @router.post("/free-mode-draw")
@@ -620,15 +537,11 @@ async def send_trivia_reminder(
         active_draw_date = get_active_draw_date()
         logging.info(f"📣 Trivia reminder triggered for draw date: {active_draw_date}")
 
-        # Find users who have answered correctly for the active draw date
-        q_correct_users = db.query(TriviaUserDaily.account_id).filter(
-            TriviaUserDaily.date == active_draw_date,
-            TriviaUserDaily.status == "answered_correct",
-        ).distinct()
-
-        correct_user_ids = {row[0] for row in q_correct_users}
+        # Legacy TriviaUserDaily check removed - use mode-specific tables instead
+        # For now, skip the incomplete users filter since we don't have legacy table
+        correct_user_ids = set()
         logging.info(
-            f"📊 Users who already answered correctly for {active_draw_date}: {len(correct_user_ids)}"
+            f"📊 Trivia reminder: Legacy eligibility check removed (TriviaUserDaily table deleted)"
         )
 
         # Base query: all valid OneSignal players
@@ -781,139 +694,8 @@ async def send_trivia_reminder(
         logging.error(f"❌ Error in trivia reminder: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/question-reset")
-async def internal_question_reset(
-    secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
-    db: Session = Depends(get_db)
-):
-    """Internal endpoint for question reset triggered by external cron"""
-    # Log immediately when endpoint is called
-    logging.info("=" * 80)
-    logging.info("🚀 QUESTION RESET ENDPOINT CALLED")
-    logging.info(f"⏰ Timestamp: {datetime.now()}")
-    logging.info("=" * 80)
-    
-    if secret != os.getenv("INTERNAL_SECRET"):
-        logging.error("❌ UNAUTHORIZED: Invalid secret key")
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    
-    logging.info("✅ Secret key validated - proceeding with question reset")
-    
-    try:
-        # Log timezone info for debugging
-        from cleanup_unused_questions import get_today_in_app_timezone, get_date_range_for_query
-        from models import TriviaQuestionsDaily
-        
-        today = get_today_in_app_timezone()
-        start_datetime, end_datetime = get_date_range_for_query(today)
-        
-        logging.info(f"🔄 Question reset triggered at {datetime.now()}")
-        logging.info(f"📅 Today in app timezone: {today}")
-        logging.info(f"📅 Date range: {start_datetime} to {end_datetime}")
-        
-        # Get initial pool count
-        initial_pool_count = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= start_datetime,
-            TriviaQuestionsDaily.date <= end_datetime
-        ).count()
-        logging.info(f"📊 Initial pool count: {initial_pool_count} questions")
-        
-        # Get detailed metrics before reset
-        logging.info("📊 Collecting detailed reset metrics...")
-        metrics = get_detailed_reset_metrics(db)
-        
-        # Import here to avoid circular imports
-        from cleanup_unused_questions import cleanup_unused_questions
-        from rewards_logic import reset_daily_eligibility_flags
-        
-        # Clean up unused questions
-        logging.info("🧹 Cleaning up unused questions...")
-        cleanup_unused_questions()
-        
-        # After the draw, today's pool is expected to be empty (all questions were used)
-        # We need to verify the NEXT draw's pool has questions instead
-        next_draw_date = today + timedelta(days=1)
-        next_start_datetime, next_end_datetime = get_date_range_for_query(next_draw_date)
-        
-        # Check next draw's pool (this is what matters - cleanup populates this)
-        next_draw_pool_count = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= next_start_datetime,
-            TriviaQuestionsDaily.date <= next_end_datetime
-        ).count()
-        
-        # Get the actual questions for debugging
-        next_pool_questions = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= next_start_datetime,
-            TriviaQuestionsDaily.date <= next_end_datetime
-        ).all()
-        
-        # Also check today's pool for informational purposes (expected to be empty after draw)
-        today_pool_count = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= start_datetime,
-            TriviaQuestionsDaily.date <= end_datetime
-        ).count()
-        
-        logging.info(f"✅ Next draw's pool after cleanup: {next_draw_pool_count} questions")
-        logging.info(f"📅 Today's pool after cleanup: {today_pool_count} questions (expected to be empty after draw)")
-        
-        if next_pool_questions:
-            logging.info(f"Next draw pool questions: {[(q.question_number, q.question_order, q.date) for q in next_pool_questions]}")
-        
-        # Today's pool being empty is expected after the draw - just log it
-        if today_pool_count == 0:
-            logging.info("ℹ️  Today's pool is empty (expected after draw completion)")
-        elif today_pool_count > 0:
-            logging.info(f"ℹ️  Today's pool has {today_pool_count} questions (some may remain unused)")
-        
-        # Verify next draw's pool has questions (this is what matters)
-        if next_draw_pool_count == 0:
-            error_msg = f"CRITICAL: Next draw's pool is empty after cleanup! Next draw date: {next_draw_date}"
-            logging.error(f"❌ {error_msg}")
-            logging.error(f"Initial pool count: {initial_pool_count}, Next draw pool count: {next_draw_pool_count}")
-            logging.error(f"Next draw date range: {next_start_datetime} to {next_end_datetime}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"{error_msg} Check cleanup_unused_questions() function. Next draw date: {next_draw_date}"
-            )
-        elif next_draw_pool_count < 4:
-            logging.warning(f"⚠️  WARNING: Next draw's pool has only {next_draw_pool_count} questions (should have 4)")
-        
-        # Reset eligibility flags
-        logging.info("🔄 Resetting eligibility flags...")
-        reset_daily_eligibility_flags(db)
-        
-        logging.info("=" * 80)
-        logging.info("✅ Question reset completed via external cron")
-        logging.info(f"📊 Final Results:")
-        logging.info(f"   - Initial pool count: {initial_pool_count}")
-        logging.info(f"   - Today's pool count: {today_pool_count} (expected to be empty after draw)")
-        logging.info(f"   - Next draw's pool count: {next_draw_pool_count}")
-        logging.info(f"   - Today: {today}")
-        logging.info(f"   - Next draw date: {next_draw_date}")
-        logging.info("=" * 80)
-        
-        return {
-            "status": "success",
-            "message": "Questions reset and eligibility flags cleared",
-            "triggered_by": "external_cron",
-            "detailed_metrics": metrics,
-            "today_pool_count": today_pool_count,
-            "next_draw_pool_count": next_draw_pool_count,
-            "initial_pool_count": initial_pool_count,
-            "today": today.isoformat(),
-            "next_draw_date": next_draw_date.isoformat(),
-            "timestamp": datetime.now().isoformat()
-        }
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
-        raise
-    except Exception as e:
-        logging.error("=" * 80)
-        logging.error(f"❌ ERROR in question reset: {str(e)}")
-        logging.error("=" * 80)
-        import traceback
-        logging.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+# Legacy /question-reset endpoint removed - TriviaQuestionsDaily and Trivia tables deleted
+# Use mode-specific question management instead
 
 @router.post("/monthly-reset")
 async def internal_monthly_reset(

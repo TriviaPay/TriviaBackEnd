@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
 from sqlalchemy.orm import Session
 from db import get_db
-from models import User, Avatar, Frame, Badge, CountryCode
+from models import User, Avatar, Frame, TriviaModeConfig
 import logging
 from descope.descope_client import DescopeClient
 from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, STORE_PASSWORD_IN_DESCOPE, STORE_PASSWORD_IN_NEONDB, AWS_DEFAULT_PROFILE_PIC_BASE_URL
@@ -733,12 +733,12 @@ async def get_countries(
     db: Session = Depends(get_db)
 ):
     """
-    Get list of countries and country codes with flags.
+    Get list of countries.
     No authentication required.
-    Returns both a simple country list and detailed country codes with flag URLs.
+    Returns a simple country list.
     """
     try:
-        # Simple country list (for compatibility)
+        # Simple country list
         countries = [
             "United States", "Canada", "United Kingdom", "Australia", "India",
             "Germany", "France", "Japan", "Brazil", "Mexico", "China", "Spain",
@@ -748,23 +748,10 @@ async def get_countries(
             "Indonesia", "Philippines", "Vietnam", "Thailand"
         ]
         
-        # Get all country codes with flags from database
-        country_codes = db.query(CountryCode).order_by(CountryCode.country_name).all()
-        
-        # Format the country codes
-        country_codes_data = []
-        for code in country_codes:
-            country_codes_data.append({
-                "code": code.code,
-                "country_name": code.country_name,
-                "flag_url": code.flag_url,
-                "country_iso": code.country_iso
-            })
-        
         return {
             "status": "success",
             "countries": sorted(countries),
-            "country_codes": country_codes_data
+            "country_codes": []  # Empty array since country_codes table is removed
         }
     except Exception as e:
         logging.error(f"Error fetching countries: {str(e)}")

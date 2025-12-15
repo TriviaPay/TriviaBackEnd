@@ -7,7 +7,7 @@ from sqlalchemy import and_, or_
 from datetime import datetime
 import logging
 
-from models import User, Avatar, Frame, Badge, UserSubscription, SubscriptionPlan
+from models import User, Avatar, Frame, TriviaModeConfig, UserSubscription, SubscriptionPlan
 from utils.storage import presign_get
 
 logger = logging.getLogger(__name__)
@@ -60,15 +60,15 @@ def get_user_chat_profile_data(user: User, db: Session) -> Dict:
             else:
                 logger.debug(f"Frame {frame_obj.id} missing bucket/object_key for user {user.account_id}")
     
-    # Get badge information (achievement badge)
+    # Get badge information (achievement badge) - now from TriviaModeConfig
     badge_info = None
     if user.badge_id:
-        badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
-        if badge:
+        mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user.badge_id).first()
+        if mode_config and mode_config.badge_image_url:
             badge_info = {
-                "id": badge.id,
-                "name": badge.name,
-                "image_url": badge.image_url  # Public URL, no presigning needed
+                "id": mode_config.mode_id,
+                "name": mode_config.mode_name,
+                "image_url": mode_config.badge_image_url  # Public URL, no presigning needed
             }
     
     # Get subscription badges
@@ -88,22 +88,28 @@ def get_user_chat_profile_data(user: User, db: Session) -> Dict:
     ).first()
     
     if bronze_subscription:
-        # Get bronze badge - try multiple possible badge ID patterns or match by name
+        # Get bronze badge from TriviaModeConfig - try multiple possible mode_id patterns or match by name
         bronze_badge = None
         # First try exact matches
-        for badge_id in ['bronze', 'bronze_badge', 'brone_badge', 'brone']:
-            bronze_badge = db.query(Badge).filter(Badge.id == badge_id).first()
+        for mode_id in ['bronze', 'bronze_badge', 'brone_badge', 'brone']:
+            bronze_badge = db.query(TriviaModeConfig).filter(
+                TriviaModeConfig.mode_id == mode_id,
+                TriviaModeConfig.badge_image_url.isnot(None)
+            ).first()
             if bronze_badge:
                 break
         # If not found, try case-insensitive name match
         if not bronze_badge:
-            bronze_badge = db.query(Badge).filter(Badge.name.ilike('%bronze%')).first()
+            bronze_badge = db.query(TriviaModeConfig).filter(
+                TriviaModeConfig.mode_name.ilike('%bronze%'),
+                TriviaModeConfig.badge_image_url.isnot(None)
+            ).first()
         
-        if bronze_badge:
+        if bronze_badge and bronze_badge.badge_image_url:
             subscription_badges.append({
-                "id": bronze_badge.id,
-                "name": bronze_badge.name,
-                "image_url": bronze_badge.image_url,
+                "id": bronze_badge.mode_id,
+                "name": bronze_badge.mode_name,
+                "image_url": bronze_badge.badge_image_url,
                 "subscription_type": "bronze",
                 "price": 5.0
             })
@@ -122,22 +128,28 @@ def get_user_chat_profile_data(user: User, db: Session) -> Dict:
     ).first()
     
     if silver_subscription:
-        # Get silver badge - try multiple possible badge ID patterns or match by name
+        # Get silver badge from TriviaModeConfig - try multiple possible mode_id patterns or match by name
         silver_badge = None
         # First try exact matches
-        for badge_id in ['silver', 'silver_badge']:
-            silver_badge = db.query(Badge).filter(Badge.id == badge_id).first()
+        for mode_id in ['silver', 'silver_badge']:
+            silver_badge = db.query(TriviaModeConfig).filter(
+                TriviaModeConfig.mode_id == mode_id,
+                TriviaModeConfig.badge_image_url.isnot(None)
+            ).first()
             if silver_badge:
                 break
         # If not found, try case-insensitive name match
         if not silver_badge:
-            silver_badge = db.query(Badge).filter(Badge.name.ilike('%silver%')).first()
+            silver_badge = db.query(TriviaModeConfig).filter(
+                TriviaModeConfig.mode_name.ilike('%silver%'),
+                TriviaModeConfig.badge_image_url.isnot(None)
+            ).first()
         
-        if silver_badge:
+        if silver_badge and silver_badge.badge_image_url:
             subscription_badges.append({
-                "id": silver_badge.id,
-                "name": silver_badge.name,
-                "image_url": silver_badge.image_url,
+                "id": silver_badge.mode_id,
+                "name": silver_badge.mode_name,
+                "image_url": silver_badge.badge_image_url,
                 "subscription_type": "silver",
                 "price": 10.0
             })

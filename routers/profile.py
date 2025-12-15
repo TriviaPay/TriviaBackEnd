@@ -9,7 +9,7 @@ import uuid
 import os
 from db import get_db
 from models import (
-    User, Badge, Avatar, Frame, UserSubscription, SubscriptionPlan,
+    User, TriviaModeConfig, Avatar, Frame, UserSubscription, SubscriptionPlan,
     TriviaBronzeModeLeaderboard, TriviaSilverModeLeaderboard
 )
 from utils.storage import presign_get, upload_file, delete_file
@@ -29,6 +29,7 @@ from config import (
 from utils.referrals import get_unique_referral_code
 from utils.user_level_service import get_level_progress
 from utils.trivia_mode_service import get_active_draw_date, get_today_in_app_timezone
+from utils.subscription_service import check_mode_access
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
@@ -40,9 +41,10 @@ def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
     """
     Get badge information for a user (achievement badge).
     Returns badge id, name, and image_url (public S3 URL).
+    Badge functionality is now stored in TriviaModeConfig.
     
     Args:
-        user: User object with badge_id
+        user: User object with badge_id (which now references mode_id)
         db: Database session
         
     Returns:
@@ -51,14 +53,15 @@ def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
     if not user.badge_id:
         return None
     
-    badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
-    if not badge:
+    # badge_id now references mode_id in trivia_mode_config
+    mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user.badge_id).first()
+    if not mode_config or not mode_config.badge_image_url:
         return None
     
     return {
-        "id": badge.id,
-        "name": badge.name,
-        "image_url": badge.image_url  # Public URL, no presigning needed
+        "id": mode_config.mode_id,
+        "name": mode_config.mode_name,
+        "image_url": mode_config.badge_image_url  # Public URL, no presigning needed
     }
 
 
@@ -140,22 +143,28 @@ def get_subscription_badges(user: User, db: Session) -> List[Dict[str, Any]]:
     ).first()
     
     if bronze_subscription:
-        # Get bronze badge - try multiple possible badge ID patterns or match by name
+        # Get bronze badge from trivia_mode_config - try multiple possible mode_id patterns or match by name
         bronze_badge = None
         # First try exact matches
-        for badge_id in ['bronze', 'bronze_badge', 'brone_badge', 'brone']:
-            bronze_badge = db.query(Badge).filter(Badge.id == badge_id).first()
+        for mode_id in ['bronze', 'bronze_badge', 'brone_badge', 'brone']:
+            bronze_badge = db.query(TriviaModeConfig).filter(
+                TriviaModeConfig.mode_id == mode_id,
+                TriviaModeConfig.badge_image_url.isnot(None)
+            ).first()
             if bronze_badge:
                 break
         # If not found, try case-insensitive name match
         if not bronze_badge:
-            bronze_badge = db.query(Badge).filter(Badge.name.ilike('%bronze%')).first()
+            bronze_badge = db.query(TriviaModeConfig).filter(
+                TriviaModeConfig.mode_name.ilike('%bronze%'),
+                TriviaModeConfig.badge_image_url.isnot(None)
+            ).first()
         
-        if bronze_badge:
+        if bronze_badge and bronze_badge.badge_image_url:
             subscription_badges.append({
-                "id": bronze_badge.id,
-                "name": bronze_badge.name,
-                "image_url": bronze_badge.image_url,
+                "id": bronze_badge.mode_id,
+                "name": bronze_badge.mode_name,
+                "image_url": bronze_badge.badge_image_url,
                 "subscription_type": "bronze",
                 "price": 5.0
             })
@@ -174,22 +183,28 @@ def get_subscription_badges(user: User, db: Session) -> List[Dict[str, Any]]:
     ).first()
     
     if silver_subscription:
-        # Get silver badge - try multiple possible badge ID patterns or match by name
+        # Get silver badge from trivia_mode_config - try multiple possible mode_id patterns or match by name
         silver_badge = None
         # First try exact matches
-        for badge_id in ['silver', 'silver_badge']:
-            silver_badge = db.query(Badge).filter(Badge.id == badge_id).first()
+        for mode_id in ['silver', 'silver_badge']:
+            silver_badge = db.query(TriviaModeConfig).filter(
+                TriviaModeConfig.mode_id == mode_id,
+                TriviaModeConfig.badge_image_url.isnot(None)
+            ).first()
             if silver_badge:
                 break
         # If not found, try case-insensitive name match
         if not silver_badge:
-            silver_badge = db.query(Badge).filter(Badge.name.ilike('%silver%')).first()
+            silver_badge = db.query(TriviaModeConfig).filter(
+                TriviaModeConfig.mode_name.ilike('%silver%'),
+                TriviaModeConfig.badge_image_url.isnot(None)
+            ).first()
         
-        if silver_badge:
+        if silver_badge and silver_badge.badge_image_url:
             subscription_badges.append({
-                "id": silver_badge.id,
-                "name": silver_badge.name,
-                "image_url": silver_badge.image_url,
+                "id": silver_badge.mode_id,
+                "name": silver_badge.mode_name,
+                "image_url": silver_badge.badge_image_url,
                 "subscription_type": "silver",
                 "price": 10.0
             })
@@ -810,3 +825,45 @@ async def upload_profile_picture(
             status_code=500,
             detail=f"An error occurred while uploading profile picture: {str(e)}"
         )
+
+
+@router.get("/modes/status", status_code=200)
+async def get_all_modes_status(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get combined subscription status for all 3 modes (free, bronze, silver).
+    Shows which modes the current user has access to.
+    """
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check access for each mode
+    free_mode_access = check_mode_access(db, user, 'free_mode')
+    bronze_mode_access = check_mode_access(db, user, 'bronze')
+    silver_mode_access = check_mode_access(db, user, 'silver')
+    
+    return {
+        'free_mode': {
+            'has_access': free_mode_access['has_access'],
+            'subscription_status': free_mode_access.get('subscription_status', 'not_required'),
+            'subscription_details': free_mode_access.get('subscription_details'),
+            'mode_name': 'Free Mode',
+            'price': 0.0
+        },
+        'bronze_mode': {
+            'has_access': bronze_mode_access['has_access'],
+            'subscription_status': bronze_mode_access.get('subscription_status', 'no_subscription'),
+            'subscription_details': bronze_mode_access.get('subscription_details'),
+            'mode_name': 'Bronze Mode',
+            'price': 5.0
+        },
+        'silver_mode': {
+            'has_access': silver_mode_access['has_access'],
+            'subscription_status': silver_mode_access.get('subscription_status', 'no_subscription'),
+            'subscription_details': silver_mode_access.get('subscription_details'),
+            'mode_name': 'Silver Mode',
+            'price': 10.0
+        }
+    }

@@ -417,7 +417,7 @@ async def get_bronze_mode_leaderboard(
     
     # Get user details with profile information
     from utils.chat_helpers import get_user_chat_profile_data
-    from models import Badge
+    from models import TriviaModeConfig
     
     result = []
     for entry in leaderboard_entries:
@@ -429,9 +429,9 @@ async def get_bronze_mode_leaderboard(
             # Get achievement badge image URL
             badge_image_url = None
             if user_obj.badge_id:
-                badge = db.query(Badge).filter(Badge.id == user_obj.badge_id).first()
-                if badge:
-                    badge_image_url = badge.image_url
+                mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user_obj.badge_id).first()
+                if mode_config and mode_config.badge_image_url:
+                    badge_image_url = mode_config.badge_image_url
             
             result.append({
                 'position': entry.position,

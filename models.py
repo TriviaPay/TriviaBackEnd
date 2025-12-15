@@ -61,8 +61,8 @@ class User(Base):
     # Daily draw eligibility tracking
     daily_eligibility_flag = Column(Boolean, default=False)  # True if user answered all 3 questions correctly today
 
-    # Badge fields
-    badge_id = Column(String, ForeignKey("badges.id"), nullable=True)  # Reference to badge ID
+    # Badge fields - now references trivia_mode_config.mode_id instead of badges.id
+    badge_id = Column(String, ForeignKey("trivia_mode_config.mode_id"), nullable=True)  # Reference to mode_id (badge functionality merged into trivia_mode_config)
 
     # Wallet fields
     wallet_balance = Column(Float, default=0.0)  # Deprecated: use wallet_balance_minor instead
@@ -82,133 +82,25 @@ class User(Base):
     selected_frame_id = Column(String, nullable=True)  # Currently selected frame ID
 
     # Relationships
-    entries = relationship("TriviaQuestionsEntries", back_populates="user")
-    badge_info = relationship("Badge", back_populates="users")
+    # TriviaQuestionsEntries removed - legacy table
+    badge_info = relationship("TriviaModeConfig", foreign_keys=[badge_id], uselist=False)  # Badge functionality merged into TriviaModeConfig
     subscriptions = relationship("UserSubscription", back_populates="user")
-    live_chat_messages = relationship("LiveChatMessage", back_populates="user")
     wallet_transactions = relationship("WalletTransaction", back_populates="user")
     withdrawal_requests = relationship("WithdrawalRequest", foreign_keys="[WithdrawalRequest.user_id]", back_populates="user")
     iap_receipts = relationship("IapReceipt", back_populates="user")
 
 # =================================
-#  Entries Table
+#  Legacy Trivia Tables - REMOVED
 # =================================
-class TriviaQuestionsEntries(Base):
-    __tablename__ = "trivia_questions_entries"
-
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
-    ques_attempted = Column(Integer, nullable=False)
-    correct_answers = Column(Integer, nullable=False)
-    wrong_answers = Column(Integer, nullable=False)
-    date = Column(Date, default=datetime.utcnow().date(), primary_key=True, nullable=False)
-
-    # Relationship
-    user = relationship("User", back_populates="entries")
+# TriviaQuestionsEntries, Trivia, TriviaQuestionsDaily, TriviaUserDaily have been removed
+# The new system uses mode-specific tables:
+# - trivia_questions_free_mode, trivia_questions_bronze_mode, trivia_questions_silver_mode
+# - trivia_questions_free_mode_daily, trivia_questions_bronze_mode_daily, trivia_questions_silver_mode_daily
+# - trivia_user_free_mode_daily, trivia_user_bronze_mode_daily, trivia_user_silver_mode_daily
 
 
-# =================================
-#  Trivia Table
-# =================================
-class Trivia(Base):
-    __tablename__ = "trivia"
-
-    question_number = Column(Integer, primary_key=True)
-    question = Column(String, nullable=False)
-    option_a = Column(String, nullable=False)
-    option_b = Column(String, nullable=False)
-    option_c = Column(String, nullable=False)
-    option_d = Column(String, nullable=False)
-    correct_answer = Column(String, nullable=False)
-    fill_in_answer = Column(String, nullable=True)
-    hint = Column(String, nullable=True)
-    explanation = Column(String, nullable=True)
-    category = Column(String, nullable=False)
-    country = Column(String, nullable=True)
-    difficulty_level = Column(String, nullable=False)
-    picture_url = Column(String, nullable=True)
-    created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    question_done = Column(Boolean, default=False)
-    que_displayed_date = Column(DateTime, nullable=True)
 
 
-# =================================
-#  LiveUpdates Table
-# =================================
-class LiveUpdate(Base):
-    __tablename__ = "liveupdates"
-
-    id = Column(Integer, primary_key=True, index=True)
-    video_url = Column(String, nullable=False)
-    description = Column(String, nullable=True)
-    share_text = Column(String, nullable=True)  # Text for sharing
-    app_link = Column(String, nullable=True)    # App link for sharing
-    created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-
-# =================================
-#  New: Updates Table
-# =================================
-class UpdatePost(Base):
-    """
-    Based on your first image:
-    picture_url, post_id, post_date, description, likes, shares
-    """
-    __tablename__ = "updates"
-
-    post_id = Column(Integer, primary_key=True, index=True)
-    picture_url = Column(String, nullable=True)
-    post_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    description = Column(String, nullable=True)
-    likes = Column(Integer, default=0)
-    shares = Column(Integer, default=0)
-
-
-# =================================
-#  New: Comments Table
-# =================================
-class Comment(Base):
-    """
-    post_id, account_id, comment, date, likes
-    Possibly relationships to UpdatePost (post_id) and User (account_id).
-    """
-    __tablename__ = "comments"
-
-    id = Column(Integer, primary_key=True, index=True)
-    post_id = Column(Integer, ForeignKey("updates.post_id"), nullable=False)
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    comment = Column(String, nullable=False)
-    date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    likes = Column(Integer, default=0)
-
-    # Relationships (optional, if you want them)
-    post = relationship("UpdatePost", backref="comments")
-    user = relationship("User", backref="comments")
-
-
-# =================================
-#  New: Chats Table
-# =================================
-class Chat(Base):
-    """
-    sender_account_id, receiver_account_id, message, message_id,
-    sent_at, request_type, request_status, request_responded_at
-    """
-    __tablename__ = "chats"
-
-    message_id = Column(Integer, primary_key=True, index=True)
-    sender_account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    receiver_account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    message = Column(String, nullable=True)
-    sent_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-    request_type = Column(String, nullable=True)
-    # request_status: 'pending', 'accepted', 'declined', 'blocked'
-    request_status = Column(String, nullable=True)
-    request_responded_at = Column(DateTime, nullable=True)
-
-    # Optionally define relationships to user
-    sender = relationship("User", foreign_keys=[sender_account_id], backref="sent_chats")
-    receiver = relationship("User", foreign_keys=[receiver_account_id], backref="received_chats")
 
 
 # =================================
@@ -230,67 +122,14 @@ class Withdrawal(Base):
     processed_at = Column(DateTime, nullable=True)
 
     # Relationship to user if desired
+    # Note: Withdrawal table is legacy - use WithdrawalRequest instead
     user = relationship("User", backref="withdrawals")
 
 # =================================
-#  Daily Questions Table
+#  Legacy Daily Questions Tables - REMOVED
 # =================================
-class TriviaQuestionsDaily(Base):
-    """Shared daily questions pool (0-4 questions per day for all users)"""
-    __tablename__ = "trivia_questions_daily"
-
-    id = Column(Integer, primary_key=True, index=True)
-    date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
-    question_order = Column(Integer, nullable=False)  # 1-4 for ordering
-    is_common = Column(Boolean, default=False)  # True for first question (free for all)
-    is_used = Column(Boolean, default=False)  # True if ANY user has viewed/unlocked this question
-    
-    # Relationships
-    question = relationship("Trivia", backref="daily_allocations")
-    __table_args__ = (
-        UniqueConstraint('date', 'question_order', name='uq_daily_question_order'),
-        UniqueConstraint('date', 'question_number', name='uq_daily_question_number'),
-    )
-
-# =================================
-#  User Daily Questions Table (Unlocks + Attempts)
-# =================================
-class UnlockMethod(PyEnum):
-    FREE = 'free'
-    GEMS = 'gems'
-    USD = 'usd'
-
-class QuestionStatus(PyEnum):
-    LOCKED = 'locked'
-    VIEWED = 'viewed'
-    ANSWERED_WRONG = 'answered_wrong'
-    ANSWERED_CORRECT = 'answered_correct'
-    SKIPPED = 'skipped'
-
-class TriviaUserDaily(Base):
-    """Per-user, per-day, per-question unlocks and attempts"""
-    __tablename__ = "trivia_user_daily"
-
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
-    date = Column(Date, primary_key=True, nullable=False)
-    question_order = Column(Integer, primary_key=True, nullable=False)  # 1-4
-    
-    question_number = Column(Integer, ForeignKey("trivia.question_number"), nullable=False)
-    unlock_method = Column(String, nullable=True)  # 'free', 'gems', 'usd' - NULL = not unlocked
-    viewed_at = Column(DateTime, nullable=True)  # When user unlocked/viewed
-    user_answer = Column(String, nullable=True)  # User's submitted answer
-    is_correct = Column(Boolean, nullable=True)  # Whether answer was correct
-    answered_at = Column(DateTime, nullable=True)  # When user answered
-    status = Column(String, nullable=False, default='locked')  # locked, viewed, answered_wrong, answered_correct, skipped
-    retry_count = Column(Integer, default=0, nullable=False)
-    
-    # Relationships
-    user = relationship("User", backref="daily_user_questions")
-    question = relationship("Trivia", backref="user_daily_attempts")
-    __table_args__ = (
-        UniqueConstraint('account_id', 'date', 'question_order', name='uq_user_daily_question'),
-    )
+# TriviaQuestionsDaily and TriviaUserDaily have been removed
+# Use mode-specific daily tables instead
 
 # =================================
 #  Daily Login Rewards Table
@@ -418,71 +257,20 @@ class UserFrame(Base):
     )
 
 # =================================
-#  Badge Table
+#  Badge Table - REMOVED
 # =================================
-class Badge(Base):
-    """
-    Badge model for user achievement badges.
-    
-    Note: image_url should contain a PUBLIC S3 URL (not presigned).
-    Badges are shared assets (only 4 total), so they should be publicly accessible
-    to avoid unnecessary presigned URL generation and expiration.
-    
-    Example URL format: https://triviapay-assets.s3.us-east-2.amazonaws.com/badges/bronze.png
-    """
-    __tablename__ = "badges"
-    
-    id = Column(String, primary_key=True, index=True)  # Unique ID for the badge (e.g., "bronze", "silver", "gold")
-    name = Column(String, nullable=False)  # Display name
-    description = Column(String, nullable=True)  # Description of the badge
-    image_url = Column(String, nullable=False)  # Public S3 URL to the badge image (not presigned)
-    level = Column(Integer, nullable=False)  # Numeric level (for ordering, e.g., 1 for bronze, 2 for silver)
-    product_id = Column(String(5), unique=True, nullable=True)  # Unique product ID (e.g., BD001)
-    price_minor = Column(BigInteger, nullable=True)  # Price in minor units (cents)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When the badge was added
-    
-    @property
-    def price_usd(self):
-        """Compute price_usd from price_minor"""
-        if self.price_minor is not None:
-            return self.price_minor / 100.0
-        return None
-    
-    # Relationships
-    users = relationship("User", back_populates="badge_info")
+# Badge functionality has been merged into TriviaModeConfig
+# Use TriviaModeConfig with badge_* fields instead
 
 # =================================
-#  Trivia Draw Configuration
+#  Trivia Draw Configuration - REMOVED (LEGACY)
 # =================================
-class TriviaDrawConfig(Base):
-    __tablename__ = "winners_draw_config"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    is_custom = Column(Boolean, default=False)  # Whether using custom winner count
-    custom_winner_count = Column(Integer, nullable=True)  # Custom number of winners
-    custom_data = Column(String, nullable=True)  # JSON string for additional configuration
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-# =================================
-#  Trivia Draw Winners Table
-# =================================
-class TriviaQuestionsWinners(Base):
-    __tablename__ = "winners_draw_results"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    prize_amount = Column(Float, nullable=False)
-    position = Column(Integer, nullable=False)  # Winner position (1st, 2nd, etc.)
-    draw_date = Column(Date, nullable=False)  # Date of the draw
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationship
-    user = relationship("User", backref="trivia_draw_wins")
-
-# =================================
-#  Draw Configuration Table
-# =================================
+# TriviaDrawConfig and TriviaQuestionsWinners have been removed as legacy
+# The new system uses mode-specific winner tables:
+# - TriviaFreeModeWinners
+# - TriviaBronzeModeWinners  
+# - TriviaSilverModeWinners
+# Draw configuration is now handled per-mode via TriviaModeConfig.reward_distribution
 
 # =================================
 #  Gem Package Configuration
@@ -511,18 +299,6 @@ class GemPackageConfig(Base):
 
 
 # =================================
-#  Boost Configuration
-# =================================
-class BoostConfig(Base):
-    __tablename__ = "boost_config"
-    
-    boost_type = Column(String, primary_key=True, index=True)  # e.g. "fifty_fifty", "hint", etc.
-    gems_cost = Column(Integer, nullable=False)
-    description = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-# =================================
 #  User Gem Purchases
 # =================================
 class UserGemPurchase(Base):
@@ -539,28 +315,7 @@ class UserGemPurchase(Base):
     user = relationship("User", backref="gem_purchases")
     package = relationship("GemPackageConfig", backref="purchases")
 
-# =================================
-#  Letters Table
-# =================================
-class Letter(Base):
-    __tablename__ = "letters"
-    
-    letter = Column(String, primary_key=True)
-    image_url = Column(String, nullable=False)
 
-# =================================
-#  Country Codes Table
-# =================================
-class CountryCode(Base):
-    __tablename__ = "country_codes"
-    
-    # Create a composite primary key since some country codes (like +1) are shared by multiple countries
-    code = Column(String, primary_key=True)  # Country calling code (e.g., +1, +44)
-    country_iso = Column(String, primary_key=True)  # ISO code (e.g., US, GB)
-    
-    country_name = Column(String, nullable=False)
-    flag_url = Column(String, nullable=True)  # URL to the country flag image
-    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 # =================================
@@ -629,83 +384,6 @@ class CompanyRevenue(Base):
     subscriber_count = Column(Integer, nullable=False)  # Number of subscribers that month
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
-# =================================
-#  Live Chat Session Table
-# =================================
-class LiveChatSession(Base):
-    __tablename__ = "live_chat_sessions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    session_name = Column(String, nullable=False)  # e.g., "Today's Winners Chat"
-    start_time = Column(DateTime, nullable=False)
-    end_time = Column(DateTime, nullable=False)
-    is_active = Column(Boolean, default=True)
-    viewer_count = Column(Integer, default=0)
-    total_likes = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationships - using back_populates to match existing pattern
-    messages = relationship("LiveChatMessage", back_populates="session")
-
-# =================================
-#  Live Chat Messages Table
-# =================================
-class LiveChatMessage(Base):
-    __tablename__ = "live_chat_messages"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(Integer, ForeignKey("live_chat_sessions.id"), nullable=False)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    message = Column(String, nullable=False)
-    message_type = Column(String, default="text")  # "text", "system", "announcement"
-    likes = Column(Integer, default=0)
-    client_message_id = Column(String, nullable=True)  # Optional client-provided ID for idempotency
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationships - using back_populates to match existing pattern
-    session = relationship("LiveChatSession", back_populates="messages")
-    user = relationship("User", back_populates="live_chat_messages")
-    
-    # Note: Unique constraint is created via migration script as a partial index
-    # to allow NULL values while enforcing uniqueness when client_message_id is provided
-    # __table_args__ = (
-    #     UniqueConstraint('session_id', 'user_id', 'client_message_id', name='uq_client_message_id'),
-    # )
-
-# =================================
-#  Live Chat Likes Table
-# =================================
-class LiveChatLike(Base):
-    __tablename__ = "live_chat_likes"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(Integer, ForeignKey("live_chat_sessions.id"), nullable=False)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    message_id = Column(Integer, ForeignKey("live_chat_messages.id"), nullable=True)  # Null for session likes
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationships - using backref to match existing pattern
-    session = relationship("LiveChatSession", backref="session_likes")
-    user = relationship("User", backref="live_chat_likes")
-    message = relationship("LiveChatMessage", backref="message_likes")
-
-# =================================
-#  Live Chat Viewers Table
-# =================================
-class LiveChatViewer(Base):
-    __tablename__ = "live_chat_viewers"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(Integer, ForeignKey("live_chat_sessions.id"), nullable=False)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    joined_at = Column(DateTime, default=datetime.utcnow)
-    last_seen = Column(DateTime, default=datetime.utcnow)
-    is_active = Column(Boolean, default=True)
-    
-    # Relationships - using backref to match existing pattern
-    session = relationship("LiveChatSession", backref="session_viewers")
-    user = relationship("User", backref="live_chat_viewers")
 
 # =================================
 #  Blocks Table
@@ -1080,8 +758,21 @@ class TriviaModeConfig(Base):
     leaderboard_types = Column(Text, nullable=False)  # JSON array string
     ad_config = Column(Text, nullable=True)  # JSON string
     survey_config = Column(Text, nullable=True)  # JSON string
+    # Badge fields (merged from badges table)
+    badge_image_url = Column(String, nullable=True)  # Public S3 URL to the badge image
+    badge_description = Column(String, nullable=True)  # Description of the badge
+    badge_level = Column(Integer, nullable=True)  # Numeric level (for ordering, e.g., 1 for bronze, 2 for silver)
+    badge_product_id = Column(String(5), unique=True, nullable=True)  # Unique product ID (e.g., BD001)
+    badge_price_minor = Column(BigInteger, nullable=True)  # Price in minor units (cents)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    @property
+    def badge_price_usd(self):
+        """Compute badge_price_usd from badge_price_minor"""
+        if self.badge_price_minor is not None:
+            return self.badge_price_minor / 100.0
+        return None
 
 # =================================
 #  Free Mode Questions Table

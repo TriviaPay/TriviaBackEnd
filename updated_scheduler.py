@@ -6,11 +6,13 @@ from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, Integer, cast, select
 from db import SessionLocal
-from rewards_logic import perform_draw, reset_daily_eligibility_flags, reset_weekly_daily_rewards
-from cleanup_unused_questions import cleanup_unused_questions
+from rewards_logic import reset_daily_eligibility_flags, reset_weekly_daily_rewards
+# Legacy cleanup_unused_questions removed - TriviaQuestionsDaily and Trivia tables deleted
+# Legacy perform_draw removed - use mode-specific draws instead
 from models import (
-    User, TriviaQuestionsDaily, TriviaQuestionsWinners, UserSubscription, TriviaUserDaily, TriviaQuestionsEntries
+    User, UserSubscription
 )
+# Legacy tables removed: TriviaQuestionsDaily, TriviaQuestionsWinners, TriviaUserDaily, TriviaQuestionsEntries
 from models import (
     TriviaModeConfig, TriviaQuestionsFreeMode, TriviaQuestionsFreeModeDaily, TriviaFreeModeWinners,
     TriviaQuestionsBronzeMode, TriviaQuestionsBronzeModeDaily, TriviaBronzeModeWinners,
@@ -40,9 +42,12 @@ logger = logging.getLogger(__name__)
 # Global scheduler instance
 scheduler = AsyncIOScheduler()
 
+# Legacy get_detailed_draw_metrics removed - uses TriviaUserDaily, TriviaQuestionsWinners (deleted)
+# Legacy get_detailed_draw_metrics removed - uses TriviaUserDaily and TriviaQuestionsWinners (deleted)
 def get_detailed_draw_metrics(db: Session, draw_date: date) -> dict:
     """
-    Get comprehensive metrics for the draw including participant breakdowns.
+    Get basic metrics for the draw.
+    Legacy tables removed - returns basic metrics only.
     """
     try:
         # Total users in system
@@ -51,198 +56,33 @@ def get_detailed_draw_metrics(db: Session, draw_date: date) -> dict:
         # Users with subscription flag
         subscribed_users = db.query(User).filter(User.subscription_flag == True).count()
         
-        # Users eligible for draw (answered at least 1 question correctly on draw_date)
-        # This should match the logic in get_eligible_participants()
-        eligible_users = db.query(
-            func.count(func.distinct(User.account_id))
-        ).join(
-            TriviaUserDaily,
-            and_(
-                TriviaUserDaily.account_id == User.account_id,
-                TriviaUserDaily.date == draw_date,
-                TriviaUserDaily.status == 'answered_correct'
-            )
-        ).filter(
-            User.subscription_flag == True
-        ).scalar() or 0
-        
-        # Users who attempted questions on draw_date (using TriviaUserDaily)
-        # Count distinct users who attempted at least one question
-        attempted_users = db.query(
-            func.count(func.distinct(TriviaUserDaily.account_id))
-        ).filter(
-            TriviaUserDaily.date == draw_date,
-            TriviaUserDaily.status.in_(['answered_correct', 'answered_wrong', 'viewed'])
-        ).scalar() or 0
-        
-        # Users who answered all questions correctly (assumes max 4 questions per day)
-        # Count users who have exactly 4 correct answers (or check if all their questions are correct)
-        users_with_correct = db.query(
-            TriviaUserDaily.account_id,
-            func.count(TriviaUserDaily.account_id).label('correct_count'),
-            func.count(func.distinct(TriviaUserDaily.question_order)).label('total_attempted')
-        ).filter(
-            TriviaUserDaily.date == draw_date,
-            TriviaUserDaily.status == 'answered_correct'
-        ).group_by(TriviaUserDaily.account_id).all()
-        
-        correct_all_questions = sum(
-            1 for _, correct_count, total_attempted in users_with_correct
-            if correct_count >= 4  # Answered all 4 questions correctly
-        )
-        
-        # Users who answered some questions correctly (at least 1)
-        correct_some_questions = db.query(
-            func.count(func.distinct(TriviaUserDaily.account_id))
-        ).filter(
-            TriviaUserDaily.date == draw_date,
-            TriviaUserDaily.status == 'answered_correct'
-        ).scalar() or 0
-        
-        # Users who answered all questions incorrectly
-        # Count users who attempted questions but got 0 correct answers on draw_date
-        # Approach: Get all users who attempted, then subtract users who got at least one correct
-        all_users_who_attempted = set(
-            row[0] for row in db.query(
-                func.distinct(TriviaUserDaily.account_id)
-            ).filter(
-                TriviaUserDaily.date == draw_date,
-                TriviaUserDaily.status.in_(['answered_correct', 'answered_wrong'])
-            ).all()
-        )
-        
-        users_who_got_correct = set(
-            row[0] for row in db.query(
-                func.distinct(TriviaUserDaily.account_id)
-            ).filter(
-                TriviaUserDaily.date == draw_date,
-                TriviaUserDaily.status == 'answered_correct'
-            ).all()
-        )
-        
-        # Users who attempted but got no correct answers
-        incorrect_all_questions = len(all_users_who_attempted - users_who_got_correct)
-        
-        # Combination metrics (based on actual draw_date data)
-        # Eligible AND subscribed (this is what get_eligible_participants returns)
-        eligible_and_subscribed = db.query(
-            func.count(func.distinct(User.account_id))
-        ).join(
-            TriviaUserDaily,
-            and_(
-                TriviaUserDaily.account_id == User.account_id,
-                TriviaUserDaily.date == draw_date,
-                TriviaUserDaily.status == 'answered_correct'
-            )
-        ).filter(
-            User.subscription_flag == True
-        ).scalar() or 0
-        
-        # Eligible but NOT subscribed (answered correctly but not subscribed)
-        eligible_not_subscribed = db.query(
-            func.count(func.distinct(User.account_id))
-        ).join(
-            TriviaUserDaily,
-            and_(
-                TriviaUserDaily.account_id == User.account_id,
-                TriviaUserDaily.date == draw_date,
-                TriviaUserDaily.status == 'answered_correct'
-            )
-        ).filter(
-            User.subscription_flag == False
-        ).scalar() or 0
-        
-        # Question attempt metrics (using TriviaUserDaily)
-        total_question_attempts = db.query(TriviaUserDaily).filter(
-            TriviaUserDaily.date == draw_date,
-            TriviaUserDaily.status.in_(['answered_correct', 'answered_wrong'])
-        ).count()
-        
-        correct_attempts = db.query(TriviaUserDaily).filter(
-            TriviaUserDaily.date == draw_date,
-            TriviaUserDaily.status == 'answered_correct'
-        ).count()
-        
-        incorrect_attempts = db.query(TriviaUserDaily).filter(
-            TriviaUserDaily.date == draw_date,
-            TriviaUserDaily.status == 'answered_wrong'
-        ).count()
-        
-        # Calculate accuracy rate
-        accuracy_rate = (correct_attempts / total_question_attempts * 100) if total_question_attempts > 0 else 0
-        
-        # Check if draw already exists
-        existing_draw = db.query(TriviaQuestionsWinners).filter(
-            TriviaQuestionsWinners.draw_date == draw_date
-        ).first()
-        
         return {
             "draw_date": draw_date.isoformat(),
             "total_users_in_system": total_users,
             "subscribed_users": subscribed_users,
-            "eligible_users": eligible_users,
-            "attempted_users": attempted_users,
-            "correct_all_questions": correct_all_questions,
-            "correct_some_questions": correct_some_questions,
-            "incorrect_all_questions": incorrect_all_questions,
-            "eligible_and_subscribed": eligible_and_subscribed,
-            "eligible_not_subscribed": eligible_not_subscribed,
-            "total_question_attempts": total_question_attempts,
-            "correct_attempts": correct_attempts,
-            "incorrect_attempts": incorrect_attempts,
-            "accuracy_rate_percent": round(accuracy_rate, 2),
-            "draw_already_performed": existing_draw is not None,
+            "note": "Legacy draw metrics removed - TriviaUserDaily and TriviaQuestionsWinners tables deleted",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         logger.error(f"Error getting detailed draw metrics: {str(e)}")
         return {"error": str(e)}
 
+# Legacy get_detailed_reset_metrics removed - uses TriviaQuestionsDaily and TriviaUserDaily (deleted)
 def get_detailed_reset_metrics(db: Session) -> dict:
     """
     Get comprehensive metrics for the question reset process.
+    Legacy tables removed - returns basic metrics only.
     """
     try:
         # Count users with eligibility flags before reset
         users_with_eligibility_before = db.query(User).filter(User.daily_eligibility_flag == True).count()
         
-        # Count total questions allocated today
         today = date.today()
-        questions_allocated_today = db.query(TriviaQuestionsDaily).filter(
-            TriviaQuestionsDaily.date >= datetime.combine(today, datetime.min.time()),
-            TriviaQuestionsDaily.date < datetime.combine(today + timedelta(days=1), datetime.min.time())
-        ).count()
-        
-        # Count questions attempted today (using TriviaUserDaily)
-        questions_attempted_today = db.query(TriviaUserDaily).filter(
-            TriviaUserDaily.date == today,
-            TriviaUserDaily.status.in_(['answered_correct', 'answered_wrong', 'viewed'])
-        ).count()
-        
-        # Count questions answered correctly today
-        questions_correct_today = db.query(TriviaUserDaily).filter(
-            TriviaUserDaily.date == today,
-            TriviaUserDaily.status == 'answered_correct'
-        ).count()
-        
-        # Count questions answered incorrectly today
-        questions_incorrect_today = db.query(TriviaUserDaily).filter(
-            TriviaUserDaily.date == today,
-            TriviaUserDaily.status == 'answered_wrong'
-        ).count()
-        
-        # Count unused questions (allocated but not attempted)
-        unused_questions = questions_allocated_today - questions_attempted_today
         
         return {
             "reset_date": today.isoformat(),
             "users_with_eligibility_before_reset": users_with_eligibility_before,
-            "questions_allocated_today": questions_allocated_today,
-            "questions_attempted_today": questions_attempted_today,
-            "questions_correct_today": questions_correct_today,
-            "questions_incorrect_today": questions_incorrect_today,
-            "unused_questions": unused_questions,
-            "questions_utilization_rate": round((questions_attempted_today / questions_allocated_today * 100), 2) if questions_allocated_today > 0 else 0,
+            "note": "Legacy question metrics removed - TriviaQuestionsDaily and TriviaUserDaily tables deleted",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -316,23 +156,8 @@ def schedule_draws():
     logger.info(f"Scheduling daily draw at {hour}:{minute} {timezone}")
     logger.info(f"Question reset at {hour}:{minute+1} {timezone}")
     
-    # Schedule the daily draw job (process yesterday's draw)
-    scheduler.add_job(
-        run_daily_draw,
-        CronTrigger(hour=hour, minute=minute, timezone=timezone),
-        id="daily_draw",
-        replace_existing=True,
-        misfire_grace_time=3600  # Allow the job to run up to 1 hour late
-    )
-    
-    # Schedule question reset job (1 minute after draw)
-    scheduler.add_job(
-        reset_daily_questions,
-        CronTrigger(hour=hour, minute=minute+1, timezone=timezone),
-        id="question_reset",
-        replace_existing=True,
-        misfire_grace_time=3600
-    )
+    # Legacy daily draw and question reset jobs removed - use mode-specific draws instead
+    # Legacy tables (TriviaQuestionsDaily, TriviaUserDaily, Trivia, TriviaQuestionsEntries) deleted
     
     # Schedule monthly subscription reset job (11:59 PM EST on last day of each month)
     scheduler.add_job(
@@ -388,114 +213,11 @@ def schedule_draws():
         misfire_grace_time=3600
     )
 
-async def run_daily_draw():
-    """
-    Process yesterday's draw at 8:00 PM EST.
-    This processes the draw for users who answered questions correctly
-    from 8:01 PM yesterday to 8:00 PM today.
-    """
-    try:
-        logger.info(f"🎯 Starting daily draw at {datetime.now()}")
-        db: Session = SessionLocal()
-        
-        try:
-            # Process yesterday's draw
-            yesterday = date.today() - timedelta(days=1)
-            
-            # Get detailed metrics before performing draw
-            logger.info("📊 Collecting detailed draw metrics...")
-            metrics = get_detailed_draw_metrics(db, yesterday)
-            
-            # Log comprehensive metrics
-            logger.info("=" * 80)
-            logger.info("📈 DAILY DRAW METRICS")
-            logger.info("=" * 80)
-            logger.info(f"📅 Draw Date: {metrics['draw_date']}")
-            logger.info(f"👥 Total Users in System: {metrics['total_users_in_system']}")
-            logger.info(f"💎 Subscribed Users: {metrics['subscribed_users']}")
-            logger.info(f"✅ Eligible Users (answered all correctly): {metrics['eligible_users']}")
-            logger.info(f"🎯 Attempted Users: {metrics['attempted_users']}")
-            logger.info(f"🏆 Correct All Questions: {metrics['correct_all_questions']}")
-            logger.info(f"📝 Correct Some Questions: {metrics['correct_some_questions']}")
-            logger.info(f"❌ Incorrect All Questions: {metrics['incorrect_all_questions']}")
-            logger.info(f"💎✅ Eligible AND Subscribed: {metrics['eligible_and_subscribed']}")
-            logger.info(f"✅💎 Eligible NOT Subscribed: {metrics['eligible_not_subscribed']}")
-            logger.info(f"📊 Total Question Attempts: {metrics['total_question_attempts']}")
-            logger.info(f"✅ Correct Attempts: {metrics['correct_attempts']}")
-            logger.info(f"❌ Incorrect Attempts: {metrics['incorrect_attempts']}")
-            logger.info(f"📈 Accuracy Rate: {metrics['accuracy_rate_percent']}%")
-            logger.info(f"🔄 Draw Already Performed: {metrics['draw_already_performed']}")
-            logger.info("=" * 80)
-            
-            # Perform the actual draw
-            logger.info("🎲 Performing draw...")
-            result = perform_draw(db, yesterday)
-            
-            if result["status"] == "success":
-                logger.info("🎉 DRAW COMPLETED SUCCESSFULLY!")
-                logger.info(f"🏆 Winners Selected: {result['total_winners']}")
-                logger.info(f"👥 Total Participants: {result['total_participants']}")
-                logger.info(f"💰 Prize Pool: ${result['prize_pool']}")
-                logger.info(f"📊 Winner Distribution:")
-                for i, winner in enumerate(result.get('winners', []), 1):
-                    logger.info(f"   {i}. {winner.get('username', 'Unknown')} - ${winner.get('prize_amount', 0)}")
-            else:
-                logger.warning(f"⚠️ Draw result: {result['status']} - {result.get('message', '')}")
-                
-        except Exception as db_error:
-            logger.error(f"💥 Database error during draw: {str(db_error)}")
-        finally:
-            db.close()
-        
-    except Exception as e:
-        logger.error(f"💥 Error running daily draw: {str(e)}")
+# Legacy run_daily_draw removed - uses perform_draw which requires TriviaQuestionsWinners (deleted)
+# Use mode-specific draw functions instead (run_free_mode_draw, run_bronze_mode_draw, etc.)
 
-async def reset_daily_questions():
-    """
-    Reset daily questions at draw time + 1 minute (default 6:01 PM EST).
-    This makes new questions available for the next 24-hour period.
-    The reset time is automatically set to 1 minute after the configured draw time.
-    """
-    try:
-        logger.info(f"🔄 Starting daily question reset at {datetime.now()}")
-        db: Session = SessionLocal()
-        
-        try:
-            # Get detailed metrics before reset
-            logger.info("📊 Collecting detailed reset metrics...")
-            metrics = get_detailed_reset_metrics(db)
-            
-            # Log comprehensive metrics
-            logger.info("=" * 80)
-            logger.info("🔄 DAILY QUESTION RESET METRICS")
-            logger.info("=" * 80)
-            logger.info(f"📅 Reset Date: {metrics['reset_date']}")
-            logger.info(f"✅ Users with Eligibility Before Reset: {metrics['users_with_eligibility_before_reset']}")
-            logger.info(f"📝 Questions Allocated Today: {metrics['questions_allocated_today']}")
-            logger.info(f"🎯 Questions Attempted Today: {metrics['questions_attempted_today']}")
-            logger.info(f"✅ Questions Correct Today: {metrics['questions_correct_today']}")
-            logger.info(f"❌ Questions Incorrect Today: {metrics['questions_incorrect_today']}")
-            logger.info(f"📊 Unused Questions: {metrics['unused_questions']}")
-            logger.info(f"📈 Questions Utilization Rate: {metrics['questions_utilization_rate']}%")
-            logger.info("=" * 80)
-            
-            # Clean up unused questions from today
-            logger.info("🧹 Cleaning up unused questions...")
-            cleanup_unused_questions()
-            
-            # Reset eligibility flags for new day
-            logger.info("🔄 Resetting eligibility flags...")
-            reset_daily_eligibility_flags(db)
-            
-            logger.info("✅ Successfully completed daily question reset!")
-            
-        except Exception as e:
-            logger.error(f"💥 Error during question reset: {e}")
-        finally:
-            db.close()
-        
-    except Exception as e:
-        logger.error(f"💥 Error resetting daily questions: {str(e)}")
+# Legacy reset_daily_questions removed - uses TriviaQuestionsDaily and Trivia tables (deleted)
+# Use mode-specific question allocation instead (allocate_free_mode_questions, allocate_bronze_mode_questions, etc.)
 
 async def run_monthly_subscription_reset():
     """

@@ -9,11 +9,11 @@ import logging
 
 from db import get_db
 from models import (
-    TriviaQuestionsWinners, User, TriviaDrawConfig, TriviaModeConfig, SubscriptionPlan, UserSubscription,
-    GemPackageConfig, BoostConfig, Badge, Avatar, Frame, UserAvatar, UserFrame
+    User, TriviaModeConfig, SubscriptionPlan, UserSubscription,
+    GemPackageConfig, Avatar, Frame, UserAvatar, UserFrame
 )
 from routers.dependencies import get_admin_user, get_current_user, verify_admin
-from rewards_logic import perform_draw
+# Legacy perform_draw removed - use mode-specific draws instead
 from utils.question_upload_service import parse_csv_questions, save_questions_to_mode
 from utils.free_mode_rewards import (
     get_eligible_participants_free_mode, rank_participants_by_completion,
@@ -96,21 +96,6 @@ class GemPackageResponse(BaseModel):
     class Config:
         from_attributes = True
 
-class BoostConfigRequest(BaseModel):
-    boost_type: str = Field(..., description="Type of boost")
-    gems_cost: int = Field(..., description="Cost in gems")
-    description: Optional[str] = Field(None, description="Description of the boost")
-
-class BoostConfigResponse(BaseModel):
-    boost_type: str
-    gems_cost: int
-    description: Optional[str]
-    created_at: datetime
-    updated_at: datetime
-    
-    class Config:
-        from_attributes = True
-
 # ======== Badges Admin Models ========
 class BadgeBase(BaseModel):
     name: str
@@ -119,13 +104,13 @@ class BadgeBase(BaseModel):
     level: int
 
 class BadgeCreate(BadgeBase):
-    id: Optional[str] = None
+    id: Optional[str] = None  # This will be mode_id in TriviaModeConfig
 
 class BadgeUpdate(BadgeBase):
     pass
 
 class BadgeResponse(BadgeBase):
-    id: str
+    id: str  # This is mode_id
     created_at: datetime
     
     class Config:
@@ -172,175 +157,10 @@ class BulkImportResponse(BaseModel):
     imported_count: int
     errors: List[str] = []
 
-@router.get("/draw-config", response_model=DrawConfigResponse)
-async def get_draw_config(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_admin_user)
-):
-    """
-    Admin endpoint to get the current draw configuration.
-    """
-    try:
-        logging.info("Getting draw config from admin.py endpoint")
-        config = db.query(TriviaDrawConfig).first()
-        if not config:
-            config = TriviaDrawConfig(
-                is_custom=False,
-                custom_winner_count=None
-            )
-            db.add(config)
-            db.commit()
-            db.refresh(config)
-            logging.info("Created new default config")
-        
-        logging.info(f"Current config: is_custom={config.is_custom}, custom_winner_count={config.custom_winner_count}")
-        
-        # Get draw time from environment variables
-        draw_time_hour = int(os.environ.get("DRAW_TIME_HOUR", "20"))
-        draw_time_minute = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
-        draw_timezone = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
-        
-        return DrawConfigResponse(
-            is_custom=config.is_custom,
-            custom_winner_count=config.custom_winner_count,
-            draw_time_hour=draw_time_hour,
-            draw_time_minute=draw_time_minute,
-            draw_timezone=draw_timezone
-        )
-        
-    except Exception as e:
-        logging.error(f"Error getting draw configuration: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error getting draw configuration: {str(e)}"
-        )
-
-@router.put("/draw-config", response_model=DrawConfigResponse, operation_id="admin_update_draw_config")
-async def update_draw_config(
-    config: DrawConfigUpdateRequest,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_admin_user)
-):
-    """
-    Admin endpoint to update the draw configuration.
-    """
-    try:
-        logging.info(f"Updating draw config: {config}")
-        # Validate timezone if provided
-        if config.draw_timezone:
-            try:
-                pytz.timezone(config.draw_timezone)
-            except pytz.exceptions.UnknownTimeZoneError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid timezone: {config.draw_timezone}"
-                )
-        
-        # Get or create config in database
-        db_config = db.query(TriviaDrawConfig).first()
-        if not db_config:
-            db_config = TriviaDrawConfig(
-                is_custom=False,
-                custom_winner_count=None
-            )
-            db.add(db_config)
-            logging.info("Created new config")
-        
-        # Update database config
-        if config.is_custom is not None:
-            db_config.is_custom = config.is_custom
-        
-        if config.custom_winner_count is not None:
-            db_config.custom_winner_count = config.custom_winner_count
-        
-        # Update environment variables for draw time
-        if config.draw_time_hour is not None:
-            os.environ["DRAW_TIME_HOUR"] = str(config.draw_time_hour)
-        
-        if config.draw_time_minute is not None:
-            os.environ["DRAW_TIME_MINUTE"] = str(config.draw_time_minute)
-        
-        if config.draw_timezone:
-            os.environ["DRAW_TIMEZONE"] = config.draw_timezone
-        
-        db.commit()
-        db.refresh(db_config)
-        logging.info(f"Updated config: is_custom={db_config.is_custom}, custom_winner_count={db_config.custom_winner_count}")
-        
-        # Get current values for response
-        draw_time_hour = int(os.environ.get("DRAW_TIME_HOUR", "20"))
-        draw_time_minute = int(os.environ.get("DRAW_TIME_MINUTE", "0"))
-        draw_timezone = os.environ.get("DRAW_TIMEZONE", "US/Eastern")
-        
-        return DrawConfigResponse(
-            is_custom=db_config.is_custom,
-            custom_winner_count=db_config.custom_winner_count,
-            draw_time_hour=draw_time_hour,
-            draw_time_minute=draw_time_minute,
-            draw_timezone=draw_timezone
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logging.error(f"Error updating draw configuration: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating draw configuration: {str(e)}"
-        )
-
-@router.post("/trigger-draw", response_model=DrawResponse, operation_id="admin_trigger_draw")
-async def trigger_draw(
-    draw_date: date = Body(..., embed=True),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_admin_user)
-):
-    """
-    Admin endpoint to manually trigger a draw for a specific date.
-    """
-    try:
-        # If no date provided, use today's date
-        if draw_date is None:
-            draw_date = date.today()
-            
-        # Check if a draw has already been performed for this date
-        existing_draw = db.query(TriviaQuestionsWinners).filter(
-            TriviaQuestionsWinners.draw_date == draw_date
-        ).first()
-        
-        if existing_draw:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Draw for {draw_date} has already been performed"
-            )
-        
-        # Perform the draw
-        result = perform_draw(db, draw_date)
-        
-        if result["status"] == "no_participants":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"No eligible participants for draw on {draw_date}"
-            )
-        
-        return DrawResponse(
-            status=result["status"],
-            draw_date=result["draw_date"],
-            total_participants=result["total_participants"],
-            total_winners=result["total_winners"],
-            prize_pool=result["prize_pool"],
-            winners=result["winners"]
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error triggering draw: {str(e)}"
-        )
+# Legacy draw endpoints removed - use mode-specific draws instead:
+# - /admin/trivia/free-mode/trigger-draw
+# - /admin/trivia/bronze-mode/trigger-draw
+# - /admin/trivia/silver-mode/trigger-draw
 
 @router.get("/users", response_model=List[UserAdminStatus])
 async def get_admin_users(
@@ -1269,74 +1089,6 @@ async def delete_gem_package(
     
     return {"message": f"Gem package with ID {package_id} deleted successfully"}
 
-@router.post("/boost-configs", response_model=BoostConfigResponse)
-async def create_boost_config(
-    boost: BoostConfigRequest = Body(..., description="Boost configuration details"),
-    claims: dict = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Admin endpoint to create a new boost configuration"""
-    # Check if boost config already exists
-    existing = db.query(BoostConfig).filter(BoostConfig.boost_type == boost.boost_type).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Boost configuration for {boost.boost_type} already exists. Use PUT to update."
-        )
-    
-    new_boost = BoostConfig(
-        boost_type=boost.boost_type,
-        gems_cost=boost.gems_cost,
-        description=boost.description
-    )
-    
-    db.add(new_boost)
-    db.commit()
-    db.refresh(new_boost)
-    
-    return new_boost
-
-@router.put("/boost-configs/{boost_type}", response_model=BoostConfigResponse)
-async def update_boost_config(
-    boost_type: str = Path(..., description="Type of boost to update"),
-    boost: BoostConfigRequest = Body(..., description="Updated boost configuration details"),
-    claims: dict = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Admin endpoint to update an existing boost configuration"""
-    if boost_type != boost.boost_type:
-        raise HTTPException(status_code=400, detail="Path boost_type does not match request body boost_type")
-    
-    db_boost = db.query(BoostConfig).filter(BoostConfig.boost_type == boost_type).first()
-    if not db_boost:
-        raise HTTPException(status_code=404, detail=f"Boost configuration for {boost_type} not found")
-    
-    # Update fields
-    db_boost.gems_cost = boost.gems_cost
-    db_boost.description = boost.description
-    db_boost.updated_at = datetime.utcnow()
-    
-    db.commit()
-    db.refresh(db_boost)
-    
-    return db_boost
-
-@router.delete("/boost-configs/{boost_type}", response_model=Dict[str, Any])
-async def delete_boost_config(
-    boost_type: str = Path(..., description="Type of boost to delete"),
-    claims: dict = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Admin endpoint to delete a boost configuration"""
-    db_boost = db.query(BoostConfig).filter(BoostConfig.boost_type == boost_type).first()
-    if not db_boost:
-        raise HTTPException(status_code=404, detail=f"Boost configuration for {boost_type} not found")
-    
-    db.delete(db_boost)
-    db.commit()
-    
-    return {"message": f"Boost configuration for {boost_type} deleted successfully"}
-
 # ======== Badges Admin Endpoints ========
 
 def validate_badge_url_is_public(image_url: str) -> bool:
@@ -1364,7 +1116,7 @@ async def create_badge(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_admin_user)
 ):
-    """Admin endpoint to create a new badge."""
+    """Admin endpoint to create a new badge (stored in TriviaModeConfig)."""
     # Validate that the URL is public (warn if not, but allow)
     if not validate_badge_url_is_public(badge.image_url):
         logging.warning(
@@ -1372,46 +1124,61 @@ async def create_badge(
             f"Badges should use public S3 URLs for optimal performance."
         )
     
-    # Use provided ID or generate a new one
+    # Use provided ID or generate a new one (this will be mode_id)
     badge_id = badge.id if badge.id else str(uuid.uuid4())
     
-    # Check if a badge with this ID already exists
+    # Check if a mode config with this ID already exists
     if badge.id:
-        existing = db.query(Badge).filter(Badge.id == badge_id).first()
+        existing = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == badge_id).first()
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Badge with ID {badge_id} already exists"
+                detail=f"Mode config with ID {badge_id} already exists. Use PUT to update badge fields."
             )
     
-    # Create a new badge
-    new_badge = Badge(
-        id=badge_id,
-        name=badge.name,
-        description=badge.description,
-        image_url=badge.image_url,
-        level=badge.level,
-        created_at=datetime.utcnow()
+    # Create a new TriviaModeConfig entry for the badge
+    # Note: Some fields are required for TriviaModeConfig, so we set defaults
+    new_mode_config = TriviaModeConfig(
+        mode_id=badge_id,
+        mode_name=badge.name,
+        questions_count=1,  # Default, can be updated later
+        reward_distribution="{}",  # Default empty JSON
+        amount=0.0,  # Default
+        leaderboard_types="[]",  # Default empty array
+        badge_image_url=badge.image_url,
+        badge_description=badge.description,
+        badge_level=badge.level,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
     )
     
-    db.add(new_badge)
+    db.add(new_mode_config)
     db.commit()
-    db.refresh(new_badge)
+    db.refresh(new_mode_config)
     
     logging.info(f"Created badge {badge_id} ({badge.name}) with public URL: {badge.image_url[:80]}...")
-    return new_badge
+    
+    # Return in BadgeResponse format
+    return BadgeResponse(
+        id=new_mode_config.mode_id,
+        name=new_mode_config.mode_name,
+        description=new_mode_config.badge_description,
+        image_url=new_mode_config.badge_image_url,
+        level=new_mode_config.badge_level or 0,
+        created_at=new_mode_config.created_at
+    )
 
 @router.put("/badges/{badge_id}", response_model=BadgeResponse)
 async def update_badge(
-    badge_id: str = Path(..., description="The ID of the badge to update"),
+    badge_id: str = Path(..., description="The ID of the badge to update (mode_id)"),
     badge_update: BadgeUpdate = Body(..., description="Updated badge data"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_admin_user)
 ):
-    """Admin endpoint to update an existing badge."""
-    # Find the badge
-    badge = db.query(Badge).filter(Badge.id == badge_id).first()
-    if not badge:
+    """Admin endpoint to update an existing badge (stored in TriviaModeConfig)."""
+    # Find the mode config (badge is stored here)
+    mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == badge_id).first()
+    if not mode_config:
         raise HTTPException(status_code=404, detail=f"Badge with ID {badge_id} not found")
     
     # Validate that the new URL is public (warn if not, but allow)
@@ -1421,24 +1188,33 @@ async def update_badge(
             f"Badges should use public S3 URLs for optimal performance."
         )
     
-    # Update badge fields
-    badge.name = badge_update.name
-    badge.description = badge_update.description
-    badge.image_url = badge_update.image_url
-    badge.level = badge_update.level
+    # Update badge fields in TriviaModeConfig
+    mode_config.mode_name = badge_update.name
+    mode_config.badge_description = badge_update.description
+    mode_config.badge_image_url = badge_update.image_url
+    mode_config.badge_level = badge_update.level
+    mode_config.updated_at = datetime.utcnow()
     
     # Count how many users have this badge (for informational purposes)
     users_updated = db.query(User).filter(User.badge_id == badge_id).count()
     
     db.commit()
-    db.refresh(badge)
+    db.refresh(mode_config)
     
     logging.info(
-        f"Updated badge {badge_id} ({badge.name}). "
+        f"Updated badge {badge_id} ({badge_update.name}). "
         f"Image URL changed, {users_updated} users updated with new badge image URL."
     )
     
-    return badge
+    # Return in BadgeResponse format
+    return BadgeResponse(
+        id=mode_config.mode_id,
+        name=mode_config.mode_name,
+        description=mode_config.badge_description,
+        image_url=mode_config.badge_image_url,
+        level=mode_config.badge_level or 0,
+        created_at=mode_config.created_at
+    )
 
 @router.get("/badges/assignments", response_model=Dict[str, Any])
 async def get_badge_assignments(
@@ -1446,14 +1222,15 @@ async def get_badge_assignments(
     current_user: dict = Depends(get_admin_user)
 ):
     """Admin endpoint to get badge assignment statistics"""
-    # Get counts of users per badge
+    # Get counts of users per badge (badges are now in TriviaModeConfig)
     result = {}
-    badges = db.query(Badge).all()
+    # Get all mode configs that have badge_image_url (i.e., are badges)
+    badges = db.query(TriviaModeConfig).filter(TriviaModeConfig.badge_image_url.isnot(None)).all()
     
-    for badge in badges:
-        count = db.query(User).filter(User.badge_id == badge.id).count()
-        result[badge.id] = {
-            "badge_name": badge.name,
+    for mode_config in badges:
+        count = db.query(User).filter(User.badge_id == mode_config.mode_id).count()
+        result[mode_config.mode_id] = {
+            "badge_name": mode_config.mode_name,
             "user_count": count
         }
     

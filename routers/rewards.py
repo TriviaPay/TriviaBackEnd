@@ -11,10 +11,11 @@ from pydantic import BaseModel, Field
 
 from db import get_db
 from models import (
-    User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsDaily, Trivia, Badge, Avatar, Frame, 
-    TriviaQuestionsEntries, TriviaUserDaily, UserSubscription, TriviaBronzeModeLeaderboard, TriviaSilverModeLeaderboard,
+    User, CompanyRevenue, TriviaModeConfig, Avatar, Frame,
+    UserSubscription, TriviaBronzeModeLeaderboard, TriviaSilverModeLeaderboard,
     UserDailyRewards
 )
+# TriviaQuestionsDaily, Trivia, TriviaQuestionsEntries, TriviaUserDaily removed - legacy tables
 from routers.dependencies import get_current_user, get_admin_user
 from utils.trivia_mode_service import get_active_draw_date, get_today_in_app_timezone
 from utils.storage import presign_get
@@ -109,7 +110,7 @@ async def get_recent_winners(
         
         # Get profile data for all users
         from utils.chat_helpers import get_user_chat_profile_data
-        from models import Badge
+        from models import TriviaModeConfig
         
         result = []
         
@@ -124,9 +125,9 @@ async def get_recent_winners(
             # Get achievement badge image URL
             badge_image_url = None
             if user.badge_id:
-                badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
-                if badge:
-                    badge_image_url = badge.image_url
+                mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user.badge_id).first()
+                if mode_config and mode_config.badge_image_url:
+                    badge_image_url = mode_config.badge_image_url
             
             result.append({
                 'mode': 'bronze',
@@ -156,9 +157,9 @@ async def get_recent_winners(
             # Get achievement badge image URL
             badge_image_url = None
             if user.badge_id:
-                badge = db.query(Badge).filter(Badge.id == user.badge_id).first()
-                if badge:
-                    badge_image_url = badge.image_url
+                mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user.badge_id).first()
+                if mode_config and mode_config.badge_image_url:
+                    badge_image_url = mode_config.badge_image_url
             
             result.append({
                 'mode': 'silver',

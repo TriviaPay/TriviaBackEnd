@@ -9,24 +9,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, and_, or_
 import pytz
 
-from models import User, TriviaQuestionsWinners, TriviaDrawConfig, CompanyRevenue, TriviaQuestionsEntries, Badge, Avatar, Frame, TriviaUserDaily, UserDailyRewards
+from models import User, CompanyRevenue, Avatar, Frame, UserDailyRewards
+# Legacy tables removed: TriviaQuestionsWinners, TriviaDrawConfig, TriviaQuestionsEntries, TriviaUserDaily, Trivia, TriviaQuestionsDaily
 from db import get_db
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_draw_config(db: Session) -> TriviaDrawConfig:
-    """
-    Get the current draw configuration. Create a default one if it doesn't exist.
-    """
-    config = db.query(TriviaDrawConfig).first()
-    if not config:
-        config = TriviaDrawConfig(is_custom=False, custom_winner_count=None)
-        db.add(config)
-        db.commit()
-        db.refresh(config)
-    return config
+# Legacy get_draw_config removed - TriviaDrawConfig table deleted
+# Use mode-specific draw configuration via TriviaModeConfig instead
 
 def get_draw_time() -> Dict[str, Any]:
     """
@@ -166,190 +158,11 @@ def calculate_prize_pool(db: Session, draw_date: date) -> float:
     
     return round(daily_prize_pool, 2)
 
-def get_eligible_participants(db: Session, draw_date: date) -> List[Dict[str, Any]]:
-    """
-    Get all eligible participants for the daily draw.
-    
-    Eligibility criteria:
-    - User must be subscribed for that month (User.subscription_flag == True)
-    - User must have answered at least 1 trivia question correctly FOR THE SPECIFIC draw_date
-    
-    This function checks TriviaUserDaily directly for the draw_date instead of relying on
-    the daily_eligibility_flag, which may be stale or from a different day.
-    """
-    logger.info(f"Getting eligible participants for draw date: {draw_date}")
-    
-    # Directly query users who:
-    # 1. Are subscribed (subscription_flag == True)
-    # 2. Have at least 1 correct answer in TriviaUserDaily for the specific draw_date
-    
-    eligible_users = db.query(User).join(
-        TriviaUserDaily,
-        and_(
-            TriviaUserDaily.account_id == User.account_id,
-            TriviaUserDaily.date == draw_date,
-            TriviaUserDaily.status == 'answered_correct'
-        )
-    ).filter(
-        User.subscription_flag == True
-    ).distinct().all()
-    
-    # Also validate using TriviaQuestionsEntries as a cross-check
-    # This provides additional robustness
-    eligible_account_ids = {user.account_id for user in eligible_users}
-    
-    # Cross-check with TriviaQuestionsEntries
-    entries_check = db.query(TriviaQuestionsEntries).filter(
-        TriviaQuestionsEntries.date == draw_date,
-        TriviaQuestionsEntries.account_id.in_(eligible_account_ids),
-        TriviaQuestionsEntries.correct_answers >= 1
-    ).all()
-    
-    entries_account_ids = {entry.account_id for entry in entries_check}
-    
-    # Use intersection to ensure both sources agree
-    # (TriviaUserDaily is source of truth, but entries provides validation)
-    if eligible_account_ids and entries_account_ids != eligible_account_ids:
-        # Log discrepancy but don't fail - TriviaUserDaily is the authoritative source
-        logger.warning(
-            f"Eligibility cross-check discrepancy for draw_date {draw_date}: "
-            f"TriviaUserDaily found {len(eligible_account_ids)} eligible users, "
-            f"TriviaQuestionsEntries found {len(entries_account_ids)} users with correct_answers >= 1"
-        )
-    
-    logger.info(
-        f"Found {len(eligible_users)} eligible participants for draw_date {draw_date} "
-        f"(subscription_flag=True AND at least 1 correct answer in TriviaUserDaily)"
-    )
-    
-    # Additional diagnostic logging
-    if len(eligible_users) == 0:
-        # Log why no participants were found
-        subscribed_count = db.query(User).filter(User.subscription_flag == True).count()
-        users_with_correct_answers = db.query(
-            func.count(func.distinct(TriviaUserDaily.account_id))
-        ).filter(
-            TriviaUserDaily.date == draw_date,
-            TriviaUserDaily.status == 'answered_correct'
-        ).scalar() or 0
-        
-        logger.warning(
-            f"No eligible participants found for {draw_date}. "
-            f"Diagnostics: {subscribed_count} subscribed users, "
-            f"{users_with_correct_answers} users with correct answers on {draw_date}"
-        )
-    
-    return [
-        {
-            "account_id": user.account_id,
-            "username": user.username
-        }
-        for user in eligible_users
-    ]
+# Legacy get_eligible_participants removed - TriviaUserDaily and TriviaQuestionsEntries tables deleted
+# Use mode-specific eligibility functions instead (e.g., get_eligible_participants_free_mode)
 
-def perform_draw(db: Session, draw_date: date) -> Dict[str, Any]:
-    """
-    Perform the daily draw for the specified date.
-    
-    Args:
-        db: Database session
-        draw_date: The date to perform the draw for
-        
-    Returns:
-        Dict containing draw results
-    """
-    logger.info(f"Performing draw for date: {draw_date}")
-    
-    # Check if a draw has already been performed for this date
-    existing_draw = db.query(TriviaQuestionsWinners).filter(
-        TriviaQuestionsWinners.draw_date == draw_date
-    ).first()
-    
-    if existing_draw:
-        logger.info(f"Draw for {draw_date} has already been performed")
-        return {
-            "status": "already_performed",
-            "draw_date": draw_date,
-            "message": f"Draw for {draw_date} has already been performed"
-        }
-    
-    # Get eligible participants
-    participants = get_eligible_participants(db, draw_date)
-    participant_count = len(participants)
-    
-    if participant_count == 0:
-        logger.info(f"No eligible participants for draw on {draw_date}")
-        return {
-            "status": "no_participants",
-            "draw_date": draw_date,
-            "message": f"No eligible participants for draw on {draw_date}"
-        }
-    
-    # Get draw configuration
-    config = get_draw_config(db)
-    
-    # Determine number of winners
-    if config.is_custom and config.custom_winner_count is not None:
-        winner_count = min(config.custom_winner_count, participant_count)
-        logger.info(f"Using custom winner count: {winner_count}")
-    else:
-        winner_count = calculate_winner_count(participant_count)
-        logger.info(f"Using calculated winner count: {winner_count}")
-    
-    logger.info(f"Number of winners: {winner_count}, Eligible participants: {participant_count}")
-    
-    # Calculate prize pool
-    prize_pool = calculate_prize_pool(db, draw_date)
-    logger.info(f"Prize pool for draw: ${prize_pool}")
-    
-    # Calculate prize distribution
-    prizes = calculate_prize_distribution(prize_pool, winner_count)
-    logger.info(f"Prize distribution: {prizes}")
-    
-    # Select winners randomly
-    if participant_count <= winner_count:
-        # If there are fewer participants than winners, everyone wins
-        selected_winners = participants
-        logger.info("All participants selected as winners (fewer participants than winner slots)")
-    else:
-        # Otherwise, randomly select winners
-        random.shuffle(participants)
-        selected_winners = participants[:winner_count]
-        logger.info(f"Randomly selected {winner_count} winners from {participant_count} participants")
-    
-    # Save winners to database
-    winners = []
-    for i, winner in enumerate(selected_winners):
-        position = i + 1
-        prize_amount = prizes[i] if i < len(prizes) else 0
-        
-        winner_record = TriviaQuestionsWinners(
-            account_id=winner["account_id"],
-            prize_amount=prize_amount,
-            position=position,
-            draw_date=draw_date
-        )
-        db.add(winner_record)
-        winners.append({
-            "account_id": winner["account_id"],
-            "username": winner["username"],
-            "position": position,
-            "prize_amount": prize_amount
-        })
-    
-    db.commit()
-    
-    # Reset daily eligibility flags after the draw
-    reset_daily_eligibility_flags(db)
-    
-    return {
-        "status": "success",
-        "draw_date": draw_date,
-        "total_participants": participant_count,
-        "total_winners": winner_count,
-        "prize_pool": prize_pool,
-        "winners": winners
-    }
+# Legacy perform_draw removed - TriviaQuestionsWinners and TriviaDrawConfig tables deleted
+# Use mode-specific draw functions instead (e.g., execute_mode_draw)
 
 def get_user_details(user, db: Session) -> Dict[str, Any]:
     """
@@ -359,9 +172,10 @@ def get_user_details(user, db: Session) -> Dict[str, Any]:
     """
     from utils.storage import presign_get
     
-    # Get badge info
-    badge_info = db.query(Badge).filter(Badge.id == user.badge_id).first() if user.badge_id else None
-    badge_image_url = badge_info.image_url if badge_info else None  # Badge URLs are public, no presigning
+    # Get badge info from TriviaModeConfig (badges merged into trivia_mode_config)
+    from models import TriviaModeConfig
+    badge_info = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user.badge_id).first() if user.badge_id else None
+    badge_image_url = badge_info.badge_image_url if badge_info and badge_info.badge_image_url else None  # Badge URLs are public, no presigning
     
     # Get avatar URL (presigned)
     avatar_image_url = None
@@ -440,39 +254,5 @@ def reset_weekly_daily_rewards(db: Session) -> None:
     
     logger.info(f"Weekly daily rewards reset successfully. Deleted {deleted_count} records.")
 
-def update_user_eligibility(db: Session, user_account_id: int, draw_date: date) -> None:
-    """
-    Check if a user has answered 1 question correctly for the given date
-    and update their daily_eligibility_flag accordingly.
-    Uses trivia_user_daily table.
-    
-    Note: This flag is informational and may be cleared/reset. The actual eligibility
-    check in get_eligible_participants() queries TriviaUserDaily directly to ensure
-    accuracy for the specific draw_date.
-    """
-    # Count correct answers for the user on the given date using TriviaUserDaily
-    correct_answers = db.query(TriviaUserDaily).filter(
-        TriviaUserDaily.account_id == user_account_id,
-        TriviaUserDaily.date == draw_date,
-        TriviaUserDaily.status == 'answered_correct'
-    ).count()
-    
-    # Update eligibility flag if user answered 1 question correctly
-    # Note: This flag is not date-specific, but helps with quick checks
-    # The actual draw eligibility check queries TriviaUserDaily directly
-    if correct_answers >= 1:
-        db.query(User).filter(User.account_id == user_account_id).update(
-            {"daily_eligibility_flag": True}
-        )
-        db.commit()
-        logger.info(
-            f"User {user_account_id} eligibility flag updated: "
-            f"answered {correct_answers} question(s) correctly on {draw_date}"
-        )
-    else:
-        # Don't set flag to False here - it might be valid for other dates
-        # Only set to True when we have confirmed correct answers
-        logger.debug(
-            f"User {user_account_id} not yet eligible: "
-            f"only {correct_answers} correct answer(s) on {draw_date}"
-        )
+# Legacy update_user_eligibility removed - TriviaUserDaily table deleted
+# Use mode-specific eligibility tracking instead

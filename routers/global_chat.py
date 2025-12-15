@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Union
 
 from db import get_db
-from models import User, GlobalChatMessage, GlobalChatViewer, Avatar, Frame, Badge, UserSubscription, SubscriptionPlan
+from models import User, GlobalChatMessage, GlobalChatViewer, Avatar, Frame, TriviaModeConfig, UserSubscription, SubscriptionPlan
 from routers.dependencies import get_current_user
 from config import (
     GLOBAL_CHAT_ENABLED,
@@ -429,7 +429,12 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
     badge_ids = {u.badge_id for u in users if u.badge_id}
     badges = {}
     if badge_ids:
-        badges = {b.id: b for b in db.query(Badge).filter(Badge.id.in_(list(badge_ids))).all()}
+        # Badges are now stored in TriviaModeConfig
+        mode_configs = db.query(TriviaModeConfig).filter(
+            TriviaModeConfig.mode_id.in_(list(badge_ids)),
+            TriviaModeConfig.badge_image_url.isnot(None)
+        ).all()
+        badges = {mc.mode_id: mc for mc in mode_configs}
     
     # Batch load all active subscriptions with plans eagerly loaded
     active_subscriptions = {}
@@ -446,14 +451,16 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
                 active_subscriptions[sub.user_id] = []
             active_subscriptions[sub.user_id].append(sub)
     
-    # Batch load subscription badges (bronze and silver)
+    # Batch load subscription badges (bronze and silver) from TriviaModeConfig
     subscription_badge_ids = ['bronze', 'bronze_badge', 'brone_badge', 'brone', 'silver', 'silver_badge']
-    subscription_badges_dict = {b.id: b for b in db.query(Badge).filter(
-        Badge.id.in_(list(subscription_badge_ids))
+    subscription_badges_dict = {mc.mode_id: mc for mc in db.query(TriviaModeConfig).filter(
+        TriviaModeConfig.mode_id.in_(list(subscription_badge_ids)),
+        TriviaModeConfig.badge_image_url.isnot(None)
     ).all()}
     # Also try name-based matching
-    name_based_badges = {b.id: b for b in db.query(Badge).filter(
-        Badge.name.ilike('%bronze%') | Badge.name.ilike('%silver%')
+    name_based_badges = {mc.mode_id: mc for mc in db.query(TriviaModeConfig).filter(
+        (TriviaModeConfig.mode_name.ilike('%bronze%') | TriviaModeConfig.mode_name.ilike('%silver%')),
+        TriviaModeConfig.badge_image_url.isnot(None)
     ).all()}
     subscription_badges_dict.update(name_based_badges)
     
@@ -493,11 +500,11 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
         # Badge info
         badge_info = None
         if user.badge_id and user.badge_id in badges:
-            badge = badges[user.badge_id]
+            mode_config = badges[user.badge_id]
             badge_info = {
-                "id": badge.id,
-                "name": badge.name,
-                "image_url": badge.image_url
+                "id": mode_config.mode_id,
+                "name": mode_config.mode_name,
+                "image_url": mode_config.badge_image_url
             }
         
         # Subscription badges
@@ -517,15 +524,15 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
                               subscription_badges_dict.get('brone'))
                 if not bronze_badge:
                     # Try name-based match
-                    for bid, b in subscription_badges_dict.items():
-                        if 'bronze' in b.name.lower():
-                            bronze_badge = b
+                    for bid, mc in subscription_badges_dict.items():
+                        if 'bronze' in mc.mode_name.lower():
+                            bronze_badge = mc
                             break
-                if bronze_badge:
+                if bronze_badge and bronze_badge.badge_image_url:
                     subscription_badges.append({
-                        "id": bronze_badge.id,
-                        "name": bronze_badge.name,
-                        "image_url": bronze_badge.image_url,
+                        "id": bronze_badge.mode_id,
+                        "name": bronze_badge.mode_name,
+                        "image_url": bronze_badge.badge_image_url,
                         "subscription_type": "bronze",
                         "price": 5.0
                     })
@@ -537,15 +544,15 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
                               subscription_badges_dict.get('silver_badge'))
                 if not silver_badge:
                     # Try name-based match
-                    for bid, b in subscription_badges_dict.items():
-                        if 'silver' in b.name.lower():
-                            silver_badge = b
+                    for bid, mc in subscription_badges_dict.items():
+                        if 'silver' in mc.mode_name.lower():
+                            silver_badge = mc
                             break
-                if silver_badge:
+                if silver_badge and silver_badge.badge_image_url:
                     subscription_badges.append({
-                        "id": silver_badge.id,
-                        "name": silver_badge.name,
-                        "image_url": silver_badge.image_url,
+                        "id": silver_badge.mode_id,
+                        "name": silver_badge.mode_name,
+                        "image_url": silver_badge.badge_image_url,
                         "subscription_type": "silver",
                         "price": 10.0
                     })
