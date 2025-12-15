@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from routers import draw, updates, trivia, entries, login, refresh, store, profile, cosmetics, badges, rewards, admin, internal, live_chat, global_chat, private_chat, trivia_live_chat, onesignal, pusher_auth, chat_mute, trivia_free_mode, trivia_five_dollar_mode, trivia_silver_mode, notifications
-from config import E2EE_DM_ENABLED, GROUPS_ENABLED, STATUS_ENABLED, PRESENCE_ENABLED
+from config import PRESENCE_ENABLED
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -278,45 +278,23 @@ app.include_router(pusher_auth.router) # Pusher authentication endpoints
 app.include_router(chat_mute.router) # Chat mute preferences endpoints
 app.include_router(notifications.router) # Notifications endpoints
 
-# E2EE DM routers (gated behind feature flag)
-if E2EE_DM_ENABLED:
-    from routers import e2ee_keys, dm_conversations, dm_messages, dm_sse, dm_privacy, dm_metrics
-    app.include_router(e2ee_keys.router)        # E2EE key management
-    app.include_router(dm_conversations.router) # DM conversation management
-    app.include_router(dm_messages.router)      # DM message sending/receiving
-    app.include_router(dm_sse.router)            # DM SSE real-time delivery
-    app.include_router(dm_privacy.router)        # DM blocking/privacy
-    app.include_router(dm_metrics.router)       # DM metrics (admin only)
-    logger.info("E2EE DM feature enabled - routers registered")
-else:
-    logger.info("E2EE DM feature disabled")
+# E2EE DM routers - REMOVED (tables and models deleted)
+# All E2EE DM functionality has been removed from the codebase
 
-# Groups routers (gated behind feature flag)
-if GROUPS_ENABLED:
-    from routers import groups, group_members, group_invites, group_messages, group_metrics
-    app.include_router(groups.router)            # Group management
-    app.include_router(group_members.router)     # Group membership
-    app.include_router(group_invites.router)     # Group invites
-    app.include_router(group_messages.router)    # Group messages
-    app.include_router(group_metrics.router)         # Group metrics (admin only)
-    logger.info("Groups feature enabled - routers registered")
-else:
-    logger.info("Groups feature disabled")
+# Groups routers - REMOVED (tables and models deleted)
+# All Groups functionality has been removed from the codebase
 
-# Status routers (gated behind feature flag)
-if STATUS_ENABLED:
-    from routers import status, status_metrics
-    app.include_router(status.router)             # Status posts
-    app.include_router(status_metrics.router)    # Status metrics (admin only)
-    logger.info("Status feature enabled - routers registered")
-else:
-    logger.info("Status feature disabled")
+# Status routers - REMOVED (tables and models deleted)
+# All Status functionality has been removed from the codebase
 
 # Presence router (gated behind feature flag)
 if PRESENCE_ENABLED:
-    from routers import presence
-    app.include_router(presence.router)          # Presence/privacy settings
-    logger.info("Presence feature enabled - routers registered")
+    try:
+        from routers import presence
+        app.include_router(presence.router)          # Presence/privacy settings
+        logger.info("Presence feature enabled - routers registered")
+    except ImportError as e:
+        logger.warning(f"Presence feature enabled but required models are missing: {e}. Disabling Presence router.")
 else:
     logger.info("Presence feature disabled")
 

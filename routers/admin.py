@@ -8,7 +8,10 @@ import pytz
 import logging
 
 from db import get_db
-from models import TriviaQuestionsWinners, User, TriviaDrawConfig, TriviaModeConfig, SubscriptionPlan, UserSubscription
+from models import (
+    TriviaQuestionsWinners, User, TriviaDrawConfig, TriviaModeConfig, SubscriptionPlan, UserSubscription,
+    GemPackageConfig, BoostConfig, Badge, Avatar, Frame, UserAvatar, UserFrame
+)
 from routers.dependencies import get_admin_user, get_current_user, verify_admin
 from rewards_logic import perform_draw
 from utils.question_upload_service import parse_csv_questions, save_questions_to_mode
@@ -17,8 +20,12 @@ from utils.free_mode_rewards import (
     calculate_reward_distribution, distribute_rewards_to_winners, cleanup_old_leaderboard
 )
 from utils.trivia_mode_service import get_mode_config
+from utils.storage import presign_get
 from fastapi import UploadFile, File
+from datetime import datetime
 import json
+import uuid
+import logging
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -64,6 +71,106 @@ class AdminStatusResponse(BaseModel):
     username: Optional[str] = None
     is_admin: bool
     message: str
+
+# ======== Store Admin Models ========
+class GemPackageRequest(BaseModel):
+    price_minor: int = Field(..., description="Price in minor units (cents)")
+    gems_amount: int = Field(..., description="Number of gems in the package")
+    is_one_time: bool = Field(False, description="Whether this is a one-time offer")
+    description: Optional[str] = Field(None, description="Description of the package")
+    bucket: Optional[str] = Field(None, description="S3 bucket name for the package image")
+    object_key: Optional[str] = Field(None, description="S3 object key for the package image")
+    mime_type: Optional[str] = Field(None, description="MIME type of the image")
+
+class GemPackageResponse(BaseModel):
+    id: int
+    price_usd: float
+    gems_amount: int
+    is_one_time: bool
+    description: Optional[str]
+    url: Optional[str] = None
+    mime_type: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class BoostConfigRequest(BaseModel):
+    boost_type: str = Field(..., description="Type of boost")
+    gems_cost: int = Field(..., description="Cost in gems")
+    description: Optional[str] = Field(None, description="Description of the boost")
+
+class BoostConfigResponse(BaseModel):
+    boost_type: str
+    gems_cost: int
+    description: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# ======== Badges Admin Models ========
+class BadgeBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    image_url: str
+    level: int
+
+class BadgeCreate(BadgeBase):
+    id: Optional[str] = None
+
+class BadgeUpdate(BadgeBase):
+    pass
+
+class BadgeResponse(BadgeBase):
+    id: str
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+# ======== Cosmetics Admin Models ========
+class CosmeticBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    price_gems: Optional[int] = None
+    price_minor: Optional[int] = None
+    is_premium: bool = False
+    bucket: Optional[str] = None
+    object_key: Optional[str] = None
+    mime_type: Optional[str] = None
+
+class AvatarCreate(CosmeticBase):
+    id: Optional[str] = None
+
+class AvatarResponse(CosmeticBase):
+    id: str
+    created_at: datetime
+    url: Optional[str] = None
+    mime_type: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+class FrameCreate(CosmeticBase):
+    id: Optional[str] = None
+
+class FrameResponse(CosmeticBase):
+    id: str
+    created_at: datetime
+    url: Optional[str] = None
+    mime_type: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+class BulkImportResponse(BaseModel):
+    status: str
+    message: str
+    imported_count: int
+    errors: List[str] = []
 
 @router.get("/draw-config", response_model=DrawConfigResponse)
 async def get_draw_config(
@@ -1056,4 +1163,691 @@ async def create_subscription_for_user(
             'current_period_start': subscription.current_period_start.isoformat() if subscription.current_period_start else None,
             'current_period_end': subscription.current_period_end.isoformat() if subscription.current_period_end else None
         }
+    }
+
+# ======== Store Admin Endpoints ========
+
+@router.post("/gem-packages", response_model=GemPackageResponse)
+async def create_gem_package(
+    package: GemPackageRequest = Body(..., description="Gem package details"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to create a new gem package"""
+    new_package = GemPackageConfig(
+        price_minor=package.price_minor,
+        gems_amount=package.gems_amount,
+        is_one_time=package.is_one_time,
+        description=package.description,
+        bucket=package.bucket,
+        object_key=package.object_key,
+        mime_type=package.mime_type
+    )
+    
+    db.add(new_package)
+    db.commit()
+    db.refresh(new_package)
+    
+    # Generate presigned URL if bucket and object_key are present
+    signed_url = None
+    if new_package.bucket and new_package.object_key:
+        try:
+            signed_url = presign_get(new_package.bucket, new_package.object_key, expires=900)
+        except Exception as e:
+            logging.error(f"Failed to presign gem package {new_package.id}: {e}", exc_info=True)
+    
+    return GemPackageResponse(
+        id=new_package.id,
+        price_usd=new_package.price_usd,
+        gems_amount=new_package.gems_amount,
+        is_one_time=new_package.is_one_time,
+        description=new_package.description,
+        url=signed_url,
+        mime_type=new_package.mime_type,
+        created_at=new_package.created_at,
+        updated_at=new_package.updated_at
+    )
+
+@router.put("/gem-packages/{package_id}", response_model=GemPackageResponse)
+async def update_gem_package(
+    package_id: int = Path(..., description="ID of the gem package to update"),
+    package: GemPackageRequest = Body(..., description="Updated gem package details"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to update an existing gem package"""
+    db_package = db.query(GemPackageConfig).filter(GemPackageConfig.id == package_id).first()
+    if not db_package:
+        raise HTTPException(status_code=404, detail=f"Gem package with ID {package_id} not found")
+    
+    # Update fields
+    db_package.price_minor = package.price_minor
+    db_package.gems_amount = package.gems_amount
+    db_package.is_one_time = package.is_one_time
+    db_package.description = package.description
+    db_package.bucket = package.bucket
+    db_package.object_key = package.object_key
+    db_package.mime_type = package.mime_type
+    db_package.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(db_package)
+    
+    # Generate presigned URL if bucket and object_key are present
+    signed_url = None
+    if db_package.bucket and db_package.object_key:
+        try:
+            signed_url = presign_get(db_package.bucket, db_package.object_key, expires=900)
+        except Exception as e:
+            logging.error(f"Failed to presign gem package {db_package.id}: {e}", exc_info=True)
+    
+    return GemPackageResponse(
+        id=db_package.id,
+        price_usd=db_package.price_usd,
+        gems_amount=db_package.gems_amount,
+        is_one_time=db_package.is_one_time,
+        description=db_package.description,
+        url=signed_url,
+        mime_type=db_package.mime_type,
+        created_at=db_package.created_at,
+        updated_at=db_package.updated_at
+    )
+
+@router.delete("/gem-packages/{package_id}", response_model=Dict[str, Any])
+async def delete_gem_package(
+    package_id: int = Path(..., description="ID of the gem package to delete"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to delete a gem package"""
+    db_package = db.query(GemPackageConfig).filter(GemPackageConfig.id == package_id).first()
+    if not db_package:
+        raise HTTPException(status_code=404, detail=f"Gem package with ID {package_id} not found")
+    
+    db.delete(db_package)
+    db.commit()
+    
+    return {"message": f"Gem package with ID {package_id} deleted successfully"}
+
+@router.post("/boost-configs", response_model=BoostConfigResponse)
+async def create_boost_config(
+    boost: BoostConfigRequest = Body(..., description="Boost configuration details"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to create a new boost configuration"""
+    # Check if boost config already exists
+    existing = db.query(BoostConfig).filter(BoostConfig.boost_type == boost.boost_type).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Boost configuration for {boost.boost_type} already exists. Use PUT to update."
+        )
+    
+    new_boost = BoostConfig(
+        boost_type=boost.boost_type,
+        gems_cost=boost.gems_cost,
+        description=boost.description
+    )
+    
+    db.add(new_boost)
+    db.commit()
+    db.refresh(new_boost)
+    
+    return new_boost
+
+@router.put("/boost-configs/{boost_type}", response_model=BoostConfigResponse)
+async def update_boost_config(
+    boost_type: str = Path(..., description="Type of boost to update"),
+    boost: BoostConfigRequest = Body(..., description="Updated boost configuration details"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to update an existing boost configuration"""
+    if boost_type != boost.boost_type:
+        raise HTTPException(status_code=400, detail="Path boost_type does not match request body boost_type")
+    
+    db_boost = db.query(BoostConfig).filter(BoostConfig.boost_type == boost_type).first()
+    if not db_boost:
+        raise HTTPException(status_code=404, detail=f"Boost configuration for {boost_type} not found")
+    
+    # Update fields
+    db_boost.gems_cost = boost.gems_cost
+    db_boost.description = boost.description
+    db_boost.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(db_boost)
+    
+    return db_boost
+
+@router.delete("/boost-configs/{boost_type}", response_model=Dict[str, Any])
+async def delete_boost_config(
+    boost_type: str = Path(..., description="Type of boost to delete"),
+    claims: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Admin endpoint to delete a boost configuration"""
+    db_boost = db.query(BoostConfig).filter(BoostConfig.boost_type == boost_type).first()
+    if not db_boost:
+        raise HTTPException(status_code=404, detail=f"Boost configuration for {boost_type} not found")
+    
+    db.delete(db_boost)
+    db.commit()
+    
+    return {"message": f"Boost configuration for {boost_type} deleted successfully"}
+
+# ======== Badges Admin Endpoints ========
+
+def validate_badge_url_is_public(image_url: str) -> bool:
+    """Validate that badge image_url is a public S3 URL (not a presigned URL)."""
+    if not image_url:
+        return False
+    
+    presigned_indicators = ['X-Amz-Algorithm', 'X-Amz-Credential', 'X-Amz-Signature', 'X-Amz-Date']
+    if any(indicator in image_url for indicator in presigned_indicators):
+        logging.warning(f"Badge URL appears to be presigned (should be public): {image_url[:100]}...")
+        return False
+    
+    public_url_patterns = ['s3.amazonaws.com', 's3.', 'amazonaws.com', 'cdn.', '.com/', '.org/']
+    if any(pattern in image_url for pattern in public_url_patterns):
+        return True
+    
+    if image_url.startswith('http://') or image_url.startswith('https://'):
+        return True
+    
+    return False
+
+@router.post("/badges", response_model=BadgeResponse)
+async def create_badge(
+    badge: BadgeCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to create a new badge."""
+    # Validate that the URL is public (warn if not, but allow)
+    if not validate_badge_url_is_public(badge.image_url):
+        logging.warning(
+            f"Creating badge with URL that appears non-public: {badge.image_url[:100]}. "
+            f"Badges should use public S3 URLs for optimal performance."
+        )
+    
+    # Use provided ID or generate a new one
+    badge_id = badge.id if badge.id else str(uuid.uuid4())
+    
+    # Check if a badge with this ID already exists
+    if badge.id:
+        existing = db.query(Badge).filter(Badge.id == badge_id).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Badge with ID {badge_id} already exists"
+            )
+    
+    # Create a new badge
+    new_badge = Badge(
+        id=badge_id,
+        name=badge.name,
+        description=badge.description,
+        image_url=badge.image_url,
+        level=badge.level,
+        created_at=datetime.utcnow()
+    )
+    
+    db.add(new_badge)
+    db.commit()
+    db.refresh(new_badge)
+    
+    logging.info(f"Created badge {badge_id} ({badge.name}) with public URL: {badge.image_url[:80]}...")
+    return new_badge
+
+@router.put("/badges/{badge_id}", response_model=BadgeResponse)
+async def update_badge(
+    badge_id: str = Path(..., description="The ID of the badge to update"),
+    badge_update: BadgeUpdate = Body(..., description="Updated badge data"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to update an existing badge."""
+    # Find the badge
+    badge = db.query(Badge).filter(Badge.id == badge_id).first()
+    if not badge:
+        raise HTTPException(status_code=404, detail=f"Badge with ID {badge_id} not found")
+    
+    # Validate that the new URL is public (warn if not, but allow)
+    if not validate_badge_url_is_public(badge_update.image_url):
+        logging.warning(
+            f"Updating badge {badge_id} with URL that appears non-public: {badge_update.image_url[:100]}. "
+            f"Badges should use public S3 URLs for optimal performance."
+        )
+    
+    # Update badge fields
+    badge.name = badge_update.name
+    badge.description = badge_update.description
+    badge.image_url = badge_update.image_url
+    badge.level = badge_update.level
+    
+    # Count how many users have this badge (for informational purposes)
+    users_updated = db.query(User).filter(User.badge_id == badge_id).count()
+    
+    db.commit()
+    db.refresh(badge)
+    
+    logging.info(
+        f"Updated badge {badge_id} ({badge.name}). "
+        f"Image URL changed, {users_updated} users updated with new badge image URL."
+    )
+    
+    return badge
+
+@router.get("/badges/assignments", response_model=Dict[str, Any])
+async def get_badge_assignments(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to get badge assignment statistics"""
+    # Get counts of users per badge
+    result = {}
+    badges = db.query(Badge).all()
+    
+    for badge in badges:
+        count = db.query(User).filter(User.badge_id == badge.id).count()
+        result[badge.id] = {
+            "badge_name": badge.name,
+            "user_count": count
+        }
+    
+    # Also get count of users with no badge
+    no_badge_count = db.query(User).filter(User.badge_id == None).count()
+    result["no_badge"] = {
+        "badge_name": "No Badge",
+        "user_count": no_badge_count
+    }
+    
+    return {
+        "assignments": result,
+        "total_users": db.query(User).count()
+    }
+
+# ======== Cosmetics Admin Endpoints ========
+
+@router.post("/avatars", response_model=AvatarResponse)
+async def create_avatar(
+    avatar: AvatarCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to create a new avatar"""
+    # Use provided ID or generate a new one
+    avatar_id = avatar.id if avatar.id else str(uuid.uuid4())
+    
+    # Check if an avatar with this ID already exists
+    if avatar.id:
+        existing = db.query(Avatar).filter(Avatar.id == avatar_id).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Avatar with ID {avatar_id} already exists"
+            )
+    
+    # Create a new avatar
+    new_avatar = Avatar(
+        id=avatar_id,
+        name=avatar.name,
+        description=avatar.description,
+        price_gems=avatar.price_gems,
+        price_usd=avatar.price_usd,
+        is_premium=avatar.is_premium,
+        bucket=avatar.bucket,
+        object_key=avatar.object_key,
+        mime_type=avatar.mime_type,
+        created_at=datetime.utcnow()
+    )
+    
+    db.add(new_avatar)
+    db.commit()
+    db.refresh(new_avatar)
+    
+    return new_avatar
+
+@router.put("/avatars/{avatar_id}", response_model=AvatarResponse)
+async def update_avatar(
+    avatar_id: str = Path(..., description="The ID of the avatar to update"),
+    avatar_update: AvatarCreate = Body(..., description="Updated avatar data"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to update an existing avatar"""
+    # Find the avatar
+    avatar = db.query(Avatar).filter(Avatar.id == avatar_id).first()
+    if not avatar:
+        raise HTTPException(status_code=404, detail=f"Avatar with ID {avatar_id} not found")
+    
+    # Update avatar fields
+    avatar.name = avatar_update.name
+    avatar.description = avatar_update.description
+    avatar.price_gems = avatar_update.price_gems
+    avatar.price_minor = avatar_update.price_minor
+    avatar.is_premium = avatar_update.is_premium
+    avatar.bucket = avatar_update.bucket
+    avatar.object_key = avatar_update.object_key
+    avatar.mime_type = avatar_update.mime_type
+    
+    db.commit()
+    db.refresh(avatar)
+    
+    return avatar
+
+@router.delete("/avatars/{avatar_id}", response_model=dict)
+async def delete_avatar(
+    avatar_id: str = Path(..., description="The ID of the avatar to delete"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to delete an avatar"""
+    # Find the avatar
+    avatar = db.query(Avatar).filter(Avatar.id == avatar_id).first()
+    if not avatar:
+        raise HTTPException(status_code=404, detail=f"Avatar with ID {avatar_id} not found")
+    
+    # Remove any references in user_avatars table
+    user_avatars = db.query(UserAvatar).filter(UserAvatar.avatar_id == avatar_id).all()
+    for user_avatar in user_avatars:
+        db.delete(user_avatar)
+    
+    # Remove any users who have this as selected avatar
+    users_with_selected = db.query(User).filter(User.selected_avatar_id == avatar_id).all()
+    for user in users_with_selected:
+        user.selected_avatar_id = None
+    
+    # Delete the avatar
+    db.delete(avatar)
+    db.commit()
+    
+    return {"status": "success", "message": f"Avatar with ID {avatar_id} deleted successfully"}
+
+@router.post("/frames", response_model=FrameResponse)
+async def create_frame(
+    frame: FrameCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to create a new frame"""
+    # Use provided ID or generate a new one
+    frame_id = frame.id if frame.id else str(uuid.uuid4())
+    
+    # Check if a frame with this ID already exists
+    if frame.id:
+        existing = db.query(Frame).filter(Frame.id == frame_id).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Frame with ID {frame_id} already exists"
+            )
+    
+    # Create a new frame
+    new_frame = Frame(
+        id=frame_id,
+        name=frame.name,
+        description=frame.description,
+        price_gems=frame.price_gems,
+        price_usd=frame.price_usd,
+        is_premium=frame.is_premium,
+        bucket=frame.bucket,
+        object_key=frame.object_key,
+        mime_type=frame.mime_type,
+        created_at=datetime.utcnow()
+    )
+    
+    db.add(new_frame)
+    db.commit()
+    db.refresh(new_frame)
+    
+    return new_frame
+
+@router.put("/frames/{frame_id}", response_model=FrameResponse)
+async def update_frame(
+    frame_id: str = Path(..., description="The ID of the frame to update"),
+    frame_update: FrameCreate = Body(..., description="Updated frame data"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to update an existing frame"""
+    # Find the frame
+    frame = db.query(Frame).filter(Frame.id == frame_id).first()
+    if not frame:
+        raise HTTPException(status_code=404, detail=f"Frame with ID {frame_id} not found")
+    
+    # Update frame fields
+    frame.name = frame_update.name
+    frame.description = frame_update.description
+    frame.price_gems = frame_update.price_gems
+    frame.price_minor = frame_update.price_minor
+    frame.is_premium = frame_update.is_premium
+    frame.bucket = frame_update.bucket
+    frame.object_key = frame_update.object_key
+    frame.mime_type = frame_update.mime_type
+    
+    db.commit()
+    db.refresh(frame)
+    
+    return frame
+
+@router.delete("/frames/{frame_id}", response_model=dict)
+async def delete_frame(
+    frame_id: str = Path(..., description="The ID of the frame to delete"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to delete a frame"""
+    # Find the frame
+    frame = db.query(Frame).filter(Frame.id == frame_id).first()
+    if not frame:
+        raise HTTPException(status_code=404, detail=f"Frame with ID {frame_id} not found")
+    
+    # Remove any references in user_frames table
+    user_frames = db.query(UserFrame).filter(UserFrame.frame_id == frame_id).all()
+    for user_frame in user_frames:
+        db.delete(user_frame)
+    
+    # Remove any users who have this as selected frame
+    users_with_selected = db.query(User).filter(User.selected_frame_id == frame_id).all()
+    for user in users_with_selected:
+        user.selected_frame_id = None
+    
+    # Delete the frame
+    db.delete(frame)
+    db.commit()
+    
+    return {"status": "success", "message": f"Frame with ID {frame_id} deleted successfully"}
+
+@router.post("/avatars/import", response_model=BulkImportResponse)
+async def import_avatars_from_json(
+    json_data: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Bulk import avatars from a JSON file or import a single avatar."""
+    # Check if this is a single avatar or a collection
+    if "avatars" in json_data:
+        avatars = json_data.get("avatars", [])
+    elif "id" in json_data and "name" in json_data:
+        avatars = [json_data]
+    else:
+        avatars = []
+    
+    if not avatars:
+        return BulkImportResponse(
+            status="error",
+            message="No avatars found in the JSON data",
+            imported_count=0
+        )
+    
+    imported = 0
+    errors = []
+    
+    for avatar_data in avatars:
+        try:
+            avatar_id = avatar_data.get("id", str(uuid.uuid4()))
+            existing = db.query(Avatar).filter(Avatar.id == avatar_id).first()
+            if existing:
+                for key, value in avatar_data.items():
+                    if key != "id" and hasattr(existing, key):
+                        setattr(existing, key, value)
+            else:
+                new_avatar = Avatar(
+                    id=avatar_id,
+                    name=avatar_data.get("name", "Unnamed Avatar"),
+                    description=avatar_data.get("description"),
+                    price_gems=avatar_data.get("price_gems"),
+                    price_usd=avatar_data.get("price_usd"),
+                    is_premium=avatar_data.get("is_premium", False),
+                    bucket=avatar_data.get("bucket"),
+                    object_key=avatar_data.get("object_key"),
+                    mime_type=avatar_data.get("mime_type"),
+                    created_at=datetime.utcnow()
+                )
+                db.add(new_avatar)
+            imported += 1
+        except Exception as e:
+            errors.append(f"Error importing avatar {avatar_data.get('name', 'unknown')}: {str(e)}")
+    
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return BulkImportResponse(
+            status="error",
+            message=f"Database error: {str(e)}",
+            imported_count=0,
+            errors=[str(e)]
+        )
+    
+    return BulkImportResponse(
+        status="success",
+        message=f"Successfully imported {imported} avatars",
+        imported_count=imported,
+        errors=errors
+    )
+
+@router.post("/frames/import", response_model=BulkImportResponse)
+async def import_frames_from_json(
+    json_data: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Bulk import frames from a JSON file or import a single frame."""
+    # Check if this is a single frame or a collection
+    if "frames" in json_data:
+        frames = json_data.get("frames", [])
+    elif "id" in json_data and "name" in json_data:
+        frames = [json_data]
+    else:
+        frames = []
+    
+    if not frames:
+        return BulkImportResponse(
+            status="error",
+            message="No frames found in the JSON data",
+            imported_count=0
+        )
+    
+    imported = 0
+    errors = []
+    
+    for frame_data in frames:
+        try:
+            frame_id = frame_data.get("id", str(uuid.uuid4()))
+            existing = db.query(Frame).filter(Frame.id == frame_id).first()
+            if existing:
+                for key, value in frame_data.items():
+                    if key != "id" and hasattr(existing, key):
+                        setattr(existing, key, value)
+            else:
+                new_frame = Frame(
+                    id=frame_id,
+                    name=frame_data.get("name", "Unnamed Frame"),
+                    description=frame_data.get("description"),
+                    price_gems=frame_data.get("price_gems"),
+                    price_usd=frame_data.get("price_usd"),
+                    is_premium=frame_data.get("is_premium", False),
+                    bucket=frame_data.get("bucket"),
+                    object_key=frame_data.get("object_key"),
+                    mime_type=frame_data.get("mime_type"),
+                    created_at=datetime.utcnow()
+                )
+                db.add(new_frame)
+            imported += 1
+        except Exception as e:
+            errors.append(f"Error importing frame {frame_data.get('name', 'unknown')}: {str(e)}")
+    
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return BulkImportResponse(
+            status="error",
+            message=f"Database error: {str(e)}",
+            imported_count=0,
+            errors=[str(e)]
+        )
+    
+    return BulkImportResponse(
+        status="success",
+        message=f"Successfully imported {imported} frames",
+        imported_count=imported,
+        errors=errors
+    )
+
+@router.get("/avatars/stats", response_model=Dict[str, Any])
+async def get_avatar_stats(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
+):
+    """Admin endpoint to get statistics about avatars usage"""
+    from sqlalchemy import func
+    
+    total_avatars = db.query(Avatar).count()
+    default_avatars = db.query(Avatar).filter(Avatar.is_default == True).count()
+    premium_avatars = db.query(Avatar).filter(Avatar.is_premium == True).count()
+    
+    free_avatars = db.query(Avatar).filter(
+        Avatar.price_gems.is_(None), 
+        Avatar.price_usd.is_(None)
+    ).count()
+    
+    gem_purchasable = db.query(Avatar).filter(
+        Avatar.price_gems.isnot(None)
+    ).count()
+    
+    usd_purchasable = db.query(Avatar).filter(
+        Avatar.price_usd.isnot(None)
+    ).count()
+    
+    # Get top 5 most popular avatars
+    top_avatars = db.query(
+        Avatar.id,
+        Avatar.name,
+        func.count(UserAvatar.avatar_id).label('purchase_count')
+    ).join(
+        UserAvatar, UserAvatar.avatar_id == Avatar.id
+    ).group_by(
+        Avatar.id, Avatar.name
+    ).order_by(
+        func.desc('purchase_count')
+    ).limit(5).all()
+    
+    top_avatars_data = [
+        {"id": avatar.id, "name": avatar.name, "purchase_count": avatar.purchase_count}
+        for avatar in top_avatars
+    ]
+    
+    return {
+        "total_avatars": total_avatars,
+        "default_avatars": default_avatars,
+        "premium_avatars": premium_avatars,
+        "free_avatars": free_avatars,
+        "gem_purchasable": gem_purchasable,
+        "usd_purchasable": usd_purchasable,
+        "top_avatars": top_avatars_data
     } 

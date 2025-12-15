@@ -708,135 +708,10 @@ class LiveChatViewer(Base):
     user = relationship("User", backref="live_chat_viewers")
 
 # =================================
-#  E2EE Devices Table
-# =================================
-class E2EEDevice(Base):
-    __tablename__ = "z_e2ee_devices"
-    
-    device_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
-    device_name = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_seen_at = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, nullable=False, default="active")  # 'active', 'revoked'
-    
-    # Relationships
-    user = relationship("User", backref="e2ee_devices")
-    key_bundle = relationship("E2EEKeyBundle", back_populates="device", uselist=False)
-    one_time_prekeys = relationship("E2EEOneTimePrekey", back_populates="device")
-
-# =================================
-#  E2EE Key Bundles Table
-# =================================
-class E2EEKeyBundle(Base):
-    __tablename__ = "z_e2ee_key_bundles"
-    
-    device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), primary_key=True, unique=True)
-    identity_key_pub = Column(String, nullable=False)  # Base64 encoded
-    signed_prekey_pub = Column(String, nullable=False)  # Base64 encoded
-    signed_prekey_sig = Column(String, nullable=False)  # Base64 encoded signature
-    prekeys_remaining = Column(Integer, nullable=False, default=0)
-    bundle_version = Column(Integer, nullable=False, default=1)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relationships
-    device = relationship("E2EEDevice", back_populates="key_bundle")
-
-# =================================
-#  E2EE One-Time Prekeys Table
-# =================================
-class E2EEOneTimePrekey(Base):
-    __tablename__ = "z_e2ee_one_time_prekeys"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), nullable=False)
-    prekey_pub = Column(String, nullable=False)  # Base64 encoded
-    claimed = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationships
-    device = relationship("E2EEDevice", back_populates="one_time_prekeys")
-
-# =================================
-#  DM Conversations Table
-# =================================
-class DMConversation(Base):
-    __tablename__ = "z_dm_conversations"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    last_message_at = Column(DateTime, nullable=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    sealed_sender_enabled = Column(Boolean, nullable=False, default=False)
-    
-    # Relationships
-    participants = relationship("DMParticipant", back_populates="conversation")
-    messages = relationship("DMMessage", back_populates="conversation")
-
-# =================================
-#  DM Participants Table
-# =================================
-class DMParticipant(Base):
-    __tablename__ = "z_dm_participants"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("z_dm_conversations.id"), nullable=False, index=True)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
-    device_ids = Column(JSONB, nullable=True)  # Array of device UUIDs
-    
-    # Relationships
-    conversation = relationship("DMConversation", back_populates="participants")
-    user = relationship("User", backref="dm_participants")
-    
-    __table_args__ = (
-        UniqueConstraint('conversation_id', 'user_id', name='uq_dm_participants_conversation_user'),
-    )
-
-# =================================
-#  DM Messages Table
-# =================================
-class DMMessage(Base):
-    __tablename__ = "z_dm_messages"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("z_dm_conversations.id"), nullable=False, index=True)
-    sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), nullable=False)
-    ciphertext = Column(LargeBinary, nullable=False)  # Binary encrypted payload
-    proto = Column(Integer, nullable=False)  # 1=DR message, 2=PreKey message
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    client_message_id = Column(String, unique=True, nullable=True)  # For idempotency
-    
-    # Relationships
-    conversation = relationship("DMConversation", back_populates="messages")
-    sender_user = relationship("User", foreign_keys=[sender_user_id], backref="dm_messages_sent")
-    sender_device = relationship("E2EEDevice", foreign_keys=[sender_device_id])
-    delivery_records = relationship("DMDelivery", back_populates="message")
-
-# =================================
-#  DM Delivery Table
-# =================================
-class DMDelivery(Base):
-    __tablename__ = "z_dm_delivery"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    message_id = Column(UUID(as_uuid=True), ForeignKey("z_dm_messages.id"), nullable=False)
-    recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
-    delivered_at = Column(DateTime, nullable=True)
-    read_at = Column(DateTime, nullable=True, index=True)
-    
-    # Relationships
-    message = relationship("DMMessage", back_populates="delivery_records")
-    recipient_user = relationship("User", foreign_keys=[recipient_user_id], backref="dm_messages_received")
-    
-    __table_args__ = (
-        UniqueConstraint('message_id', 'recipient_user_id', name='uq_dm_delivery_message_recipient'),
-    )
-
-# =================================
 #  Blocks Table
 # =================================
 class Block(Base):
-    __tablename__ = "z_blocks"
+    __tablename__ = "blocks"
     
     id = Column(Integer, primary_key=True, index=True)
     blocker_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
@@ -852,181 +727,16 @@ class Block(Base):
     )
 
 # =================================
-#  Device Revocations Table
+#  Groups Tables (REMOVED - unused z_ tables)
 # =================================
-class DeviceRevocation(Base):
-    __tablename__ = "z_device_revocations"
-    
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
-    device_id = Column(UUID(as_uuid=True), nullable=False, primary_key=True)
-    revoked_at = Column(DateTime, default=datetime.utcnow)
-    reason = Column(String, nullable=True)
+# All Group, Status, E2EE, and DM model classes have been removed
+# as they are unused z_ tables
 
 # =================================
-#  Groups Tables
+#  User Presence Table
 # =================================
-
-class Group(Base):
-    __tablename__ = "z_groups"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    title = Column(String, nullable=False)
-    about = Column(String, nullable=True)
-    photo_url = Column(String, nullable=True)
-    created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    max_participants = Column(Integer, nullable=False, default=100)
-    group_epoch = Column(Integer, nullable=False, default=0, index=True)
-    is_closed = Column(Boolean, nullable=False, default=False)
-    
-    # Relationships
-    creator = relationship("User", foreign_keys=[created_by], backref="groups_created")
-    participants = relationship("GroupParticipant", back_populates="group")
-    messages = relationship("GroupMessage", back_populates="group")
-
-
-class GroupParticipant(Base):
-    __tablename__ = "z_group_participants"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, index=True)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
-    role = Column(SQLEnum('owner', 'admin', 'member', name='grouprole'), nullable=False, default='member')
-    joined_at = Column(DateTime, default=datetime.utcnow)
-    mute_until = Column(DateTime, nullable=True)
-    is_banned = Column(Boolean, nullable=False, default=False)
-    
-    # Relationships
-    group = relationship("Group", back_populates="participants")
-    user = relationship("User", backref="group_participants")
-    
-    __table_args__ = (
-        UniqueConstraint('group_id', 'user_id', name='uq_group_participants_group_user'),
-    )
-
-
-class GroupMessage(Base):
-    __tablename__ = "z_group_messages"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, index=True)
-    sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), nullable=False)
-    ciphertext = Column(LargeBinary, nullable=False)
-    proto = Column(Integer, nullable=False)  # 10=sender-key msg, 11=sender-key distribution
-    group_epoch = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    client_message_id = Column(String, unique=True, nullable=True)
-    reply_to_message_id = Column(UUID(as_uuid=True), ForeignKey("z_group_messages.id"), nullable=True, index=True)  # Reply to another message
-    
-    # Relationships
-    group = relationship("Group", back_populates="messages")
-    sender = relationship("User", foreign_keys=[sender_user_id], backref="group_messages_sent")
-    sender_device = relationship("E2EEDevice", foreign_keys=[sender_device_id])
-    delivery_records = relationship("GroupDelivery", back_populates="message")
-    reply_to_message = relationship("GroupMessage", remote_side=[id], backref="replies")
-
-
-class GroupDelivery(Base):
-    __tablename__ = "z_group_delivery"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    message_id = Column(UUID(as_uuid=True), ForeignKey("z_group_messages.id"), nullable=False)
-    recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
-    delivered_at = Column(DateTime, nullable=True)
-    read_at = Column(DateTime, nullable=True, index=True)
-    
-    # Relationships
-    message = relationship("GroupMessage", back_populates="delivery_records")
-    recipient_user = relationship("User", foreign_keys=[recipient_user_id], backref="group_messages_received")
-    
-    __table_args__ = (
-        UniqueConstraint('message_id', 'recipient_user_id', name='uq_group_delivery_message_recipient'),
-    )
-
-
-class GroupSenderKey(Base):
-    __tablename__ = "z_group_sender_keys"
-    
-    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, primary_key=True)
-    sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
-    sender_device_id = Column(UUID(as_uuid=True), ForeignKey("z_e2ee_devices.device_id"), nullable=False, primary_key=True)
-    group_epoch = Column(Integer, nullable=False, primary_key=True)
-    sender_key_id = Column(UUID(as_uuid=True), nullable=False)
-    current_chain_index = Column(Integer, nullable=False, default=0)
-    rotated_at = Column(DateTime, nullable=True)
-
-
-class GroupInvite(Base):
-    __tablename__ = "z_group_invites"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, index=True)
-    created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    type = Column(SQLEnum('link', 'direct', name='invitetype'), nullable=False)
-    code = Column(String, unique=True, nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=True)
-    max_uses = Column(Integer, nullable=True)
-    uses = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class GroupBan(Base):
-    __tablename__ = "z_group_bans"
-    
-    group_id = Column(UUID(as_uuid=True), ForeignKey("z_groups.id"), nullable=False, primary_key=True)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True, index=True)
-    banned_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    reason = Column(String, nullable=True)
-    banned_at = Column(DateTime, default=datetime.utcnow)
-
-# =================================
-#  Status Tables
-# =================================
-
-class StatusPost(Base):
-    __tablename__ = "z_status_posts"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    expires_at = Column(DateTime, nullable=True, index=True)
-    media_meta = Column(JSONB, nullable=True)
-    audience_mode = Column(SQLEnum('contacts', 'custom', name='audiencemode'), nullable=False, default='contacts')
-    post_epoch = Column(Integer, nullable=False, default=0)
-    
-    # Relationships
-    owner = relationship("User", foreign_keys=[owner_user_id], backref="status_posts")
-    audience = relationship("StatusAudience", back_populates="post")
-    views = relationship("StatusView", back_populates="post")
-
-
-class StatusAudience(Base):
-    __tablename__ = "z_status_audience"
-    
-    post_id = Column(UUID(as_uuid=True), ForeignKey("z_status_posts.id"), nullable=False, primary_key=True)
-    viewer_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True, index=True)
-    
-    # Relationships
-    post = relationship("StatusPost", back_populates="audience")
-    viewer = relationship("User", foreign_keys=[viewer_user_id])
-
-
-class StatusView(Base):
-    __tablename__ = "z_status_views"
-    
-    post_id = Column(UUID(as_uuid=True), ForeignKey("z_status_posts.id"), nullable=False, primary_key=True)
-    viewer_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True, index=True)
-    viewed_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationships
-    post = relationship("StatusPost", back_populates="views")
-    viewer = relationship("User", foreign_keys=[viewer_user_id])
-
-
 class UserPresence(Base):
-    __tablename__ = "z_user_presence"
+    __tablename__ = "user_presence"
     
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
     last_seen_at = Column(DateTime, nullable=True)
@@ -1035,7 +745,6 @@ class UserPresence(Base):
     
     # Relationships
     user = relationship("User", backref="presence", uselist=False)
-
 
 
 
