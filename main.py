@@ -289,9 +289,9 @@ app.include_router(notifications.router) # Notifications endpoints
 # Presence router (gated behind feature flag)
 if PRESENCE_ENABLED:
     try:
-    from routers import presence
-    app.include_router(presence.router)          # Presence/privacy settings
-    logger.info("Presence feature enabled - routers registered")
+        from routers import presence
+        app.include_router(presence.router)          # Presence/privacy settings
+        logger.info("Presence feature enabled - routers registered")
     except ImportError as e:
         logger.warning(f"Presence feature enabled but required models are missing: {e}. Disabling Presence router.")
 else:

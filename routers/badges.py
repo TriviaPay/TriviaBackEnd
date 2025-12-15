@@ -9,14 +9,20 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 from db import get_db
-from models import Badge, User
+from models import User
+# Badge model removed - merged into TriviaModeConfig
+# All badge admin endpoints moved to routers/admin.py
 from routers.dependencies import get_current_user
 
 router = APIRouter(prefix="/badges", tags=["Badges"])
 
+# NOTE: This router is deprecated - all badge endpoints have been moved to routers/admin.py
+# Badge functionality is now managed via TriviaModeConfig
+
 logger = logging.getLogger(__name__)
 
 # ======== Helper Functions ========
+# NOTE: Helper functions below are deprecated - badge management moved to admin.py
 
 def validate_badge_url_is_public(image_url: str) -> bool:
     """
@@ -54,6 +60,7 @@ def validate_badge_url_is_public(image_url: str) -> bool:
     return False
 
 # ======== Pydantic Models for Request/Response Validation ========
+# NOTE: Pydantic models below are deprecated - badge management moved to admin.py
 
 class BadgeBase(BaseModel):
     """

@@ -41,11 +41,10 @@ from rewards_logic import (
     calculate_winner_count, 
     calculate_prize_distribution, 
     calculate_prize_pool,
-    get_eligible_participants,
     reset_daily_eligibility_flags,
-    reset_monthly_subscriptions,
-    update_user_eligibility
+    reset_monthly_subscriptions
 )
+# Legacy functions removed: get_eligible_participants, update_user_eligibility (TriviaUserDaily table deleted)
 
 # ======== Helper Functions ========
 

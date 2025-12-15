@@ -9,9 +9,9 @@ from models import (
     User,
     TriviaUserFreeModeDaily,
     TriviaUserBronzeModeDaily,
-    TriviaUserSilverModeDaily,
-    TriviaUserDaily
+    TriviaUserSilverModeDaily
 )
+# TriviaUserDaily removed - legacy table deleted
 
 logger = logging.getLogger(__name__)
 
@@ -57,20 +57,12 @@ def count_total_correct_answers(user: User, db: Session) -> int:
         )
     ).scalar() or 0
     
-    # Count legacy trivia CORRECT answers only
-    legacy_count = db.query(func.count(TriviaUserDaily.account_id)).filter(
-        and_(
-            TriviaUserDaily.account_id == user.account_id,
-            TriviaUserDaily.status == 'answered_correct',
-            TriviaUserDaily.is_correct == True
-        )
-    ).scalar() or 0
-    
-    total_count = free_mode_count + bronze_mode_count + silver_mode_count + legacy_count
+    # Legacy TriviaUserDaily removed - only count mode-specific tables
+    total_count = free_mode_count + bronze_mode_count + silver_mode_count
     
     logger.debug(f"User {user.account_id} has {total_count} CORRECT answers total "
                 f"(free: {free_mode_count}, bronze: {bronze_mode_count}, "
-                f"silver: {silver_mode_count}, legacy: {legacy_count})")
+                f"silver: {silver_mode_count})")
     
     return total_count
 
