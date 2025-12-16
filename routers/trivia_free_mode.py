@@ -254,8 +254,18 @@ async def get_free_mode_status(
         TriviaUserFreeModeDaily.date == target_date
     ).order_by(TriviaUserFreeModeDaily.question_order).all()
     
-    # Count correct answers
-    correct_count = sum(1 for a in user_attempts if a.is_correct is True and a.status == 'answered_correct')
+    # Count correct answers - ensure all 3 questions (order 1, 2, 3) are answered correctly
+    # Filter to only the first 3 questions
+    first_three_attempts = [a for a in user_attempts if a.question_order in [1, 2, 3]]
+    
+    # Count how many are correct (use == True instead of is True for database booleans)
+    correct_attempts = [a for a in first_three_attempts if a.is_correct == True and a.status == 'answered_correct']
+    correct_count = len(correct_attempts)
+    
+    # Verify we have exactly 3 correct answers for questions 1, 2, 3
+    correct_question_orders = {a.question_order for a in correct_attempts}
+    all_three_completed = correct_count == 3 and correct_question_orders == {1, 2, 3}
+    
     total_questions = 3
     
     # Get completion time
@@ -294,7 +304,7 @@ async def get_free_mode_status(
         'progress': {
             'correct_answers': correct_count,
             'total_questions': total_questions,
-            'completed': correct_count == total_questions
+            'completed': all_three_completed  # Use the more robust check
         },
         'completion_time': third_question.third_question_completed_at.isoformat() if third_question else None,
         'is_winner': is_winner,
