@@ -254,9 +254,13 @@ async def get_free_mode_status(
         TriviaUserFreeModeDaily.date == target_date
     ).order_by(TriviaUserFreeModeDaily.question_order).all()
     
-    # Count correct answers - ensure all 3 questions (order 1, 2, 3) are answered correctly
+    # Count answers and correct answers - ensure all 3 questions (order 1, 2, 3) are checked
     # Filter to only the first 3 questions
     first_three_attempts = [a for a in user_attempts if a.question_order in [1, 2, 3]]
+    
+    # Count how many questions have been answered (regardless of correctness)
+    answered_attempts = [a for a in first_three_attempts if a.status in ['answered_correct', 'answered_wrong']]
+    questions_answered = len(answered_attempts)
     
     # Count how many are correct (use == True instead of is True for database booleans)
     correct_attempts = [a for a in first_three_attempts if a.is_correct == True and a.status == 'answered_correct']
@@ -264,7 +268,7 @@ async def get_free_mode_status(
     
     # Verify we have exactly 3 correct answers for questions 1, 2, 3
     correct_question_orders = {a.question_order for a in correct_attempts}
-    all_three_completed = correct_count == 3 and correct_question_orders == {1, 2, 3}
+    all_three_completed_correctly = correct_count == 3 and correct_question_orders == {1, 2, 3}
     
     total_questions = 3
     
@@ -302,9 +306,11 @@ async def get_free_mode_status(
     
     return {
         'progress': {
-            'correct_answers': correct_count,
+            'questions_answered': questions_answered,  # How many questions have been answered (0-3)
+            'correct_answers': correct_count,  # How many are correct (0-3)
             'total_questions': total_questions,
-            'completed': all_three_completed  # Use the more robust check
+            'completed': all_three_completed_correctly,  # True only if all 3 questions answered correctly
+            'all_questions_answered': questions_answered == total_questions  # True if all questions attempted (regardless of correctness)
         },
         'completion_time': third_question.third_question_completed_at.isoformat() if third_question else None,
         'is_winner': is_winner,
