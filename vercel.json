@@ -9,11 +9,6 @@
       }
     }
   ],
-  "functions": {
-    "main.py": {
-      "excludeFiles": "{.trace_coverage_*/**,tests/**,test_*.py,*.log,server_log.txt,README*.md,*.md,.pytest_cache/**,__pycache__/**,.pycache/**,.vercel/**,scripts/**,api/**}"
-    }
-  },
   "routes": [
     {
       "src": "/(.*)",
