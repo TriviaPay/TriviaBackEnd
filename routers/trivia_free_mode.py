@@ -6,14 +6,21 @@ from typing import Optional
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from pydantic import BaseModel
 
 from db import get_db
 from routers.dependencies import get_current_user
-from models import User, TriviaFreeModeWinners, TriviaFreeModeLeaderboard
+from models import (
+    User,
+    TriviaFreeModeWinners,
+    TriviaFreeModeLeaderboard,
+    TriviaQuestionsFreeMode,
+    TriviaQuestionsFreeModeDaily,
+)
 from utils.trivia_mode_service import (
     get_daily_questions_for_mode, submit_answer_for_mode,
-    get_active_draw_date, get_mode_config
+    get_active_draw_date, get_mode_config, get_date_range_for_query
 )
 from utils.free_mode_rewards import (
     get_eligible_participants_free_mode, rank_participants_by_completion,
@@ -59,6 +66,25 @@ async def get_current_free_mode_question(
     questions = get_daily_questions_for_mode(db, 'free_mode', user)
     
     if not questions:
+        target_date = get_active_draw_date()
+        start_range, end_range = get_date_range_for_query(target_date)
+        daily_allocated = (
+            db.query(func.count(TriviaQuestionsFreeModeDaily.id))
+            .filter(
+                TriviaQuestionsFreeModeDaily.date >= start_range,
+                TriviaQuestionsFreeModeDaily.date <= end_range,
+            )
+            .scalar()
+            or 0
+        )
+        pool_size = db.query(func.count(TriviaQuestionsFreeMode.id)).scalar() or 0
+        logger.warning(
+            "No questions available for today | "
+            f"user_id={user.account_id} | "
+            f"target_date={target_date.isoformat()} | "
+            f"daily_allocated={daily_allocated} | "
+            f"pool_size={pool_size}"
+        )
         raise HTTPException(status_code=404, detail="No questions available for today")
     
     # Find the first unanswered question

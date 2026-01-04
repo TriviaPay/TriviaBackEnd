@@ -126,6 +126,33 @@ def get_date_range_for_query(target_date: date):
     return start_utc, end_utc
 
 
+def _ensure_mode_config(db: Session, mode_id: str) -> Optional[TriviaModeConfig]:
+    """
+    Ensure a mode config exists; create a default for free_mode if missing.
+    """
+    mode_config = get_mode_config(db, mode_id)
+    if not mode_config and mode_id == "free_mode":
+        try:
+            mode_config = TriviaModeConfig(
+                mode_id="free_mode",
+                mode_name="Free Mode",
+                questions_count=3,
+                reward_distribution='{"winner_count_formula": "tiered", "tiered_config": {"default": 1}, "gem_shares": [100]}',
+                amount=0.0,
+                leaderboard_types='["daily"]',
+                ad_config="{}",
+                survey_config="{}",
+            )
+            db.add(mode_config)
+            db.commit()
+            logger.info("Created default Free Mode config")
+        except Exception as exc:
+            db.rollback()
+            logger.error(f"Failed to create Free Mode config: {exc}", exc_info=True)
+            return None
+    return mode_config
+
+
 def get_daily_questions_for_mode(
     db: Session,
     mode_id: str,
@@ -147,9 +174,9 @@ def get_daily_questions_for_mode(
     if target_date is None:
         target_date = get_active_draw_date()
     
-    # Get mode config
-    mode_config = get_mode_config(db, mode_id)
+    mode_config = _ensure_mode_config(db, mode_id)
     if not mode_config:
+        logger.error(f"Mode config missing for mode_id={mode_id}, cannot load questions")
         return []
     
     # Get questions based on mode

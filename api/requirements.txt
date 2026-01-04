@@ -3,12 +3,12 @@ uvicorn==0.25.0
 sqlalchemy==1.4.27
 PyJWT==2.8.0
 pydantic==2.6.4
-python-multipart==0.0.12
+python-multipart==0.0.18
 passlib==1.7.4
 python-dotenv==1.0.0
 alembic==1.7.5
-requests==2.32.3
-pg8000==1.31.1
+requests==2.32.4
+pg8000==1.31.5
 pytz==2023.3
 apscheduler==3.10.1
 email-validator==2.1.0
