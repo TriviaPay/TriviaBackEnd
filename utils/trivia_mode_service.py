@@ -335,7 +335,7 @@ def get_free_mode_questions(db: Session, user: User, target_date: date) -> List[
             'option_b': question.option_b,
             'option_c': question.option_c,
             'option_d': question.option_d,
-            'correct_answer': question.correct_answer,
+            'correct_answer': get_correct_answer_letter(question),
             'hint': question.hint,
             'fill_in_answer': user_attempt.user_answer if user_attempt and user_attempt.user_answer else None,  # User's submitted answer
             'explanation': question.explanation,
@@ -496,6 +496,38 @@ def validate_entry_amount(user: User, mode_config: TriviaModeConfig) -> tuple[bo
         return False, f"Insufficient balance. Required: ${mode_config.amount:.2f}"
     
     return True, ""
+
+
+def get_correct_answer_letter(question: Any) -> str:
+    """
+    Normalize the question's correct answer to a letter (A-D).
+    Handles values such as 'option_a', 'Option A', or the textual option value.
+    """
+    if not question:
+        return ""
+
+    raw = getattr(question, "correct_answer", "") or ""
+    normalized = raw.strip().lower()
+    if not normalized:
+        return ""
+
+    letter_map = {
+        "option_a": "A",
+        "option_b": "B",
+        "option_c": "C",
+        "option_d": "D",
+    }
+
+    if normalized in {"a", "b", "c", "d"}:
+        return normalized.lower()
+    if normalized in letter_map:
+        return letter_map[normalized].lower()
+
+    for attr, letter in letter_map.items():
+        value = getattr(question, attr, "")
+        if value and value.strip().lower() == normalized:
+            return letter.lower()
+    return normalized.lower()
 
 
 def check_question_duplicate(db: Session, question_text: str, mode_id: str) -> bool:

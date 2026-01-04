@@ -17,7 +17,12 @@ from models import (
     TriviaQuestionsBronzeModeDaily, TriviaUserBronzeModeDaily,
     TriviaQuestionsBronzeMode
 )
-from utils.trivia_mode_service import get_active_draw_date, get_mode_config, get_date_range_for_query
+from utils.trivia_mode_service import (
+    get_active_draw_date,
+    get_mode_config,
+    get_date_range_for_query,
+    get_correct_answer_letter,
+)
 from utils.subscription_service import check_mode_access
 from models import TriviaModeConfig
 import json
@@ -191,7 +196,7 @@ async def get_bronze_mode_question(
         'option_b': question.option_b,
         'option_c': question.option_c,
         'option_d': question.option_d,
-        'correct_answer': question.correct_answer,
+        'correct_answer': get_correct_answer_letter(question),
         'hint': question.hint,
         'fill_in_answer': user_attempt.user_answer if user_attempt and user_attempt.user_answer else None,  # User's submitted answer
         'explanation': question.explanation,
