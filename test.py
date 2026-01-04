@@ -3,7 +3,7 @@ import os
 import json
 from dotenv import load_dotenv
 import random
-import jose.jwt  # Use python-jose for consistent JWT encoding
+import jwt
 
 # Load environment variables
 load_dotenv()
@@ -45,8 +45,8 @@ def generate_test_token(email):
         "scope": "openid profile email"
     }
     
-    # Encode the token using python-jose
-    token = jose.jwt.encode(
+    # Encode the token using PyJWT
+    token = jwt.encode(
         payload, 
         AUTH0_CLIENT_SECRET, 
         algorithm="HS256",
@@ -87,7 +87,7 @@ def generate_test_refresh_token(email):
     }
     
     # Encode the refresh token
-    refresh_token = jose.jwt.encode(
+    refresh_token = jwt.encode(
         payload, 
         AUTH0_CLIENT_SECRET, 
         algorithm="HS256",

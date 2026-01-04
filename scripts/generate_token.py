@@ -1,7 +1,7 @@
 import os
 import sys
 import datetime
-from jose import jwt  # Use jose library which is used by the auth module
+import jwt
 from dotenv import load_dotenv
 
 # Add the parent directory to the Python path to allow imports from parent

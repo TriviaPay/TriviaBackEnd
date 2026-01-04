@@ -12,4 +12,10 @@ README.md
 .vscode/
 .idea/
 *.log
-env copy 
+server_log.txt
+.trace_coverage_*/
+.pycache/
+.vercel/
+scripts/
+api/
+env copy

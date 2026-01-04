@@ -5,13 +5,14 @@ alembic==1.13.1
 python-dotenv==1.0.1
 passlib[bcrypt]==1.7.4
 bcrypt==3.2.2
-python-jose==3.3.0
-python-multipart==0.0.9
+PyJWT==2.8.0
+python-multipart==0.0.12
+requests==2.32.3
 descope>=1.7.0
 stripe>=5.0.0
 asyncpg>=0.29.0
 greenlet>=3.0.0  # Required for SQLAlchemy async
-pg8000==1.30.5  # Pure Python PostgreSQL driver
+pg8000==1.31.1  # Pure Python PostgreSQL driver
 apscheduler==3.10.4
 pytz==2024.1
 tzlocal==5.2
