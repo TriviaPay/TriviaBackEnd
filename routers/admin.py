@@ -318,7 +318,8 @@ async def upload_questions_csv(
             'errors': result['errors'][:10]  # Limit errors shown
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logging.warning("Invalid CSV upload", exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid CSV file")
 
 
 @router.get("/trivia/modes")
@@ -1563,17 +1564,20 @@ async def import_avatars_from_json(
                 db.add(new_avatar)
             imported += 1
         except Exception as e:
-            errors.append(f"Error importing avatar {avatar_data.get('name', 'unknown')}: {str(e)}")
+            name = avatar_data.get("name", "unknown")
+            logging.error(f"Error importing avatar {name}", exc_info=True)
+            errors.append(f"Error importing avatar {name}")
     
     try:
         db.commit()
     except Exception as e:
         db.rollback()
+        logging.error("Database error while importing avatars", exc_info=True)
         return BulkImportResponse(
             status="error",
-            message=f"Database error: {str(e)}",
+            message="Database error",
             imported_count=0,
-            errors=[str(e)]
+            errors=["Database error"]
         )
     
     return BulkImportResponse(
@@ -1632,17 +1636,20 @@ async def import_frames_from_json(
                 db.add(new_frame)
             imported += 1
         except Exception as e:
-            errors.append(f"Error importing frame {frame_data.get('name', 'unknown')}: {str(e)}")
+            name = frame_data.get("name", "unknown")
+            logging.error(f"Error importing frame {name}", exc_info=True)
+            errors.append(f"Error importing frame {name}")
     
     try:
         db.commit()
     except Exception as e:
         db.rollback()
+        logging.error("Database error while importing frames", exc_info=True)
         return BulkImportResponse(
             status="error",
-            message=f"Database error: {str(e)}",
+            message="Database error",
             imported_count=0,
-            errors=[str(e)]
+            errors=["Database error"]
         )
     
     return BulkImportResponse(

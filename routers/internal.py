@@ -491,10 +491,10 @@ def internal_free_mode_draw(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"💥 Fatal error in free mode draw: {str(e)}", exc_info=True)
+        logging.error("💥 Fatal error in free mode draw", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error in free mode draw: {str(e)}"
+            detail="Error in free mode draw"
         )
     finally:
         if lock_key is not None:
@@ -658,10 +658,10 @@ def internal_mode_draw(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"💥 Fatal error in {mode_id} draw: {str(e)}", exc_info=True)
+        logging.error(f"💥 Fatal error in {mode_id} draw", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error in {mode_id} draw: {str(e)}"
+            detail=f"Error in {mode_id} draw"
         )
     finally:
         if lock_key is not None:
@@ -693,8 +693,8 @@ class TriviaReminderRequest(BaseModel):
 @router.post("/trivia-reminder")
 def send_trivia_reminder(
     request: TriviaReminderRequest,
-    secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
     background_tasks: BackgroundTasks,
+    secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
     db: Session = Depends(get_db),
 ):
     """
@@ -766,8 +766,8 @@ def send_trivia_reminder(
         # Pass through HTTP errors unchanged
         raise
     except Exception as e:
-        logging.error(f"❌ Error in trivia reminder: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error("❌ Error in trivia reminder", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error sending trivia reminder")
 
 # Legacy /question-reset endpoint removed - TriviaQuestionsDaily and Trivia tables deleted
 # Use mode-specific question management instead
@@ -798,8 +798,8 @@ def internal_monthly_reset(
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        logging.error(f"Error in monthly reset: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error("Error in monthly reset", exc_info=True)
+        raise HTTPException(status_code=500, detail="Monthly reset failed")
 
 @router.post("/weekly-rewards-reset")
 def internal_weekly_rewards_reset(
@@ -823,8 +823,8 @@ def internal_weekly_rewards_reset(
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        logging.error(f"Error in weekly rewards reset: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error("Error in weekly rewards reset", exc_info=True)
+        raise HTTPException(status_code=500, detail="Weekly rewards reset failed")
 
 @router.post("/daily-revenue-update")
 def internal_daily_revenue_update(
@@ -848,8 +848,8 @@ def internal_daily_revenue_update(
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        logging.error(f"Error in daily revenue update: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error("Error in daily revenue update", exc_info=True)
+        raise HTTPException(status_code=500, detail="Daily revenue update failed")
 
 @router.get("/health")
 def internal_health():

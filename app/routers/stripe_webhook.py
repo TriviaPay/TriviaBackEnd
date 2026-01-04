@@ -49,10 +49,10 @@ async def stripe_webhook(
         # Verify webhook signature
         event = verify_webhook_signature(body, stripe_signature)
     except ValueError as e:
-        logger.error(f"Webhook signature verification failed: {str(e)}")
+        logger.error("Webhook signature verification failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid webhook signature: {str(e)}"
+            detail="Invalid webhook signature"
         )
     
     event_type = event['type']
@@ -295,7 +295,10 @@ async def stripe_webhook(
                 }
                 
             except ValueError as e:
-                logger.error(f"Failed to adjust wallet balance for PaymentIntent {payment_intent_id}: {str(e)}")
+                logger.error(
+                    f"Failed to adjust wallet balance for PaymentIntent {payment_intent_id}",
+                    exc_info=True,
+                )
                 await db.rollback()
                 # Still record event to prevent retry loops
                 transaction = WalletTransaction(
@@ -311,7 +314,7 @@ async def stripe_webhook(
                 )
                 db.add(transaction)
                 await db.commit()
-                return {"received": True, "status": "error", "error": str(e)}
+                return {"received": True, "status": "error"}
             
         elif event_type == "payment_intent.amount_capturable_updated":
             # Handle partial captures
@@ -367,10 +370,9 @@ async def stripe_webhook(
         return {"status": "processed", "event_id": event_id, "event_type": event_type}
         
     except Exception as e:
-        logger.error(f"Error processing webhook event {event_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error processing webhook event {event_id}", exc_info=True)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing webhook: {str(e)}"
+            detail="Error processing webhook"
         )
-

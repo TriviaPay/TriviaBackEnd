@@ -263,11 +263,10 @@ async def get_user_gems(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error retrieving gems: {str(e)}")
+        logging.error("Error retrieving gems", exc_info=True)
         return {
             "status": "error",
             "message": "An error occurred while retrieving gems",
-            "error": str(e)
         }
 
 class ExtendedProfileUpdate(BaseModel):
@@ -400,10 +399,10 @@ async def update_extended_profile(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error updating extended profile: {str(e)}")
+        logging.error("Error updating extended profile", exc_info=True)
         return {
             "status": "error",
-            "message": f"An unexpected error occurred: {str(e)}",
+            "message": "An unexpected error occurred",
             "code": "UNEXPECTED_ERROR"
         }
 
@@ -489,10 +488,10 @@ async def get_complete_profile(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error fetching complete profile: {str(e)}")
+        logging.error("Error fetching complete profile", exc_info=True)
         return {
             "status": "error",
-            "message": f"An unexpected error occurred: {str(e)}",
+            "message": "An unexpected error occurred",
             "code": "UNEXPECTED_ERROR"
         }
 
@@ -647,10 +646,10 @@ async def get_profile_summary(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error fetching profile summary: {str(e)}")
+        logging.error("Error fetching profile summary", exc_info=True)
         return {
             "status": "error",
-            "message": f"An unexpected error occurred: {str(e)}",
+            "message": "An unexpected error occurred",
             "code": "UNEXPECTED_ERROR",
         }
 
@@ -829,10 +828,10 @@ async def upload_profile_picture(
         raise
     except Exception as e:
         db.rollback()
-        logging.error(f"Error uploading profile picture: {str(e)}", exc_info=True)
+        logging.error("Error uploading profile picture", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"An error occurred while uploading profile picture: {str(e)}"
+            detail="An error occurred while uploading profile picture"
         )
 
 

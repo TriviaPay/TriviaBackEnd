@@ -26,6 +26,37 @@ _ENDPOINT_OVERRIDE_VARS = [
     "AWS_DEFAULT_REGION",  # Can cause clients to default to us-east-1/global
 ]
 
+def _extract_hostname(candidate: str) -> Optional[str]:
+    """
+    Best-effort extraction of a hostname from a URL or host-like string.
+    Returns a normalized lowercase hostname without any port.
+    """
+    if not candidate:
+        return None
+    try:
+        from urllib.parse import urlparse
+
+        if "://" in candidate:
+            parsed = urlparse(candidate)
+            return parsed.hostname.lower() if parsed.hostname else None
+
+        # Treat as host[:port][/...]
+        host = candidate.split("/", 1)[0]
+        # Drop potential userinfo
+        host = host.rsplit("@", 1)[-1]
+        # Drop port
+        host = host.split(":", 1)[0]
+        host = host.strip().lower()
+        return host or None
+    except Exception:
+        return None
+
+
+def _is_amazonaws_host(candidate: str) -> bool:
+    host = _extract_hostname(candidate)
+    return bool(host) and (host == "amazonaws.com" or host.endswith(".amazonaws.com"))
+
+
 def _check_endpoint_override_env_vars():
     """
     Check for environment variables that might override S3 endpoint.
@@ -41,7 +72,7 @@ def _check_endpoint_override_env_vars():
         logging.warning("S3 endpoint override environment variables detected (may cause PermanentRedirect):")
         for var, value in problematic_vars:
             # Mask secrets but show enough to diagnose
-            masked_value = value if "amazonaws.com" in value else "***"
+            masked_value = value if _is_amazonaws_host(value) else "***"
             logging.warning(f"  {var}={masked_value}")
         logging.warning("These may override explicit endpoint_url settings. Consider clearing them or setting to regional endpoint.")
 
@@ -129,27 +160,31 @@ def _assert_client_endpoint(client, region: str):
     """
     try:
         url = getattr(client.meta, "endpoint_url", "")
-        expected_pattern = f"s3.{region}.amazonaws.com"
+        host = _extract_hostname(url)
+        expected_host = f"s3.{region}.amazonaws.com"
+        expected_hosts = {expected_host, f"s3.dualstack.{region}.amazonaws.com"}
+        if region == "us-east-1":
+            expected_hosts.add("s3.amazonaws.com")
         
         # Check for problematic patterns
-        if not url:
+        if not url or not host:
             raise RuntimeError(f"S3 client endpoint_url is empty or None")
-        if "s3.amazonaws.com" in url and region != "us-east-1":
+        if host == "s3.amazonaws.com" and region != "us-east-1":
             # Global endpoint detected when we expect regional
             raise RuntimeError(
-                f"S3 client using global endpoint 's3.amazonaws.com' but expected regional '{expected_pattern}'. "
-                f"Full URL: {url}. This will cause PermanentRedirect errors. "
+                f"S3 client using global endpoint 's3.amazonaws.com' but expected regional '{expected_host}'. "
+                f"Full URL: {url} (host: {host}). This will cause PermanentRedirect errors. "
                 f"Check for endpoint override environment variables or proxy issues."
             )
-        if expected_pattern not in url:
+        if host not in expected_hosts:
             # Wrong regional endpoint
             raise RuntimeError(
-                f"S3 client endpoint mismatch: got '{url}' but expected to contain '{expected_pattern}'. "
+                f"S3 client endpoint mismatch: got '{url}' (host: {host}) but expected one of: {sorted(expected_hosts)}. "
                 f"This may cause PermanentRedirect errors."
             )
         
         # Success - log at debug level
-        logging.debug(f"S3 client endpoint verified: {url} (region: {region})")
+        logging.debug(f"S3 client endpoint verified: {url} (host: {host}, region: {region})")
     except RuntimeError:
         raise
     except Exception as e:
@@ -506,12 +541,15 @@ def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
         
         # Double-check the endpoint right before presigning (defensive)
         final_endpoint = getattr(s3.meta, "endpoint_url", "")
-        if "s3.us-east-2.amazonaws.com" not in final_endpoint and bucket_region == "us-east-2":
-            raise RuntimeError(
-                f"Endpoint verification failed immediately before presigning: {final_endpoint} "
-                f"(expected to contain 's3.us-east-2.amazonaws.com'). "
-                f"This indicates an endpoint override or SDK misconfiguration."
-            )
+        if bucket_region == "us-east-2":
+            final_host = _extract_hostname(final_endpoint)
+            allowed_hosts = {"s3.us-east-2.amazonaws.com", "s3.dualstack.us-east-2.amazonaws.com"}
+            if not final_host or final_host not in allowed_hosts:
+                raise RuntimeError(
+                    f"Endpoint verification failed immediately before presigning: {final_endpoint} "
+                    f"(host: {final_host}, expected one of: {sorted(allowed_hosts)}). "
+                    "This indicates an endpoint override or SDK misconfiguration."
+                )
         
         # Generate presigned URL
         url = s3.generate_presigned_url(
@@ -528,11 +566,12 @@ def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
         try:
             from urllib.parse import urlparse
             parsed = urlparse(url)
-            host = parsed.netloc
+            host = parsed.hostname.lower() if parsed.hostname else ""
             logging.debug(f"Generated presigned URL for bucket={bucket}, key={key}, region={bucket_region}, style={addressing_style}, host={host}")
             
             # Warn if we detect global endpoint in generated URL (should never happen with our fixes)
-            if bucket_region != "us-east-1" and ("s3.amazonaws.com" in host and host != f"s3.{bucket_region}.amazonaws.com"):
+            is_global_host = host == "s3.amazonaws.com" or host.endswith(".s3.amazonaws.com")
+            if bucket_region != "us-east-1" and is_global_host:
                 logging.error(
                     f"WARNING: Presigned URL contains global endpoint in host '{host}' for non-us-east-1 region '{bucket_region}'. "
                     f"This should never happen - investigate immediately!"

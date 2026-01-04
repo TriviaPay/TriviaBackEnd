@@ -18,9 +18,7 @@ if ONESIGNAL_ENABLED:
     logger.info(
         f"OneSignal configured: ENABLED=True, "
         f"APP_ID_SET={bool(ONESIGNAL_APP_ID)} (len={app_id_len}, expected ~36 for UUID), "
-        f"REST_KEY_SET={bool(ONESIGNAL_REST_API_KEY)} (len={rest_key_len}, expected ~40-50 for legacy or ~110 for v2), "
-        f"APP_ID_PREFIX={ONESIGNAL_APP_ID[:8] + '...' if ONESIGNAL_APP_ID and len(ONESIGNAL_APP_ID) > 8 else 'NOT_SET'}, "
-        f"REST_KEY_PREFIX={ONESIGNAL_REST_API_KEY[:8] + '...' if ONESIGNAL_REST_API_KEY and len(ONESIGNAL_REST_API_KEY) > 8 else 'NOT_SET'}"
+        f"REST_KEY_SET={bool(ONESIGNAL_REST_API_KEY)} (len={rest_key_len}, expected ~40-50 for legacy or ~110 for v2)"
     )
     # Warn if key lengths look suspicious
     if ONESIGNAL_APP_ID and app_id_len != 36:
@@ -110,15 +108,12 @@ async def send_push_notification_async(
     }
     
     # Detailed debug logging for auth diagnostics
-    auth_header_prefix = headers["Authorization"].split()[0] if headers["Authorization"] else "MISSING"
     logger.debug(
         f"OneSignal request debug: "
         f"URL={ONESIGNAL_API_URL}, "
-        f"app_id={ONESIGNAL_APP_ID[:8] + '...' if ONESIGNAL_APP_ID and len(ONESIGNAL_APP_ID) > 8 else 'NOT_SET'}, "
+        f"app_id_set={bool(ONESIGNAL_APP_ID)}, "
         f"app_id_full_len={len(ONESIGNAL_APP_ID) if ONESIGNAL_APP_ID else 0}, "
-        f"auth_header_prefix={auth_header_prefix}, "
         f"rest_key_len={len(ONESIGNAL_REST_API_KEY) if ONESIGNAL_REST_API_KEY else 0}, "
-        f"rest_key_first_8={ONESIGNAL_REST_API_KEY[:8] + '...' if ONESIGNAL_REST_API_KEY and len(ONESIGNAL_REST_API_KEY) > 8 else 'NOT_SET'}, "
         f"player_count={len(player_ids)}"
     )
     
@@ -147,20 +142,11 @@ async def send_push_notification_async(
             
             return True
     except httpx.HTTPStatusError as e:
-        # Log full error details for debugging
-        error_detail = e.response.text
-        auth_header_prefix = headers["Authorization"].split()[0] if headers["Authorization"] else "MISSING"
+        # Avoid logging raw response bodies; they may contain sensitive or identifying information.
+        content_type = e.response.headers.get("content-type", "unknown")
         logger.error(
-            f"❌ OneSignal API error: {e.response.status_code} - {error_detail}. "
-            f"Requested {len(player_ids)} players. "
-            f"Auth diagnostics: "
-            f"APP_ID={ONESIGNAL_APP_ID[:8] + '...' if ONESIGNAL_APP_ID and len(ONESIGNAL_APP_ID) > 8 else 'NOT_SET'} "
-            f"(len={len(ONESIGNAL_APP_ID) if ONESIGNAL_APP_ID else 0}), "
-            f"REST_KEY_SET={bool(ONESIGNAL_REST_API_KEY)} "
-            f"(len={len(ONESIGNAL_REST_API_KEY) if ONESIGNAL_REST_API_KEY else 0}), "
-            f"REST_KEY_PREFIX={ONESIGNAL_REST_API_KEY[:8] + '...' if ONESIGNAL_REST_API_KEY and len(ONESIGNAL_REST_API_KEY) > 8 else 'NOT_SET'}, "
-            f"auth_header_prefix={auth_header_prefix}, "
-            f"URL={ONESIGNAL_API_URL}"
+            f"❌ OneSignal API error: status={e.response.status_code}, content_type={content_type}, "
+            f"requested_players={len(player_ids)}, url={ONESIGNAL_API_URL}"
         )
         return False
     except Exception as e:
@@ -236,4 +222,3 @@ def get_user_player_ids(user_id: int, db: Session, valid_only: bool = True) -> L
     
     players = query.all()
     return [p[0] for p in players]
-

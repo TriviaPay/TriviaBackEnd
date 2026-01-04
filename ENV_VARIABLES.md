@@ -153,4 +153,3 @@ Get the publishable key for frontend use:
 - **URL**: `GET /api/v1/stripe/connect/publishable-key`
 - **Auth**: Not required (publishable keys are safe to expose)
 - **Response**: `{"publishable_key": "pk_test_..."}`
-

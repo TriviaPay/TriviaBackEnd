@@ -4,6 +4,9 @@ on:
   push:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
 env:
   TESTING: "false"  # Add this to explicitly disable testing
   SKIP_TESTS: "true"  # Add this to explicitly skip tests
