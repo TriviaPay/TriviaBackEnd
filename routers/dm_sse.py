@@ -417,3 +417,10 @@ async def dm_sse(
                 "Access-Control-Allow-Origin": "*",
             },
         )
+    except Exception:
+        # If we fail before the generator runs, ensure we release the per-user connection slot.
+        _active_dm_sse_connections[user_id].discard(connection_id)
+        if not _active_dm_sse_connections[user_id]:
+            del _active_dm_sse_connections[user_id]
+        logger.error(f"Failed to establish DM SSE stream: user={user_id_hash}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to establish DM SSE stream")
