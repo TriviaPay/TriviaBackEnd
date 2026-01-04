@@ -33,23 +33,42 @@ async def _check_connection_health(client: redis.Redis) -> bool:
 
 async def _create_redis_client() -> Optional[redis.Redis]:
     """Create a new Redis client with connection pool settings."""
-    try:
-        client = redis.from_url(
-            REDIS_URL,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-            retry_on_timeout=True,
-            health_check_interval=30,  # Check connection health every 30 seconds
-            retry_on_error=[ConnectionError, TimeoutError],
-        )
-        # Test the connection
-        await asyncio.wait_for(client.ping(), timeout=2.0)
-        log_info(logger, "Chat Redis client initialized and connected")
-        return client
-    except Exception as exc:
-        log_error(logger, f"Failed to initialize chat Redis client", exc_info=True, error=str(exc))
-        return None
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            client = redis.from_url(
+                REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                retry_on_timeout=True,
+                health_check_interval=30,  # Check connection health every 30 seconds
+                retry_on_error=[ConnectionError, TimeoutError, OSError],
+            )
+            # Test the connection
+            await asyncio.wait_for(client.ping(), timeout=2.0)
+            log_info(logger, "Chat Redis client initialized and connected")
+            return client
+        except (ConnectionError, TimeoutError, RedisError, OSError, asyncio.TimeoutError) as exc:
+            log_warning(
+                logger,
+                "Chat Redis initialization attempt failed",
+                attempt=attempt + 1,
+                max_attempts=max_attempts,
+                error=str(exc),
+                exc_info=True,
+            )
+            await asyncio.sleep(0.1 * (attempt + 1))
+        except Exception as exc:
+            log_error(logger, "Unexpected error while initializing chat Redis client", exc_info=True, error=str(exc))
+            return None
+
+    log_error(
+        logger,
+        "Failed to initialize chat Redis client after retries",
+        error="Max attempts reached",
+    )
+    return None
 
 
 async def get_chat_redis() -> Optional[redis.Redis]:

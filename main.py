@@ -217,6 +217,18 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 f"status={response.status_code} | time={process_time:.3f}s | user_id={user_id or 'anonymous'}"
             )
             
+            if response.status_code in {403, 404}:
+                detail_snippet = ""
+                if hasattr(response, "body"):
+                    body = getattr(response, "body")
+                    if isinstance(body, (bytes, str)) and body:
+                        snippet = body.decode("utf-8", errors="ignore") if isinstance(body, bytes) else body
+                        detail_snippet = snippet.strip().replace("\n", " ")[:200]
+                logger.warning(
+                    f"CLIENT_ERROR | id={request_id} | status={response.status_code} | "
+                    f"path={request.url.path} | user_id={user_id or 'anonymous'} | detail={detail_snippet or 'no detail'}"
+                )
+            
             # Add request ID to response headers for client tracking
             response.headers["X-Request-ID"] = request_id
             
