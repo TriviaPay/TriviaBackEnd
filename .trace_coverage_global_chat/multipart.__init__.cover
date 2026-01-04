@@ -1,0 +1,16 @@
+       # This is the canonical package information.
+    1: __author__ = "Andrew Dunham"
+    1: __license__ = "Apache"
+    1: __copyright__ = "Copyright (c) 2012-2013, Andrew Dunham"
+    1: __version__ = "0.0.9"
+       
+    1: from .multipart import FormParser, MultipartParser, OctetStreamParser, QuerystringParser, create_form_parser, parse_form
+       
+    1: __all__ = (
+           "FormParser",
+           "MultipartParser",
+           "OctetStreamParser",
+           "QuerystringParser",
+           "create_form_parser",
+           "parse_form",
+       )

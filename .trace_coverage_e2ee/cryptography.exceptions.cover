@@ -1,0 +1,52 @@
+       # This file is dual licensed under the terms of the Apache License, Version
+       # 2.0, and the BSD License. See the LICENSE file in the root of this repository
+       # for complete details.
+       
+    1: from __future__ import annotations
+       
+    1: import typing
+       
+    1: from cryptography.hazmat.bindings._rust import exceptions as rust_exceptions
+       
+    1: if typing.TYPE_CHECKING:
+>>>>>>     from cryptography.hazmat.bindings._rust import openssl as rust_openssl
+       
+    1: _Reasons = rust_exceptions._Reasons
+       
+       
+    2: class UnsupportedAlgorithm(Exception):
+    1:     def __init__(self, message: str, reason: _Reasons | None = None) -> None:
+>>>>>>         super().__init__(message)
+>>>>>>         self._reason = reason
+       
+       
+    2: class AlreadyFinalized(Exception):
+    1:     pass
+       
+       
+    2: class AlreadyUpdated(Exception):
+    1:     pass
+       
+       
+    2: class NotYetFinalized(Exception):
+    1:     pass
+       
+       
+    2: class InvalidTag(Exception):
+    1:     pass
+       
+       
+    2: class InvalidSignature(Exception):
+    1:     pass
+       
+       
+    2: class InternalError(Exception):
+    1:     def __init__(
+               self, msg: str, err_code: list[rust_openssl.OpenSSLError]
+           ) -> None:
+>>>>>>         super().__init__(msg)
+>>>>>>         self.err_code = err_code
+       
+       
+    2: class InvalidKey(Exception):
+    1:     pass

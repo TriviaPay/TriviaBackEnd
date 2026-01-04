@@ -20,6 +20,32 @@ This application is deployed on [Vercel](https://vercel.com) using the configura
 
 3. Access the API documentation at http://localhost:8000/docs
 
+## Docker
+
+### Build & Run the API locally
+
+```bash
+# Build the image (only needed the first time or when dependencies change)
+docker build -t triviapay-api .
+
+# Run the container (requires a populated .env file)
+docker run --env-file .env -p 8000:8000 triviapay-api
+```
+
+### Using Docker Compose
+
+The repository includes a `docker-compose.yml` that provisions the API, PostgreSQL, and Redis with sensible defaults.
+
+```bash
+# Start the full stack (API + Postgres + Redis)
+docker compose up --build
+
+# Tear everything down when finished
+docker compose down
+```
+
+The compose file automatically wires `DATABASE_URL` and `REDIS_URL` to the local Postgres/Redis containers unless they are already defined in your shell. Override them in your `.env` if you need to connect to external services.
+
 ## Configuration
 
 The application uses environment variables for configuration, which can be set in a `.env` file for local development.

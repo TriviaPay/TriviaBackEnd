@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
+import time
 
 from db import get_db
 from models import User, E2EEDevice, E2EEKeyBundle, E2EEOneTimePrekey, DMMessage, DMDelivery
 from routers.dependencies import get_current_user
-from config import E2EE_DM_ENABLED
+from config import E2EE_DM_ENABLED, E2EE_DM_METRICS_CACHE_SECONDS
 from utils.redis_pubsub import get_redis
 from routers.dm_sse import _active_dm_sse_connections
 
@@ -16,9 +17,20 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dm", tags=["DM Metrics"])
 
+_metrics_cache = {"ts": 0.0, "payload": None}
+
+
+def _get_cached_metrics(now_ts: float) -> Optional[Dict[str, Any]]:
+    if E2EE_DM_METRICS_CACHE_SECONDS <= 0:
+        return None
+    payload = _metrics_cache.get("payload")
+    if payload and (now_ts - _metrics_cache.get("ts", 0)) < E2EE_DM_METRICS_CACHE_SECONDS:
+        return payload
+    return None
+
 
 @router.get("/metrics")
-async def get_dm_metrics(
+def get_dm_metrics(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -38,6 +50,13 @@ async def get_dm_metrics(
     # Only allow admins to access metrics
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
+    
+    now_ts = time.time()
+    cached = _get_cached_metrics(now_ts)
+    if cached:
+        return cached
+    
+    now = datetime.utcnow()
     
     # Count active SSE connections
     total_sse_connections = sum(len(sessions) for sessions in _active_dm_sse_connections.values())
@@ -75,30 +94,26 @@ async def get_dm_metrics(
     
     # Signed prekey age tracking
     from config import E2EE_DM_SIGNED_PREKEY_MAX_AGE_DAYS
-    old_prekey_cutoff = datetime.utcnow() - timedelta(days=E2EE_DM_SIGNED_PREKEY_MAX_AGE_DAYS)
+    old_prekey_cutoff = now - timedelta(days=E2EE_DM_SIGNED_PREKEY_MAX_AGE_DAYS)
     old_prekeys = db.query(E2EEKeyBundle).filter(
         E2EEKeyBundle.updated_at < old_prekey_cutoff
     ).count()
     
     # Message stats
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    messages_today = db.query(DMMessage).filter(
-        DMMessage.created_at >= today_start
-    ).count()
-    
-    messages_last_hour = db.query(DMMessage).filter(
-        DMMessage.created_at >= datetime.utcnow() - timedelta(hours=1)
-    ).count()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    message_counts = db.query(
+        func.count(DMMessage.id).filter(DMMessage.created_at >= today_start).label("today"),
+        func.count(DMMessage.id).filter(DMMessage.created_at >= now - timedelta(hours=1)).label("last_hour")
+    ).one()
     
     # Delivery stats
-    undelivered_count = db.query(DMDelivery).filter(
-        DMDelivery.delivered_at.is_(None)
-    ).count()
-    
-    unread_count = db.query(DMDelivery).filter(
-        DMDelivery.read_at.is_(None),
-        DMDelivery.delivered_at.isnot(None)
-    ).count()
+    delivery_counts = db.query(
+        func.count(DMDelivery.id).filter(DMDelivery.delivered_at.is_(None)).label("undelivered"),
+        func.count(DMDelivery.id).filter(
+            DMDelivery.read_at.is_(None),
+            DMDelivery.delivered_at.isnot(None)
+        ).label("unread")
+    ).one()
     
     # Calculate delivery latency (p95/p99 would require more complex query)
     # For now, calculate average delivery time for messages delivered in last hour
@@ -109,24 +124,22 @@ async def get_dm_metrics(
     ).join(
         DMMessage, DMDelivery.message_id == DMMessage.id
     ).filter(
-        DMDelivery.delivered_at >= datetime.utcnow() - timedelta(hours=1),
+        DMDelivery.delivered_at >= now - timedelta(hours=1),
         DMDelivery.delivered_at.isnot(None)
     ).scalar()
     
     avg_delivery_ms = float(recent_deliveries) if recent_deliveries else 0
     
     # Device stats
-    total_devices = db.query(E2EEDevice).count()
-    active_devices = db.query(E2EEDevice).filter(
-        E2EEDevice.status == "active"
-    ).count()
-    revoked_devices = db.query(E2EEDevice).filter(
-        E2EEDevice.status == "revoked"
-    ).count()
+    device_counts = db.query(
+        func.count(E2EEDevice.device_id).label("total"),
+        func.count(E2EEDevice.device_id).filter(E2EEDevice.status == "active").label("active"),
+        func.count(E2EEDevice.device_id).filter(E2EEDevice.status == "revoked").label("revoked")
+    ).one()
     
-    return {
+    payload = {
         "status": "success",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": now.isoformat(),
         "metrics": {
             "sse_connections": {
                 "total": total_sse_connections,
@@ -151,19 +164,23 @@ async def get_dm_metrics(
                 "max_age_days": E2EE_DM_SIGNED_PREKEY_MAX_AGE_DAYS
             },
             "messages": {
-                "today": messages_today,
-                "last_hour": messages_last_hour
+                "today": message_counts.today,
+                "last_hour": message_counts.last_hour
             },
             "delivery": {
-                "undelivered": undelivered_count,
-                "unread": unread_count,
+                "undelivered": delivery_counts.undelivered,
+                "unread": delivery_counts.unread,
                 "avg_delivery_ms": round(avg_delivery_ms, 2)
             },
             "devices": {
-                "total": total_devices,
-                "active": active_devices,
-                "revoked": revoked_devices
+                "total": device_counts.total,
+                "active": device_counts.active,
+                "revoked": device_counts.revoked
             }
         }
     }
-
+    
+    _metrics_cache["ts"] = now_ts
+    _metrics_cache["payload"] = payload
+    
+    return payload

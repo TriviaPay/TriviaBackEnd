@@ -1,0 +1,31 @@
+    1: from typing import Iterable
+       
+       
+    2: class RequestTokenErr(Exception):
+    1:     """
+           Represents an exception during token request.
+           """
+       
+    1:     def __init__(self, *args):
+>>>>>>         super().__init__(*args)
+       
+       
+    2: class InvalidTokenSchemaErr(Exception):
+    1:     """
+           Represents an exception related to invalid token schema.
+           """
+       
+    1:     def __init__(self, missing_fields: Iterable[str] = []):
+>>>>>>         super().__init__(
+>>>>>>             "Unexpected token schema. Following fields are missing: "
+>>>>>>             + ", ".join(missing_fields)
+               )
+       
+       
+    2: class TokenRenewalErr(Exception):
+    1:     """
+           Represents an exception during token renewal process.
+           """
+       
+    1:     def __init__(self, *args):
+>>>>>>         super().__init__(*args)

@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_
+from sqlalchemy import and_, exc
 from datetime import datetime, timedelta
 from typing import Optional, Union
 
 from db import get_db
-from models import User, GlobalChatMessage, GlobalChatViewer, Avatar, Frame, TriviaModeConfig, UserSubscription, SubscriptionPlan
+from models import User, GlobalChatMessage, GlobalChatViewer
 from routers.dependencies import get_current_user
 from config import (
     GLOBAL_CHAT_ENABLED,
@@ -18,12 +18,10 @@ from config import (
 )
 from utils.pusher_client import publish_chat_message_sync
 from utils.message_sanitizer import sanitize_message
-from utils.chat_helpers import get_user_chat_profile_data
-from utils.storage import presign_get
-from utils.user_level_service import get_level_progress
-from utils.onesignal_client import send_push_notification_async, should_send_push, get_user_player_ids, is_user_active
-from utils.chat_mute import is_chat_muted
-from utils.chat_redis import check_burst_limit, check_rate_limit, enqueue_chat_event
+from utils.chat_helpers import get_user_chat_profile_data, get_user_chat_profile_data_bulk
+from utils.onesignal_client import send_push_notification_async, ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS
+from utils.chat_mute import get_muted_user_ids
+from utils.chat_redis import check_burst_limit, check_rate_limit, enqueue_chat_event, get_chat_redis
 from models import OneSignalPlayer
 import logging
 
@@ -100,6 +98,16 @@ def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_usern
             logger.debug("No OneSignal players found for global chat push")
             return
         
+        # Precompute muted users and active users to avoid per-user queries
+        player_user_ids = {player.user_id for player in all_players}
+        muted_user_ids = get_muted_user_ids(list(player_user_ids), 'global', db)
+        threshold_time = datetime.utcnow() - timedelta(seconds=ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS)
+        active_user_ids = {
+            player.user_id
+            for player in all_players
+            if player.last_active and player.last_active >= threshold_time
+        }
+
         # Batch player IDs separately for active (in-app) and inactive (system) users
         BATCH_SIZE = 2000
         active_player_batches = []  # In-app notifications
@@ -111,13 +119,10 @@ def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_usern
             user_id = player.user_id
             
             # Check if user has muted global chat
-            if is_chat_muted(user_id, 'global', db):
+            if user_id in muted_user_ids:
                 continue
             
-            # Check if user is active
-            is_active = is_user_active(user_id, db)
-            
-            if is_active:
+            if user_id in active_user_ids:
                 # Active user: in-app notification
                 active_current_batch.append(player.player_id)
                 if len(active_current_batch) >= BATCH_SIZE:
@@ -185,7 +190,7 @@ def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_usern
         total_inactive = sum(len(b) for b in inactive_player_batches)
         
         # Store notifications in database for all recipients
-        all_recipient_ids = [p.user_id for p in all_players if not is_chat_muted(p.user_id, 'global', db)]
+        all_recipient_ids = list(player_user_ids - muted_user_ids)
         if all_recipient_ids:
             create_notifications_batch(
                 db=db,
@@ -251,12 +256,14 @@ async def send_global_message(
         )
     if burst_allowed is None:
         burst_window_ago = datetime.utcnow() - timedelta(seconds=GLOBAL_CHAT_BURST_WINDOW_SECONDS)
-        recent_burst = db.query(GlobalChatMessage).filter(
+        recent_burst = db.query(GlobalChatMessage.id).filter(
             GlobalChatMessage.user_id == current_user.account_id,
             GlobalChatMessage.created_at >= burst_window_ago
-        ).count()
+        ).order_by(GlobalChatMessage.created_at.desc()).limit(
+            GLOBAL_CHAT_MAX_MESSAGES_PER_BURST
+        ).all()
         
-        if recent_burst >= GLOBAL_CHAT_MAX_MESSAGES_PER_BURST:
+        if len(recent_burst) >= GLOBAL_CHAT_MAX_MESSAGES_PER_BURST:
             raise HTTPException(
                 status_code=429,
                 detail=f"Burst rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_BURST} messages per {GLOBAL_CHAT_BURST_WINDOW_SECONDS} seconds."
@@ -276,12 +283,14 @@ async def send_global_message(
         )
     if minute_allowed is None:
         one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
-        recent_messages = db.query(GlobalChatMessage).filter(
+        recent_messages = db.query(GlobalChatMessage.id).filter(
             GlobalChatMessage.user_id == current_user.account_id,
             GlobalChatMessage.created_at >= one_minute_ago
-        ).count()
+        ).order_by(GlobalChatMessage.created_at.desc()).limit(
+            GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE
+        ).all()
         
-        if recent_messages >= GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE:
+        if len(recent_messages) >= GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE:
             raise HTTPException(
                 status_code=429,
                 detail=f"Rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
@@ -403,175 +412,8 @@ async def send_global_message(
 
 
 def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, dict]:
-    """
-    Batch load profile data for multiple users to avoid N+1 queries.
-    Returns a dict mapping user_id -> profile_data.
-    """
-    if not users:
-        return {}
-    
-    user_ids = [u.account_id for u in users]
-    profile_cache = {}
-    
-    # Batch load all avatars
-    avatar_ids = {u.selected_avatar_id for u in users if u.selected_avatar_id}
-    avatars = {}
-    if avatar_ids:
-        avatars = {a.id: a for a in db.query(Avatar).filter(Avatar.id.in_(list(avatar_ids))).all()}
-    
-    # Batch load all frames
-    frame_ids = {u.selected_frame_id for u in users if u.selected_frame_id}
-    frames = {}
-    if frame_ids:
-        frames = {f.id: f for f in db.query(Frame).filter(Frame.id.in_(list(frame_ids))).all()}
-    
-    # Batch load all badges
-    badge_ids = {u.badge_id for u in users if u.badge_id}
-    badges = {}
-    if badge_ids:
-        # Badges are now stored in TriviaModeConfig
-        mode_configs = db.query(TriviaModeConfig).filter(
-            TriviaModeConfig.mode_id.in_(list(badge_ids)),
-            TriviaModeConfig.badge_image_url.isnot(None)
-        ).all()
-        badges = {mc.mode_id: mc for mc in mode_configs}
-    
-    # Batch load all active subscriptions with plans eagerly loaded
-    active_subscriptions = {}
-    if user_ids:
-        subs = db.query(UserSubscription).options(joinedload(UserSubscription.plan)).join(SubscriptionPlan).filter(
-            and_(
-                UserSubscription.user_id.in_(list(user_ids)),
-                UserSubscription.status == 'active',
-                UserSubscription.current_period_end > datetime.utcnow()
-            )
-        ).all()
-        for sub in subs:
-            if sub.user_id not in active_subscriptions:
-                active_subscriptions[sub.user_id] = []
-            active_subscriptions[sub.user_id].append(sub)
-    
-    # Batch load subscription badges (bronze and silver) from TriviaModeConfig
-    subscription_badge_ids = ['bronze', 'bronze_badge', 'brone_badge', 'brone', 'silver', 'silver_badge']
-    subscription_badges_dict = {mc.mode_id: mc for mc in db.query(TriviaModeConfig).filter(
-        TriviaModeConfig.mode_id.in_(list(subscription_badge_ids)),
-        TriviaModeConfig.badge_image_url.isnot(None)
-    ).all()}
-    # Also try name-based matching
-    name_based_badges = {mc.mode_id: mc for mc in db.query(TriviaModeConfig).filter(
-        (TriviaModeConfig.mode_name.ilike('%bronze%') | TriviaModeConfig.mode_name.ilike('%silver%')),
-        TriviaModeConfig.badge_image_url.isnot(None)
-    ).all()}
-    subscription_badges_dict.update(name_based_badges)
-    
-    # Generate presigned URLs in batch
-    presigned_avatars = {}
-    presigned_frames = {}
-    for avatar_id, avatar in avatars.items():
-        bucket = getattr(avatar, "bucket", None)
-        object_key = getattr(avatar, "object_key", None)
-        if bucket and object_key:
-            try:
-                presigned_avatars[avatar_id] = presign_get(bucket, object_key, expires=900)
-            except Exception as e:
-                logger.warning(f"Failed to presign avatar {avatar_id}: {e}")
-    
-    for frame_id, frame in frames.items():
-        bucket = getattr(frame, "bucket", None)
-        object_key = getattr(frame, "object_key", None)
-        if bucket and object_key:
-            try:
-                presigned_frames[frame_id] = presign_get(bucket, object_key, expires=900)
-            except Exception as e:
-                logger.warning(f"Failed to presign frame {frame_id}: {e}")
-    
-    # Build profile data for each user
-    for user in users:
-        # Avatar URL
-        avatar_url = None
-        if user.selected_avatar_id and user.selected_avatar_id in presigned_avatars:
-            avatar_url = presigned_avatars[user.selected_avatar_id]
-        
-        # Frame URL
-        frame_url = None
-        if user.selected_frame_id and user.selected_frame_id in presigned_frames:
-            frame_url = presigned_frames[user.selected_frame_id]
-        
-        # Badge info
-        badge_info = None
-        if user.badge_id and user.badge_id in badges:
-            mode_config = badges[user.badge_id]
-            badge_info = {
-                "id": mode_config.mode_id,
-                "name": mode_config.mode_name,
-                "image_url": mode_config.badge_image_url
-            }
-        
-        # Subscription badges
-        subscription_badges = []
-        user_subs = active_subscriptions.get(user.account_id, [])
-        for sub in user_subs:
-            plan = sub.plan  # Use 'plan' relationship, not 'subscription_plan'
-            if not plan:
-                continue
-            
-            # Check for bronze ($5)
-            if (getattr(plan, 'unit_amount_minor', None) == 500 or 
-                getattr(plan, 'price_usd', None) == 5.0):
-                bronze_badge = (subscription_badges_dict.get('bronze') or 
-                              subscription_badges_dict.get('bronze_badge') or
-                              subscription_badges_dict.get('brone_badge') or
-                              subscription_badges_dict.get('brone'))
-                if not bronze_badge:
-                    # Try name-based match
-                    for bid, mc in subscription_badges_dict.items():
-                        if 'bronze' in mc.mode_name.lower():
-                            bronze_badge = mc
-                            break
-                if bronze_badge and bronze_badge.badge_image_url:
-                    subscription_badges.append({
-                        "id": bronze_badge.mode_id,
-                        "name": bronze_badge.mode_name,
-                        "image_url": bronze_badge.badge_image_url,
-                        "subscription_type": "bronze",
-                        "price": 5.0
-                    })
-            
-            # Check for silver ($10)
-            if (getattr(plan, 'unit_amount_minor', None) == 1000 or 
-                getattr(plan, 'price_usd', None) == 10.0):
-                silver_badge = (subscription_badges_dict.get('silver') or 
-                              subscription_badges_dict.get('silver_badge'))
-                if not silver_badge:
-                    # Try name-based match
-                    for bid, mc in subscription_badges_dict.items():
-                        if 'silver' in mc.mode_name.lower():
-                            silver_badge = mc
-                            break
-                if silver_badge and silver_badge.badge_image_url:
-                    subscription_badges.append({
-                        "id": silver_badge.mode_id,
-                        "name": silver_badge.mode_name,
-                        "image_url": silver_badge.badge_image_url,
-                        "subscription_type": "silver",
-                        "price": 10.0
-                    })
-        
-        # Level progress (still needs to be calculated per user, but we'll do it lazily)
-        # For now, use a simple approach - cache it per user
-        level_progress = get_level_progress(user, db)
-        
-        profile_cache[user.account_id] = {
-            "profile_pic_url": user.profile_pic_url,
-            "avatar_url": avatar_url,
-            "frame_url": frame_url,
-            "badge": badge_info,
-            "subscription_badges": subscription_badges,
-            "level": level_progress['level'],
-            "level_progress": level_progress['progress']
-        }
-    
-    return profile_cache
+    """Delegate to shared bulk helper to avoid N+1 queries."""
+    return get_user_chat_profile_data_bulk(users, db)
 
 
 @router.get("/messages")
@@ -596,25 +438,51 @@ async def get_global_messages(
     messages = query.limit(limit).all()
     
     # Update viewer tracking (user is viewing global chat)
-    existing_viewer = db.query(GlobalChatViewer).filter(
-        GlobalChatViewer.user_id == current_user.account_id
-    ).first()
-    
-    if existing_viewer:
-        existing_viewer.last_seen = datetime.utcnow()
-    else:
-        viewer = GlobalChatViewer(
-            user_id=current_user.account_id,
-            last_seen=datetime.utcnow()
-        )
-        db.add(viewer)
+    try:
+        existing_viewer = db.query(GlobalChatViewer).filter(
+            GlobalChatViewer.user_id == current_user.account_id
+        ).first()
+        
+        if existing_viewer:
+            existing_viewer.last_seen = datetime.utcnow()
+        else:
+            viewer = GlobalChatViewer(
+                user_id=current_user.account_id,
+                last_seen=datetime.utcnow()
+            )
+            db.add(viewer)
+            db.flush()
+    except exc.IntegrityError:
+        db.rollback()
+        existing_viewer = db.query(GlobalChatViewer).filter(
+            GlobalChatViewer.user_id == current_user.account_id
+        ).first()
+        if existing_viewer:
+            existing_viewer.last_seen = datetime.utcnow()
     db.commit()
     
     # Get active online count (users active within last 5 minutes)
     cutoff_time = datetime.utcnow() - timedelta(minutes=5)
-    online_count = db.query(GlobalChatViewer).filter(
-        GlobalChatViewer.last_seen >= cutoff_time
-    ).count()
+    online_count = None
+    redis_client = await get_chat_redis()
+    cache_key = "global_chat:online_count"
+    if redis_client:
+        try:
+            cached_value = await redis_client.get(cache_key)
+            if cached_value is not None:
+                online_count = int(cached_value)
+        except Exception:
+            online_count = None
+    
+    if online_count is None:
+        online_count = db.query(GlobalChatViewer).filter(
+            GlobalChatViewer.last_seen >= cutoff_time
+        ).count()
+        if redis_client:
+            try:
+                await redis_client.set(cache_key, str(online_count), ex=5)
+            except Exception:
+                pass
     
     # Collect all unique users and reply message IDs
     unique_users = {msg.user for msg in messages if msg.user}

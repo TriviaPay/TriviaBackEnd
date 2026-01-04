@@ -1,0 +1,123 @@
+    1: from typing import Optional, Union
+       
+       
+    2: class UserPasswordBcrypt:
+    1:     def __init__(
+               self,
+    1:         hash: str,
+           ):
+               """
+               The bcrypt hash in plaintext format, for example "$2a$..."
+               """
+>>>>>>         self.hash = hash
+       
+    1:     def to_dict(self) -> dict:
+>>>>>>         return {
+>>>>>>             "bcrypt": {
+>>>>>>                 "hash": self.hash,
+                   },
+               }
+       
+       
+    2: class UserPasswordFirebase:
+    1:     def __init__(
+               self,
+    1:         hash: str,
+    1:         salt: str,
+    1:         salt_separator: str,
+    1:         signer_key: str,
+    1:         memory: int,
+    1:         rounds: int,
+           ):
+               """
+               The hash, salt, salt separator, and signer key should be base64 strings using
+               standard encoding with padding.
+               The memory cost value is an integer, usually between 12 to 17.
+               The rounds cost value is an integer, usually between 6 to 10.
+               """
+>>>>>>         self.hash = hash
+>>>>>>         self.salt = salt
+>>>>>>         self.salt_separator = salt_separator
+>>>>>>         self.signer_key = signer_key
+>>>>>>         self.memory = memory
+>>>>>>         self.rounds = rounds
+       
+    1:     def to_dict(self) -> dict:
+>>>>>>         return {
+>>>>>>             "firebase": {
+>>>>>>                 "hash": self.hash,
+>>>>>>                 "salt": self.salt,
+>>>>>>                 "saltSeparator": self.salt_separator,
+>>>>>>                 "signerKey": self.signer_key,
+>>>>>>                 "memory": self.memory,
+>>>>>>                 "rounds": self.rounds,
+                   },
+               }
+       
+       
+    2: class UserPasswordPbkdf2:
+    1:     def __init__(
+               self,
+    1:         hash: str,
+    1:         salt: str,
+    1:         iterations: int,
+    1:         variant: str,
+           ):
+               """
+               The hash and salt should be base64 strings using standard encoding with padding.
+               The iterations cost value is an integer, usually in the thousands.
+               The hash variant should be either "sha1", "sha256", or "sha512".
+               """
+>>>>>>         self.hash = hash
+>>>>>>         self.salt = salt
+>>>>>>         self.iterations = iterations
+>>>>>>         self.variant = variant
+       
+    1:     def to_dict(self) -> dict:
+>>>>>>         return {
+>>>>>>             "pbkdf2": {
+>>>>>>                 "hash": self.hash,
+>>>>>>                 "salt": self.salt,
+>>>>>>                 "iterations": self.iterations,
+>>>>>>                 "type": self.variant,
+                   },
+               }
+       
+       
+    2: class UserPasswordDjango:
+    1:     def __init__(
+               self,
+    1:         hash: str,
+           ):
+               """
+               The django hash in plaintext format, for example "pbkdf2_sha256$..."
+               """
+>>>>>>         self.hash = hash
+       
+    1:     def to_dict(self) -> dict:
+>>>>>>         return {
+>>>>>>             "django": {
+>>>>>>                 "hash": self.hash,
+                   },
+               }
+       
+       
+    2: class UserPassword:
+    2:     def __init__(
+               self,
+    1:         cleartext: Optional[str] = None,
+    2:         hashed: Optional[
+    2:             Union[
+    2:                 UserPasswordBcrypt,
+    1:                 UserPasswordFirebase,
+    1:                 UserPasswordPbkdf2,
+    1:                 UserPasswordDjango,
+                   ]
+               ] = None,
+           ):
+               """
+               Set a UserPassword on UserObj objects when calling invite_batch to create or invite users
+               with a cleartext or prehashed password. Note that only one of the two options should be set.
+               """
+>>>>>>         self.cleartext = cleartext
+>>>>>>         self.hashed = hashed

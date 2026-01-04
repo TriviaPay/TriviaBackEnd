@@ -1,0 +1,88 @@
+    1: from redis import asyncio  # noqa
+    1: from redis.backoff import default_backoff
+    1: from redis.client import Redis, StrictRedis
+    1: from redis.cluster import RedisCluster
+    1: from redis.connection import (
+           BlockingConnectionPool,
+           Connection,
+           ConnectionPool,
+           SSLConnection,
+           UnixDomainSocketConnection,
+       )
+    1: from redis.credentials import CredentialProvider, UsernamePasswordCredentialProvider
+    1: from redis.exceptions import (
+           AuthenticationError,
+           AuthenticationWrongNumberOfArgsError,
+           BusyLoadingError,
+           ChildDeadlockedError,
+           ConnectionError,
+           CrossSlotTransactionError,
+           DataError,
+           InvalidPipelineStack,
+           InvalidResponse,
+           MaxConnectionsError,
+           OutOfMemoryError,
+           PubSubError,
+           ReadOnlyError,
+           RedisClusterException,
+           RedisError,
+           ResponseError,
+           TimeoutError,
+           WatchError,
+       )
+    1: from redis.sentinel import (
+           Sentinel,
+           SentinelConnectionPool,
+           SentinelManagedConnection,
+           SentinelManagedSSLConnection,
+       )
+    1: from redis.utils import from_url
+       
+       
+    1: def int_or_str(value):
+    3:     try:
+    3:         return int(value)
+>>>>>>     except ValueError:
+>>>>>>         return value
+       
+       
+    1: __version__ = "7.0.1"
+    1: VERSION = tuple(map(int_or_str, __version__.split(".")))
+       
+       
+    1: __all__ = [
+           "AuthenticationError",
+           "AuthenticationWrongNumberOfArgsError",
+           "BlockingConnectionPool",
+           "BusyLoadingError",
+           "ChildDeadlockedError",
+           "Connection",
+           "ConnectionError",
+           "ConnectionPool",
+           "CredentialProvider",
+           "CrossSlotTransactionError",
+           "DataError",
+           "from_url",
+           "default_backoff",
+           "InvalidPipelineStack",
+           "InvalidResponse",
+           "MaxConnectionsError",
+           "OutOfMemoryError",
+           "PubSubError",
+           "ReadOnlyError",
+           "Redis",
+           "RedisCluster",
+           "RedisClusterException",
+           "RedisError",
+           "ResponseError",
+           "Sentinel",
+           "SentinelConnectionPool",
+           "SentinelManagedConnection",
+           "SentinelManagedSSLConnection",
+           "SSLConnection",
+           "UsernamePasswordCredentialProvider",
+           "StrictRedis",
+           "TimeoutError",
+           "UnixDomainSocketConnection",
+           "WatchError",
+       ]

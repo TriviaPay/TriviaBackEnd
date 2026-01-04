@@ -1,0 +1,359 @@
+    1: from __future__ import annotations
+       
+    1: import http.cookies
+    1: import json
+    1: import os
+    1: import stat
+    1: import typing
+    1: import warnings
+    1: from datetime import datetime
+    1: from email.utils import format_datetime, formatdate
+    1: from functools import partial
+    1: from mimetypes import guess_type
+    1: from urllib.parse import quote
+       
+    1: import anyio
+    1: import anyio.to_thread
+       
+    1: from starlette._compat import md5_hexdigest
+    1: from starlette.background import BackgroundTask
+    1: from starlette.concurrency import iterate_in_threadpool
+    1: from starlette.datastructures import URL, MutableHeaders
+    1: from starlette.types import Receive, Scope, Send
+       
+       
+    2: class Response:
+    1:     media_type = None
+    1:     charset = "utf-8"
+       
+    1:     def __init__(
+               self,
+               content: typing.Any = None,
+               status_code: int = 200,
+               headers: typing.Mapping[str, str] | None = None,
+               media_type: str | None = None,
+               background: BackgroundTask | None = None,
+           ) -> None:
+   24:         self.status_code = status_code
+   24:         if media_type is not None:
+>>>>>>             self.media_type = media_type
+   24:         self.background = background
+   24:         self.body = self.render(content)
+   24:         self.init_headers(headers)
+       
+    1:     def render(self, content: typing.Any) -> bytes:
+   12:         if content is None:
+   12:             return b""
+>>>>>>         if isinstance(content, bytes):
+>>>>>>             return content
+>>>>>>         return content.encode(self.charset)  # type: ignore
+       
+    1:     def init_headers(self, headers: typing.Mapping[str, str] | None = None) -> None:
+   24:         if headers is None:
+   24:             raw_headers: list[tuple[bytes, bytes]] = []
+   24:             populate_content_length = True
+   24:             populate_content_type = True
+               else:
+>>>>>>             raw_headers = [
+>>>>>>                 (k.lower().encode("latin-1"), v.encode("latin-1"))
+>>>>>>                 for k, v in headers.items()
+                   ]
+>>>>>>             keys = [h[0] for h in raw_headers]
+>>>>>>             populate_content_length = b"content-length" not in keys
+>>>>>>             populate_content_type = b"content-type" not in keys
+       
+   24:         body = getattr(self, "body", None)
+   96:         if (
+   24:             body is not None
+   24:             and populate_content_length
+   48:             and not (self.status_code < 200 or self.status_code in (204, 304))
+               ):
+   24:             content_length = str(len(body))
+   24:             raw_headers.append((b"content-length", content_length.encode("latin-1")))
+       
+   24:         content_type = self.media_type
+   24:         if content_type is not None and populate_content_type:
+   12:             if (
+   12:                 content_type.startswith("text/")
+>>>>>>                 and "charset=" not in content_type.lower()
+                   ):
+>>>>>>                 content_type += "; charset=" + self.charset
+   12:             raw_headers.append((b"content-type", content_type.encode("latin-1")))
+       
+   24:         self.raw_headers = raw_headers
+       
+    1:     @property
+    1:     def headers(self) -> MutableHeaders:
+   20:         if not hasattr(self, "_headers"):
+   16:             self._headers = MutableHeaders(raw=self.raw_headers)
+   20:         return self._headers
+       
+    1:     def set_cookie(
+               self,
+               key: str,
+               value: str = "",
+               max_age: int | None = None,
+               expires: datetime | str | int | None = None,
+               path: str = "/",
+               domain: str | None = None,
+               secure: bool = False,
+               httponly: bool = False,
+               samesite: typing.Literal["lax", "strict", "none"] | None = "lax",
+           ) -> None:
+>>>>>>         cookie: http.cookies.BaseCookie[str] = http.cookies.SimpleCookie()
+>>>>>>         cookie[key] = value
+>>>>>>         if max_age is not None:
+>>>>>>             cookie[key]["max-age"] = max_age
+>>>>>>         if expires is not None:
+>>>>>>             if isinstance(expires, datetime):
+>>>>>>                 cookie[key]["expires"] = format_datetime(expires, usegmt=True)
+                   else:
+>>>>>>                 cookie[key]["expires"] = expires
+>>>>>>         if path is not None:
+>>>>>>             cookie[key]["path"] = path
+>>>>>>         if domain is not None:
+>>>>>>             cookie[key]["domain"] = domain
+>>>>>>         if secure:
+>>>>>>             cookie[key]["secure"] = True
+>>>>>>         if httponly:
+>>>>>>             cookie[key]["httponly"] = True
+>>>>>>         if samesite is not None:
+>>>>>>             assert samesite.lower() in [
+                       "strict",
+                       "lax",
+                       "none",
+>>>>>>             ], "samesite must be either 'strict', 'lax' or 'none'"
+>>>>>>             cookie[key]["samesite"] = samesite
+>>>>>>         cookie_val = cookie.output(header="").strip()
+>>>>>>         self.raw_headers.append((b"set-cookie", cookie_val.encode("latin-1")))
+       
+    1:     def delete_cookie(
+               self,
+               key: str,
+               path: str = "/",
+               domain: str | None = None,
+               secure: bool = False,
+               httponly: bool = False,
+               samesite: typing.Literal["lax", "strict", "none"] | None = "lax",
+           ) -> None:
+>>>>>>         self.set_cookie(
+>>>>>>             key,
+>>>>>>             max_age=0,
+>>>>>>             expires=0,
+>>>>>>             path=path,
+>>>>>>             domain=domain,
+>>>>>>             secure=secure,
+>>>>>>             httponly=httponly,
+>>>>>>             samesite=samesite,
+               )
+       
+    1:     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+   24:         await send(
+   12:             {
+   12:                 "type": "http.response.start",
+   12:                 "status": self.status_code,
+   12:                 "headers": self.raw_headers,
+                   }
+               )
+   12:         await send({"type": "http.response.body", "body": self.body})
+       
+   12:         if self.background is not None:
+>>>>>>             await self.background()
+       
+       
+    2: class HTMLResponse(Response):
+    1:     media_type = "text/html"
+       
+       
+    2: class PlainTextResponse(Response):
+    1:     media_type = "text/plain"
+       
+       
+    2: class JSONResponse(Response):
+    1:     media_type = "application/json"
+       
+    1:     def __init__(
+               self,
+               content: typing.Any,
+               status_code: int = 200,
+               headers: typing.Mapping[str, str] | None = None,
+               media_type: str | None = None,
+               background: BackgroundTask | None = None,
+           ) -> None:
+   12:         super().__init__(content, status_code, headers, media_type, background)
+       
+    1:     def render(self, content: typing.Any) -> bytes:
+   36:         return json.dumps(
+   12:             content,
+   12:             ensure_ascii=False,
+   12:             allow_nan=False,
+   12:             indent=None,
+   12:             separators=(",", ":"),
+   12:         ).encode("utf-8")
+       
+       
+    2: class RedirectResponse(Response):
+    1:     def __init__(
+               self,
+               url: str | URL,
+               status_code: int = 307,
+               headers: typing.Mapping[str, str] | None = None,
+               background: BackgroundTask | None = None,
+           ) -> None:
+>>>>>>         super().__init__(
+>>>>>>             content=b"", status_code=status_code, headers=headers, background=background
+               )
+>>>>>>         self.headers["location"] = quote(str(url), safe=":/%#?=@[]!$&'()*+,;")
+       
+       
+    1: Content = typing.Union[str, bytes]
+    1: SyncContentStream = typing.Iterable[Content]
+    1: AsyncContentStream = typing.AsyncIterable[Content]
+    1: ContentStream = typing.Union[AsyncContentStream, SyncContentStream]
+       
+       
+    2: class StreamingResponse(Response):
+    1:     body_iterator: AsyncContentStream
+       
+    1:     def __init__(
+               self,
+               content: ContentStream,
+               status_code: int = 200,
+               headers: typing.Mapping[str, str] | None = None,
+               media_type: str | None = None,
+               background: BackgroundTask | None = None,
+           ) -> None:
+>>>>>>         if isinstance(content, typing.AsyncIterable):
+>>>>>>             self.body_iterator = content
+               else:
+>>>>>>             self.body_iterator = iterate_in_threadpool(content)
+>>>>>>         self.status_code = status_code
+>>>>>>         self.media_type = self.media_type if media_type is None else media_type
+>>>>>>         self.background = background
+>>>>>>         self.init_headers(headers)
+       
+    1:     async def listen_for_disconnect(self, receive: Receive) -> None:
+               while True:
+>>>>>>             message = await receive()
+>>>>>>             if message["type"] == "http.disconnect":
+>>>>>>                 break
+       
+    1:     async def stream_response(self, send: Send) -> None:
+>>>>>>         await send(
+>>>>>>             {
+>>>>>>                 "type": "http.response.start",
+>>>>>>                 "status": self.status_code,
+>>>>>>                 "headers": self.raw_headers,
+                   }
+               )
+>>>>>>         async for chunk in self.body_iterator:
+>>>>>>             if not isinstance(chunk, bytes):
+>>>>>>                 chunk = chunk.encode(self.charset)
+>>>>>>             await send({"type": "http.response.body", "body": chunk, "more_body": True})
+       
+>>>>>>         await send({"type": "http.response.body", "body": b"", "more_body": False})
+       
+    1:     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+>>>>>>         async with anyio.create_task_group() as task_group:
+       
+>>>>>>             async def wrap(func: typing.Callable[[], typing.Awaitable[None]]) -> None:
+>>>>>>                 await func()
+>>>>>>                 task_group.cancel_scope.cancel()
+       
+>>>>>>             task_group.start_soon(wrap, partial(self.stream_response, send))
+>>>>>>             await wrap(partial(self.listen_for_disconnect, receive))
+       
+>>>>>>         if self.background is not None:
+>>>>>>             await self.background()
+       
+       
+    2: class FileResponse(Response):
+    1:     chunk_size = 64 * 1024
+       
+    1:     def __init__(
+               self,
+               path: str | os.PathLike[str],
+               status_code: int = 200,
+               headers: typing.Mapping[str, str] | None = None,
+               media_type: str | None = None,
+               background: BackgroundTask | None = None,
+               filename: str | None = None,
+               stat_result: os.stat_result | None = None,
+               method: str | None = None,
+               content_disposition_type: str = "attachment",
+           ) -> None:
+>>>>>>         self.path = path
+>>>>>>         self.status_code = status_code
+>>>>>>         self.filename = filename
+>>>>>>         if method is not None:
+>>>>>>             warnings.warn(
+>>>>>>                 "The 'method' parameter is not used, and it will be removed.",
+>>>>>>                 DeprecationWarning,
+                   )
+>>>>>>         if media_type is None:
+>>>>>>             media_type = guess_type(filename or path)[0] or "text/plain"
+>>>>>>         self.media_type = media_type
+>>>>>>         self.background = background
+>>>>>>         self.init_headers(headers)
+>>>>>>         if self.filename is not None:
+>>>>>>             content_disposition_filename = quote(self.filename)
+>>>>>>             if content_disposition_filename != self.filename:
+>>>>>>                 content_disposition = "{}; filename*=utf-8''{}".format(
+>>>>>>                     content_disposition_type, content_disposition_filename
+                       )
+                   else:
+>>>>>>                 content_disposition = '{}; filename="{}"'.format(
+>>>>>>                     content_disposition_type, self.filename
+                       )
+>>>>>>             self.headers.setdefault("content-disposition", content_disposition)
+>>>>>>         self.stat_result = stat_result
+>>>>>>         if stat_result is not None:
+>>>>>>             self.set_stat_headers(stat_result)
+       
+    1:     def set_stat_headers(self, stat_result: os.stat_result) -> None:
+>>>>>>         content_length = str(stat_result.st_size)
+>>>>>>         last_modified = formatdate(stat_result.st_mtime, usegmt=True)
+>>>>>>         etag_base = str(stat_result.st_mtime) + "-" + str(stat_result.st_size)
+>>>>>>         etag = f'"{md5_hexdigest(etag_base.encode(), usedforsecurity=False)}"'
+       
+>>>>>>         self.headers.setdefault("content-length", content_length)
+>>>>>>         self.headers.setdefault("last-modified", last_modified)
+>>>>>>         self.headers.setdefault("etag", etag)
+       
+    1:     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+>>>>>>         if self.stat_result is None:
+>>>>>>             try:
+>>>>>>                 stat_result = await anyio.to_thread.run_sync(os.stat, self.path)
+>>>>>>                 self.set_stat_headers(stat_result)
+>>>>>>             except FileNotFoundError:
+>>>>>>                 raise RuntimeError(f"File at path {self.path} does not exist.")
+                   else:
+>>>>>>                 mode = stat_result.st_mode
+>>>>>>                 if not stat.S_ISREG(mode):
+>>>>>>                     raise RuntimeError(f"File at path {self.path} is not a file.")
+>>>>>>         await send(
+>>>>>>             {
+>>>>>>                 "type": "http.response.start",
+>>>>>>                 "status": self.status_code,
+>>>>>>                 "headers": self.raw_headers,
+                   }
+               )
+>>>>>>         if scope["method"].upper() == "HEAD":
+>>>>>>             await send({"type": "http.response.body", "body": b"", "more_body": False})
+>>>>>>         elif "extensions" in scope and "http.response.pathsend" in scope["extensions"]:
+>>>>>>             await send({"type": "http.response.pathsend", "path": str(self.path)})
+               else:
+>>>>>>             async with await anyio.open_file(self.path, mode="rb") as file:
+>>>>>>                 more_body = True
+>>>>>>                 while more_body:
+>>>>>>                     chunk = await file.read(self.chunk_size)
+>>>>>>                     more_body = len(chunk) == self.chunk_size
+>>>>>>                     await send(
+>>>>>>                         {
+>>>>>>                             "type": "http.response.body",
+>>>>>>                             "body": chunk,
+>>>>>>                             "more_body": more_body,
+                               }
+                           )
+>>>>>>         if self.background is not None:
+>>>>>>             await self.background()

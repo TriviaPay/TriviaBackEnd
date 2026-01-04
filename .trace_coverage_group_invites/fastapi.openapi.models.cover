@@ -1,0 +1,611 @@
+    1: from enum import Enum
+    1: from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Type, Union
+       
+    1: from fastapi._compat import (
+           PYDANTIC_V2,
+           CoreSchema,
+           GetJsonSchemaHandler,
+           JsonSchemaValue,
+           _model_rebuild,
+           with_info_plain_validator_function,
+       )
+    1: from fastapi.logger import logger
+    1: from pydantic import AnyUrl, BaseModel, Field
+    1: from typing_extensions import Annotated, Literal, TypedDict
+    1: from typing_extensions import deprecated as typing_deprecated
+       
+    1: try:
+    1:     import email_validator
+       
+    1:     assert email_validator  # make autoflake ignore the unused import
+    1:     from pydantic import EmailStr
+>>>>>> except ImportError:  # pragma: no cover
+       
+>>>>>>     class EmailStr(str):  # type: ignore
+>>>>>>         @classmethod
+>>>>>>         def __get_validators__(cls) -> Iterable[Callable[..., Any]]:
+>>>>>>             yield cls.validate
+       
+>>>>>>         @classmethod
+>>>>>>         def validate(cls, v: Any) -> str:
+>>>>>>             logger.warning(
+>>>>>>                 "email-validator not installed, email fields will be treated as str.\n"
+                       "To install, run: pip install email-validator"
+                   )
+>>>>>>             return str(v)
+       
+>>>>>>         @classmethod
+>>>>>>         def _validate(cls, __input_value: Any, _: Any) -> str:
+>>>>>>             logger.warning(
+>>>>>>                 "email-validator not installed, email fields will be treated as str.\n"
+                       "To install, run: pip install email-validator"
+                   )
+>>>>>>             return str(__input_value)
+       
+>>>>>>         @classmethod
+>>>>>>         def __get_pydantic_json_schema__(
+>>>>>>             cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+>>>>>>         ) -> JsonSchemaValue:
+>>>>>>             return {"type": "string", "format": "email"}
+       
+>>>>>>         @classmethod
+>>>>>>         def __get_pydantic_core_schema__(
+>>>>>>             cls, source: Type[Any], handler: Callable[[Any], CoreSchema]
+>>>>>>         ) -> CoreSchema:
+>>>>>>             return with_info_plain_validator_function(cls._validate)
+       
+       
+    2: class Contact(BaseModel):
+    1:     name: Optional[str] = None
+    1:     url: Optional[AnyUrl] = None
+    1:     email: Optional[EmailStr] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class License(BaseModel):
+    1:     name: str
+    1:     identifier: Optional[str] = None
+    1:     url: Optional[AnyUrl] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class Info(BaseModel):
+    1:     title: str
+    1:     summary: Optional[str] = None
+    1:     description: Optional[str] = None
+    1:     termsOfService: Optional[str] = None
+    1:     contact: Optional[Contact] = None
+    1:     license: Optional[License] = None
+    1:     version: str
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class ServerVariable(BaseModel):
+    1:     enum: Annotated[Optional[List[str]], Field(min_length=1)] = None
+    1:     default: str
+    1:     description: Optional[str] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class Server(BaseModel):
+    1:     url: Union[AnyUrl, str]
+    1:     description: Optional[str] = None
+    1:     variables: Optional[Dict[str, ServerVariable]] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class Reference(BaseModel):
+    1:     ref: str = Field(alias="$ref")
+       
+       
+    2: class Discriminator(BaseModel):
+    1:     propertyName: str
+    1:     mapping: Optional[Dict[str, str]] = None
+       
+       
+    2: class XML(BaseModel):
+    1:     name: Optional[str] = None
+    1:     namespace: Optional[str] = None
+    1:     prefix: Optional[str] = None
+    1:     attribute: Optional[bool] = None
+    1:     wrapped: Optional[bool] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class ExternalDocumentation(BaseModel):
+    1:     description: Optional[str] = None
+    1:     url: AnyUrl
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class Schema(BaseModel):
+           # Ref: JSON Schema 2020-12: https://json-schema.org/draft/2020-12/json-schema-core.html#name-the-json-schema-core-vocabu
+           # Core Vocabulary
+    1:     schema_: Optional[str] = Field(default=None, alias="$schema")
+    1:     vocabulary: Optional[str] = Field(default=None, alias="$vocabulary")
+    1:     id: Optional[str] = Field(default=None, alias="$id")
+    1:     anchor: Optional[str] = Field(default=None, alias="$anchor")
+    1:     dynamicAnchor: Optional[str] = Field(default=None, alias="$dynamicAnchor")
+    1:     ref: Optional[str] = Field(default=None, alias="$ref")
+    1:     dynamicRef: Optional[str] = Field(default=None, alias="$dynamicRef")
+    1:     defs: Optional[Dict[str, "SchemaOrBool"]] = Field(default=None, alias="$defs")
+    1:     comment: Optional[str] = Field(default=None, alias="$comment")
+           # Ref: JSON Schema 2020-12: https://json-schema.org/draft/2020-12/json-schema-core.html#name-a-vocabulary-for-applying-s
+           # A Vocabulary for Applying Subschemas
+    1:     allOf: Optional[List["SchemaOrBool"]] = None
+    1:     anyOf: Optional[List["SchemaOrBool"]] = None
+    1:     oneOf: Optional[List["SchemaOrBool"]] = None
+    1:     not_: Optional["SchemaOrBool"] = Field(default=None, alias="not")
+    1:     if_: Optional["SchemaOrBool"] = Field(default=None, alias="if")
+    1:     then: Optional["SchemaOrBool"] = None
+    1:     else_: Optional["SchemaOrBool"] = Field(default=None, alias="else")
+    1:     dependentSchemas: Optional[Dict[str, "SchemaOrBool"]] = None
+    1:     prefixItems: Optional[List["SchemaOrBool"]] = None
+           # TODO: uncomment and remove below when deprecating Pydantic v1
+           # It generales a list of schemas for tuples, before prefixItems was available
+           # items: Optional["SchemaOrBool"] = None
+    1:     items: Optional[Union["SchemaOrBool", List["SchemaOrBool"]]] = None
+    1:     contains: Optional["SchemaOrBool"] = None
+    1:     properties: Optional[Dict[str, "SchemaOrBool"]] = None
+    1:     patternProperties: Optional[Dict[str, "SchemaOrBool"]] = None
+    1:     additionalProperties: Optional["SchemaOrBool"] = None
+    1:     propertyNames: Optional["SchemaOrBool"] = None
+    1:     unevaluatedItems: Optional["SchemaOrBool"] = None
+    1:     unevaluatedProperties: Optional["SchemaOrBool"] = None
+           # Ref: JSON Schema Validation 2020-12: https://json-schema.org/draft/2020-12/json-schema-validation.html#name-a-vocabulary-for-structural
+           # A Vocabulary for Structural Validation
+    1:     type: Optional[str] = None
+    1:     enum: Optional[List[Any]] = None
+    1:     const: Optional[Any] = None
+    1:     multipleOf: Optional[float] = Field(default=None, gt=0)
+    1:     maximum: Optional[float] = None
+    1:     exclusiveMaximum: Optional[float] = None
+    1:     minimum: Optional[float] = None
+    1:     exclusiveMinimum: Optional[float] = None
+    1:     maxLength: Optional[int] = Field(default=None, ge=0)
+    1:     minLength: Optional[int] = Field(default=None, ge=0)
+    1:     pattern: Optional[str] = None
+    1:     maxItems: Optional[int] = Field(default=None, ge=0)
+    1:     minItems: Optional[int] = Field(default=None, ge=0)
+    1:     uniqueItems: Optional[bool] = None
+    1:     maxContains: Optional[int] = Field(default=None, ge=0)
+    1:     minContains: Optional[int] = Field(default=None, ge=0)
+    1:     maxProperties: Optional[int] = Field(default=None, ge=0)
+    1:     minProperties: Optional[int] = Field(default=None, ge=0)
+    1:     required: Optional[List[str]] = None
+    1:     dependentRequired: Optional[Dict[str, Set[str]]] = None
+           # Ref: JSON Schema Validation 2020-12: https://json-schema.org/draft/2020-12/json-schema-validation.html#name-vocabularies-for-semantic-c
+           # Vocabularies for Semantic Content With "format"
+    1:     format: Optional[str] = None
+           # Ref: JSON Schema Validation 2020-12: https://json-schema.org/draft/2020-12/json-schema-validation.html#name-a-vocabulary-for-the-conten
+           # A Vocabulary for the Contents of String-Encoded Data
+    1:     contentEncoding: Optional[str] = None
+    1:     contentMediaType: Optional[str] = None
+    1:     contentSchema: Optional["SchemaOrBool"] = None
+           # Ref: JSON Schema Validation 2020-12: https://json-schema.org/draft/2020-12/json-schema-validation.html#name-a-vocabulary-for-basic-meta
+           # A Vocabulary for Basic Meta-Data Annotations
+    1:     title: Optional[str] = None
+    1:     description: Optional[str] = None
+    1:     default: Optional[Any] = None
+    1:     deprecated: Optional[bool] = None
+    1:     readOnly: Optional[bool] = None
+    1:     writeOnly: Optional[bool] = None
+    1:     examples: Optional[List[Any]] = None
+           # Ref: OpenAPI 3.1.0: https://github.com/OAI/OpenAPI-Specification/blob/main/versions/3.1.0.md#schema-object
+           # Schema Object
+    1:     discriminator: Optional[Discriminator] = None
+    1:     xml: Optional[XML] = None
+    1:     externalDocs: Optional[ExternalDocumentation] = None
+    2:     example: Annotated[
+    2:         Optional[Any],
+    2:         typing_deprecated(
+    1:             "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                   "although still supported. Use examples instead."
+               ),
+    1:     ] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+       # Ref: https://json-schema.org/draft/2020-12/json-schema-core.html#name-json-schema-documents
+       # A JSON Schema MUST be an object or a boolean.
+    1: SchemaOrBool = Union[Schema, bool]
+       
+       
+    2: class Example(TypedDict, total=False):
+    1:     summary: Optional[str]
+    1:     description: Optional[str]
+    1:     value: Optional[Any]
+    1:     externalValue: Optional[AnyUrl]
+       
+    1:     if PYDANTIC_V2:  # type: ignore [misc]
+    1:         __pydantic_config__ = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class ParameterInType(Enum):
+    1:     query = "query"
+    1:     header = "header"
+    1:     path = "path"
+    1:     cookie = "cookie"
+       
+       
+    2: class Encoding(BaseModel):
+    1:     contentType: Optional[str] = None
+    1:     headers: Optional[Dict[str, Union["Header", Reference]]] = None
+    1:     style: Optional[str] = None
+    1:     explode: Optional[bool] = None
+    1:     allowReserved: Optional[bool] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class MediaType(BaseModel):
+    1:     schema_: Optional[Union[Schema, Reference]] = Field(default=None, alias="schema")
+    1:     example: Optional[Any] = None
+    1:     examples: Optional[Dict[str, Union[Example, Reference]]] = None
+    1:     encoding: Optional[Dict[str, Encoding]] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class ParameterBase(BaseModel):
+    1:     description: Optional[str] = None
+    1:     required: Optional[bool] = None
+    1:     deprecated: Optional[bool] = None
+           # Serialization rules for simple scenarios
+    1:     style: Optional[str] = None
+    1:     explode: Optional[bool] = None
+    1:     allowReserved: Optional[bool] = None
+    1:     schema_: Optional[Union[Schema, Reference]] = Field(default=None, alias="schema")
+    1:     example: Optional[Any] = None
+    1:     examples: Optional[Dict[str, Union[Example, Reference]]] = None
+           # Serialization rules for more complex scenarios
+    1:     content: Optional[Dict[str, MediaType]] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class Parameter(ParameterBase):
+    1:     name: str
+    1:     in_: ParameterInType = Field(alias="in")
+       
+       
+    2: class Header(ParameterBase):
+    1:     pass
+       
+       
+    2: class RequestBody(BaseModel):
+    1:     description: Optional[str] = None
+    1:     content: Dict[str, MediaType]
+    1:     required: Optional[bool] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class Link(BaseModel):
+    1:     operationRef: Optional[str] = None
+    1:     operationId: Optional[str] = None
+    1:     parameters: Optional[Dict[str, Union[Any, str]]] = None
+    1:     requestBody: Optional[Union[Any, str]] = None
+    1:     description: Optional[str] = None
+    1:     server: Optional[Server] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class Response(BaseModel):
+    1:     description: str
+    1:     headers: Optional[Dict[str, Union[Header, Reference]]] = None
+    1:     content: Optional[Dict[str, MediaType]] = None
+    1:     links: Optional[Dict[str, Union[Link, Reference]]] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class Operation(BaseModel):
+    1:     tags: Optional[List[str]] = None
+    1:     summary: Optional[str] = None
+    1:     description: Optional[str] = None
+    1:     externalDocs: Optional[ExternalDocumentation] = None
+    1:     operationId: Optional[str] = None
+    1:     parameters: Optional[List[Union[Parameter, Reference]]] = None
+    1:     requestBody: Optional[Union[RequestBody, Reference]] = None
+           # Using Any for Specification Extensions
+    1:     responses: Optional[Dict[str, Union[Response, Any]]] = None
+    1:     callbacks: Optional[Dict[str, Union[Dict[str, "PathItem"], Reference]]] = None
+    1:     deprecated: Optional[bool] = None
+    1:     security: Optional[List[Dict[str, List[str]]]] = None
+    1:     servers: Optional[List[Server]] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class PathItem(BaseModel):
+    1:     ref: Optional[str] = Field(default=None, alias="$ref")
+    1:     summary: Optional[str] = None
+    1:     description: Optional[str] = None
+    1:     get: Optional[Operation] = None
+    1:     put: Optional[Operation] = None
+    1:     post: Optional[Operation] = None
+    1:     delete: Optional[Operation] = None
+    1:     options: Optional[Operation] = None
+    1:     head: Optional[Operation] = None
+    1:     patch: Optional[Operation] = None
+    1:     trace: Optional[Operation] = None
+    1:     servers: Optional[List[Server]] = None
+    1:     parameters: Optional[List[Union[Parameter, Reference]]] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class SecuritySchemeType(Enum):
+    1:     apiKey = "apiKey"
+    1:     http = "http"
+    1:     oauth2 = "oauth2"
+    1:     openIdConnect = "openIdConnect"
+       
+       
+    2: class SecurityBase(BaseModel):
+    1:     type_: SecuritySchemeType = Field(alias="type")
+    1:     description: Optional[str] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class APIKeyIn(Enum):
+    1:     query = "query"
+    1:     header = "header"
+    1:     cookie = "cookie"
+       
+       
+    2: class APIKey(SecurityBase):
+    1:     type_: SecuritySchemeType = Field(default=SecuritySchemeType.apiKey, alias="type")
+    1:     in_: APIKeyIn = Field(alias="in")
+    1:     name: str
+       
+       
+    2: class HTTPBase(SecurityBase):
+    1:     type_: SecuritySchemeType = Field(default=SecuritySchemeType.http, alias="type")
+    1:     scheme: str
+       
+       
+    2: class HTTPBearer(HTTPBase):
+    1:     scheme: Literal["bearer"] = "bearer"
+    1:     bearerFormat: Optional[str] = None
+       
+       
+    2: class OAuthFlow(BaseModel):
+    1:     refreshUrl: Optional[str] = None
+    1:     scopes: Dict[str, str] = {}
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class OAuthFlowImplicit(OAuthFlow):
+    1:     authorizationUrl: str
+       
+       
+    2: class OAuthFlowPassword(OAuthFlow):
+    1:     tokenUrl: str
+       
+       
+    2: class OAuthFlowClientCredentials(OAuthFlow):
+    1:     tokenUrl: str
+       
+       
+    2: class OAuthFlowAuthorizationCode(OAuthFlow):
+    1:     authorizationUrl: str
+    1:     tokenUrl: str
+       
+       
+    2: class OAuthFlows(BaseModel):
+    1:     implicit: Optional[OAuthFlowImplicit] = None
+    1:     password: Optional[OAuthFlowPassword] = None
+    1:     clientCredentials: Optional[OAuthFlowClientCredentials] = None
+    1:     authorizationCode: Optional[OAuthFlowAuthorizationCode] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class OAuth2(SecurityBase):
+    1:     type_: SecuritySchemeType = Field(default=SecuritySchemeType.oauth2, alias="type")
+    1:     flows: OAuthFlows
+       
+       
+    2: class OpenIdConnect(SecurityBase):
+    2:     type_: SecuritySchemeType = Field(
+    1:         default=SecuritySchemeType.openIdConnect, alias="type"
+           )
+    1:     openIdConnectUrl: str
+       
+       
+    1: SecurityScheme = Union[APIKey, HTTPBase, OAuth2, OpenIdConnect, HTTPBearer]
+       
+       
+    2: class Components(BaseModel):
+    1:     schemas: Optional[Dict[str, Union[Schema, Reference]]] = None
+    1:     responses: Optional[Dict[str, Union[Response, Reference]]] = None
+    1:     parameters: Optional[Dict[str, Union[Parameter, Reference]]] = None
+    1:     examples: Optional[Dict[str, Union[Example, Reference]]] = None
+    1:     requestBodies: Optional[Dict[str, Union[RequestBody, Reference]]] = None
+    1:     headers: Optional[Dict[str, Union[Header, Reference]]] = None
+    1:     securitySchemes: Optional[Dict[str, Union[SecurityScheme, Reference]]] = None
+    1:     links: Optional[Dict[str, Union[Link, Reference]]] = None
+           # Using Any for Specification Extensions
+    1:     callbacks: Optional[Dict[str, Union[Dict[str, PathItem], Reference, Any]]] = None
+    1:     pathItems: Optional[Dict[str, Union[PathItem, Reference]]] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class Tag(BaseModel):
+    1:     name: str
+    1:     description: Optional[str] = None
+    1:     externalDocs: Optional[ExternalDocumentation] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    2: class OpenAPI(BaseModel):
+    1:     openapi: str
+    1:     info: Info
+    1:     jsonSchemaDialect: Optional[str] = None
+    1:     servers: Optional[List[Server]] = None
+           # Using Any for Specification Extensions
+    1:     paths: Optional[Dict[str, Union[PathItem, Any]]] = None
+    1:     webhooks: Optional[Dict[str, Union[PathItem, Reference]]] = None
+    1:     components: Optional[Components] = None
+    1:     security: Optional[List[Dict[str, List[str]]]] = None
+    1:     tags: Optional[List[Tag]] = None
+    1:     externalDocs: Optional[ExternalDocumentation] = None
+       
+    1:     if PYDANTIC_V2:
+    1:         model_config = {"extra": "allow"}
+       
+           else:
+       
+>>>>>>         class Config:
+>>>>>>             extra = "allow"
+       
+       
+    1: _model_rebuild(Schema)
+    1: _model_rebuild(Operation)
+    1: _model_rebuild(Encoding)

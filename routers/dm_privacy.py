@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from typing import List
 import logging
@@ -27,7 +28,7 @@ class BlockUserRequest(BaseModel):
 
 
 @router.post("/block")
-async def block_user(
+def block_user(
     request: BlockUserRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -65,8 +66,15 @@ async def block_user(
         created_at=datetime.utcnow()
     )
     
-    db.add(new_block)
-    db.commit()
+    try:
+        db.add(new_block)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return {
+            "success": True,
+            "message": "User already blocked"
+        }
     
     logger.info(f"User {current_user.account_id} blocked user {request.blocked_user_id}")
     
@@ -77,7 +85,7 @@ async def block_user(
 
 
 @router.delete("/block/{blocked_user_id}")
-async def unblock_user(
+def unblock_user(
     blocked_user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -108,9 +116,11 @@ async def unblock_user(
 
 
 @router.get("/blocks")
-async def list_blocks(
+def list_blocks(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0)
 ):
     """
     List all users blocked by the current user.
@@ -118,21 +128,22 @@ async def list_blocks(
     if not E2EE_DM_ENABLED:
         raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
     
-    blocks = db.query(Block).filter(
+    rows = db.query(Block, User).join(
+        User, User.account_id == Block.blocked_id
+    ).filter(
         Block.blocker_id == current_user.account_id
-    ).order_by(Block.created_at.desc()).all()
+    ).order_by(
+        Block.created_at.desc()
+    ).offset(offset).limit(limit).all()
     
     blocked_users = []
-    for block in blocks:
-        blocked_user = db.query(User).filter(User.account_id == block.blocked_id).first()
-        if blocked_user:
-            blocked_users.append({
-                "user_id": blocked_user.account_id,
-                "username": blocked_user.username,
-                "blocked_at": block.created_at.isoformat()
-            })
+    for block, blocked_user in rows:
+        blocked_users.append({
+            "user_id": blocked_user.account_id,
+            "username": blocked_user.username,
+            "blocked_at": block.created_at.isoformat()
+        })
     
     return {
         "blocked_users": blocked_users
     }
-

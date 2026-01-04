@@ -1,0 +1,82 @@
+>>>>>> from __future__ import annotations
+>>>>>> from .exceptions import ParseError
+       
+>>>>>> from typing import NamedTuple
+       
+       
+>>>>>> COMMENTCHARS = "#;"
+       
+       
+>>>>>> class _ParsedLine(NamedTuple):
+>>>>>>     lineno: int
+>>>>>>     section: str | None
+>>>>>>     name: str | None
+>>>>>>     value: str | None
+       
+       
+>>>>>> def parse_lines(path: str, line_iter: list[str]) -> list[_ParsedLine]:
+    1:     result: list[_ParsedLine] = []
+    1:     section = None
+   15:     for lineno, line in enumerate(line_iter):
+   14:         name, data = _parseline(path, line, lineno)
+               # new value
+   14:         if name is not None and data is not None:
+    9:             result.append(_ParsedLine(lineno, section, name, data))
+               # new section
+    5:         elif name is not None and data is None:
+    1:             if not name:
+>>>>>>                 raise ParseError(path, lineno, "empty section name")
+    1:             section = name
+    1:             result.append(_ParsedLine(lineno, section, None, None))
+               # continuation
+    4:         elif name is None and data is not None:
+    4:             if not result:
+>>>>>>                 raise ParseError(path, lineno, "unexpected value continuation")
+    4:             last = result.pop()
+    4:             if last.name is None:
+>>>>>>                 raise ParseError(path, lineno, "unexpected value continuation")
+       
+    4:             if last.value:
+    2:                 last = last._replace(value=f"{last.value}\n{data}")
+                   else:
+    2:                 last = last._replace(value=data)
+    4:             result.append(last)
+    1:     return result
+       
+       
+>>>>>> def _parseline(path: str, line: str, lineno: int) -> tuple[str | None, str | None]:
+           # blank lines
+   14:     if iscommentline(line):
+>>>>>>         line = ""
+           else:
+   14:         line = line.rstrip()
+   14:     if not line:
+>>>>>>         return None, None
+           # section
+   14:     if line[0] == "[":
+    1:         realline = line
+    3:         for c in COMMENTCHARS:
+    2:             line = line.split(c)[0].rstrip()
+    1:         if line[-1] == "]":
+    1:             return line[1:-1], None
+>>>>>>         return None, realline.strip()
+           # value
+   13:     elif not line[0].isspace():
+    9:         try:
+    9:             name, value = line.split("=", 1)
+    9:             if ":" in name:
+>>>>>>                 raise ValueError()
+>>>>>>         except ValueError:
+>>>>>>             try:
+>>>>>>                 name, value = line.split(":", 1)
+>>>>>>             except ValueError:
+>>>>>>                 raise ParseError(path, lineno, "unexpected line: %r" % line)
+    9:         return name.strip(), value.strip()
+           # continuation
+           else:
+    4:         return None, line.strip()
+       
+       
+>>>>>> def iscommentline(line: str) -> bool:
+   14:     c = line.lstrip()[:1]
+   14:     return c in COMMENTCHARS

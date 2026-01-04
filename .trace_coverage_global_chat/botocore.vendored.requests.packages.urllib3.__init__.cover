@@ -1,0 +1,10 @@
+    1: """
+       urllib3 - Thread-safe connection pooling and re-using.
+       """
+       
+    1: __author__ = 'Andrey Petrov (andrey.petrov@shazow.net)'
+    1: __license__ = 'MIT'
+    1: __version__ = ''
+       
+       
+    1: from . import exceptions

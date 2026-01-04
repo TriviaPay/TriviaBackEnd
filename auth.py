@@ -5,10 +5,14 @@ import logging
 import json
 import base64
 import os
+import time
 
 # Initialize Descope client with configurable leeway for time sync issues
 client = DescopeClient(project_id=DESCOPE_PROJECT_ID, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
 logging.info(f"Descope client initialized with JWT leeway: {DESCOPE_JWT_LEEWAY}s")
+AUTH_DEBUG = os.getenv("AUTH_DEBUG", "false").lower() == "true"
+_mgmt_user_cache = {}
+_MGMT_CACHE_TTL_SECONDS = 300
 
 def decode_jwt_payload(token: str) -> dict:
     """Decode JWT payload without verification for debugging purposes."""
@@ -46,15 +50,17 @@ def validate_descope_jwt(token: str) -> dict:
         HTTPException: If token validation fails or user info is missing
     """
     # Debug: decode token payload for inspection
-    jwt_payload = decode_jwt_payload(token)
-    logging.debug(f"JWT payload (decoded): {json.dumps(jwt_payload, indent=2, default=str)}")
+    if AUTH_DEBUG:
+        jwt_payload = decode_jwt_payload(token)
+        logging.debug(f"JWT payload (decoded): {json.dumps(jwt_payload, indent=2, default=str)}")
     
     try:
         session = client.validate_session(token)
         
         # Debug logging to inspect session structure
-        logging.debug(f"Descope session validation successful. Session keys: {list(session.keys()) if isinstance(session, dict) else 'Not a dict'}")
-        logging.debug(f"Session payload: {json.dumps(session, indent=2, default=str) if isinstance(session, dict) else str(session)}")
+        if AUTH_DEBUG:
+            logging.debug(f"Descope session validation successful. Session keys: {list(session.keys()) if isinstance(session, dict) else 'Not a dict'}")
+            logging.debug(f"Session payload: {json.dumps(session, indent=2, default=str) if isinstance(session, dict) else str(session)}")
         
         if not isinstance(session, dict):
             logging.error("Descope session validation failed: session is not a dictionary")
@@ -82,12 +88,30 @@ def validate_descope_jwt(token: str) -> dict:
         # If we still don't have email, try to get user details from Descope management API
         if not email and user_info['userId'] and DESCOPE_MANAGEMENT_KEY:
             try:
-                mgmt_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
-                # Use the correct method name - it should be 'load' not 'get_by_user_id'
-                user_details = mgmt_client.mgmt.user.load(user_info['userId'])
-                if user_details and isinstance(user_details, dict):
-                    # Handle different response structures
-                    user_data = user_details.get('user', user_details)
+                cache_entry = _mgmt_user_cache.get(user_info['userId'])
+                user_data = None
+                if cache_entry:
+                    cached_data, expires_at = cache_entry
+                    if expires_at > time.time():
+                        user_data = cached_data
+                    else:
+                        _mgmt_user_cache.pop(user_info['userId'], None)
+
+                if user_data is None:
+                    mgmt_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
+                    # Use the correct method name - it should be 'load' not 'get_by_user_id'
+                    user_details = mgmt_client.mgmt.user.load(user_info['userId'])
+                    if user_details and isinstance(user_details, dict):
+                        # Handle different response structures
+                        user_data = user_details.get('user', user_details)
+                        _mgmt_user_cache[user_info['userId']] = (
+                            user_data,
+                            time.time() + _MGMT_CACHE_TTL_SECONDS
+                        )
+                        if len(_mgmt_user_cache) > 1000:
+                            _mgmt_user_cache.clear()
+
+                if user_data and isinstance(user_data, dict):
                     if 'loginIds' in user_data and isinstance(user_data['loginIds'], list) and len(user_data['loginIds']) > 0:
                         email = user_data['loginIds'][0]
                         user_info['loginIds'] = user_data['loginIds']
@@ -96,7 +120,8 @@ def validate_descope_jwt(token: str) -> dict:
                         user_info['loginIds'] = [email]
                     user_info['name'] = user_data.get('name')
                     user_info['displayName'] = user_data.get('displayName')
-                    logging.debug(f"Retrieved user details from management API: {json.dumps(user_data, indent=2, default=str)}")
+                    if AUTH_DEBUG:
+                        logging.debug(f"Retrieved user details from management API: {json.dumps(user_data, indent=2, default=str)}")
             except Exception as e:
                 logging.warning(f"Could not fetch user details from management API: {e}")
         
@@ -113,7 +138,8 @@ def validate_descope_jwt(token: str) -> dict:
             logging.error("Descope JWT validation failed: missing userId in session")
             raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
             
-        logging.debug(f"Final user_info: {json.dumps(user_info, indent=2, default=str)}")
+        if AUTH_DEBUG:
+            logging.debug(f"Final user_info: {json.dumps(user_info, indent=2, default=str)}")
         return user_info
         
     except HTTPException:
@@ -132,7 +158,8 @@ def validate_descope_jwt(token: str) -> dict:
             session = high_leeway_client.validate_session(token)
             
             # Debug logging for fallback attempt
-            logging.debug(f"High leeway validation successful. Session keys: {list(session.keys()) if isinstance(session, dict) else 'Not a dict'}")
+            if AUTH_DEBUG:
+                logging.debug(f"High leeway validation successful. Session keys: {list(session.keys()) if isinstance(session, dict) else 'Not a dict'}")
             
             if not isinstance(session, dict):
                 logging.error("High leeway validation failed: session is not a dictionary")

@@ -1,0 +1,777 @@
+    1: import warnings
+    1: from enum import Enum
+    1: from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+       
+    1: from fastapi.openapi.models import Example
+    1: from pydantic.fields import FieldInfo
+    1: from typing_extensions import Annotated, deprecated
+       
+    1: from ._compat import PYDANTIC_V2, Undefined
+       
+    1: _Unset: Any = Undefined
+       
+       
+    2: class ParamTypes(Enum):
+    1:     query = "query"
+    1:     header = "header"
+    1:     path = "path"
+    1:     cookie = "cookie"
+       
+       
+    2: class Param(FieldInfo):
+    1:     in_: ParamTypes
+       
+    3:     def __init__(
+               self,
+    2:         default: Any = Undefined,
+               *,
+    2:         default_factory: Union[Callable[[], Any], None] = _Unset,
+    2:         annotation: Optional[Any] = None,
+    2:         alias: Optional[str] = None,
+    2:         alias_priority: Union[int, None] = _Unset,
+               # TODO: update when deprecating Pydantic v1, import these types
+               # validation_alias: str | AliasPath | AliasChoices | None
+    2:         validation_alias: Union[str, None] = None,
+    2:         serialization_alias: Union[str, None] = None,
+    2:         title: Optional[str] = None,
+    2:         description: Optional[str] = None,
+    2:         gt: Optional[float] = None,
+    2:         ge: Optional[float] = None,
+    2:         lt: Optional[float] = None,
+    2:         le: Optional[float] = None,
+    2:         min_length: Optional[int] = None,
+    2:         max_length: Optional[int] = None,
+    2:         pattern: Optional[str] = None,
+    2:         regex: Annotated[
+    2:             Optional[str],
+    2:             deprecated(
+    1:                 "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+                   ),
+    1:         ] = None,
+    2:         discriminator: Union[str, None] = None,
+    2:         strict: Union[bool, None] = _Unset,
+    2:         multiple_of: Union[float, None] = _Unset,
+    2:         allow_inf_nan: Union[bool, None] = _Unset,
+    2:         max_digits: Union[int, None] = _Unset,
+    2:         decimal_places: Union[int, None] = _Unset,
+    2:         examples: Optional[List[Any]] = None,
+    2:         example: Annotated[
+    2:             Optional[Any],
+    2:             deprecated(
+    1:                 "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                       "although still supported. Use examples instead."
+                   ),
+    1:         ] = _Unset,
+    2:         openapi_examples: Optional[Dict[str, Example]] = None,
+    2:         deprecated: Optional[bool] = None,
+    2:         include_in_schema: bool = True,
+    2:         json_schema_extra: Union[Dict[str, Any], None] = None,
+    1:         **extra: Any,
+           ):
+   67:         self.deprecated = deprecated
+   67:         if example is not _Unset:
+>>>>>>             warnings.warn(
+>>>>>>                 "`example` has been deprecated, please use `examples` instead",
+>>>>>>                 category=DeprecationWarning,
+>>>>>>                 stacklevel=4,
+                   )
+   67:         self.example = example
+   67:         self.include_in_schema = include_in_schema
+   67:         self.openapi_examples = openapi_examples
+  201:         kwargs = dict(
+   67:             default=default,
+   67:             default_factory=default_factory,
+   67:             alias=alias,
+   67:             title=title,
+   67:             description=description,
+   67:             gt=gt,
+   67:             ge=ge,
+   67:             lt=lt,
+   67:             le=le,
+   67:             min_length=min_length,
+   67:             max_length=max_length,
+   67:             discriminator=discriminator,
+   67:             multiple_of=multiple_of,
+   67:             allow_nan=allow_inf_nan,
+   67:             max_digits=max_digits,
+   67:             decimal_places=decimal_places,
+   67:             **extra,
+               )
+   67:         if examples is not None:
+>>>>>>             kwargs["examples"] = examples
+   67:         if regex is not None:
+>>>>>>             warnings.warn(
+>>>>>>                 "`regex` has been deprecated, please use `pattern` instead",
+>>>>>>                 category=DeprecationWarning,
+>>>>>>                 stacklevel=4,
+                   )
+   67:         current_json_schema_extra = json_schema_extra or extra
+   67:         if PYDANTIC_V2:
+  134:             kwargs.update(
+   67:                 {
+   67:                     "annotation": annotation,
+   67:                     "alias_priority": alias_priority,
+   67:                     "validation_alias": validation_alias,
+   67:                     "serialization_alias": serialization_alias,
+   67:                     "strict": strict,
+   67:                     "json_schema_extra": current_json_schema_extra,
+                       }
+                   )
+   67:             kwargs["pattern"] = pattern or regex
+               else:
+>>>>>>             kwargs["regex"] = pattern or regex
+>>>>>>             kwargs.update(**current_json_schema_extra)
+ 1675:         use_kwargs = {k: v for k, v in kwargs.items() if v is not _Unset}
+       
+   67:         super().__init__(**use_kwargs)
+       
+    1:     def __repr__(self) -> str:
+  134:         return f"{self.__class__.__name__}({self.default})"
+       
+       
+    2: class Path(Param):
+    1:     in_ = ParamTypes.path
+       
+    3:     def __init__(
+               self,
+    1:         default: Any = ...,
+               *,
+    2:         default_factory: Union[Callable[[], Any], None] = _Unset,
+    2:         annotation: Optional[Any] = None,
+    2:         alias: Optional[str] = None,
+    2:         alias_priority: Union[int, None] = _Unset,
+               # TODO: update when deprecating Pydantic v1, import these types
+               # validation_alias: str | AliasPath | AliasChoices | None
+    2:         validation_alias: Union[str, None] = None,
+    2:         serialization_alias: Union[str, None] = None,
+    2:         title: Optional[str] = None,
+    2:         description: Optional[str] = None,
+    2:         gt: Optional[float] = None,
+    2:         ge: Optional[float] = None,
+    2:         lt: Optional[float] = None,
+    2:         le: Optional[float] = None,
+    2:         min_length: Optional[int] = None,
+    2:         max_length: Optional[int] = None,
+    2:         pattern: Optional[str] = None,
+    2:         regex: Annotated[
+    2:             Optional[str],
+    2:             deprecated(
+    1:                 "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+                   ),
+    1:         ] = None,
+    2:         discriminator: Union[str, None] = None,
+    2:         strict: Union[bool, None] = _Unset,
+    2:         multiple_of: Union[float, None] = _Unset,
+    2:         allow_inf_nan: Union[bool, None] = _Unset,
+    2:         max_digits: Union[int, None] = _Unset,
+    2:         decimal_places: Union[int, None] = _Unset,
+    2:         examples: Optional[List[Any]] = None,
+    2:         example: Annotated[
+    2:             Optional[Any],
+    2:             deprecated(
+    1:                 "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                       "although still supported. Use examples instead."
+                   ),
+    1:         ] = _Unset,
+    2:         openapi_examples: Optional[Dict[str, Example]] = None,
+    2:         deprecated: Optional[bool] = None,
+    2:         include_in_schema: bool = True,
+    2:         json_schema_extra: Union[Dict[str, Any], None] = None,
+    1:         **extra: Any,
+           ):
+   67:         assert default is ..., "Path parameters cannot have a default value"
+   67:         self.in_ = self.in_
+  201:         super().__init__(
+   67:             default=default,
+   67:             default_factory=default_factory,
+   67:             annotation=annotation,
+   67:             alias=alias,
+   67:             alias_priority=alias_priority,
+   67:             validation_alias=validation_alias,
+   67:             serialization_alias=serialization_alias,
+   67:             title=title,
+   67:             description=description,
+   67:             gt=gt,
+   67:             ge=ge,
+   67:             lt=lt,
+   67:             le=le,
+   67:             min_length=min_length,
+   67:             max_length=max_length,
+   67:             pattern=pattern,
+   67:             regex=regex,
+   67:             discriminator=discriminator,
+   67:             strict=strict,
+   67:             multiple_of=multiple_of,
+   67:             allow_inf_nan=allow_inf_nan,
+   67:             max_digits=max_digits,
+   67:             decimal_places=decimal_places,
+   67:             deprecated=deprecated,
+   67:             example=example,
+   67:             examples=examples,
+   67:             openapi_examples=openapi_examples,
+   67:             include_in_schema=include_in_schema,
+   67:             json_schema_extra=json_schema_extra,
+   67:             **extra,
+               )
+       
+       
+    2: class Query(Param):
+    1:     in_ = ParamTypes.query
+       
+    3:     def __init__(
+               self,
+    2:         default: Any = Undefined,
+               *,
+    2:         default_factory: Union[Callable[[], Any], None] = _Unset,
+    2:         annotation: Optional[Any] = None,
+    2:         alias: Optional[str] = None,
+    2:         alias_priority: Union[int, None] = _Unset,
+               # TODO: update when deprecating Pydantic v1, import these types
+               # validation_alias: str | AliasPath | AliasChoices | None
+    2:         validation_alias: Union[str, None] = None,
+    2:         serialization_alias: Union[str, None] = None,
+    2:         title: Optional[str] = None,
+    2:         description: Optional[str] = None,
+    2:         gt: Optional[float] = None,
+    2:         ge: Optional[float] = None,
+    2:         lt: Optional[float] = None,
+    2:         le: Optional[float] = None,
+    2:         min_length: Optional[int] = None,
+    2:         max_length: Optional[int] = None,
+    2:         pattern: Optional[str] = None,
+    2:         regex: Annotated[
+    2:             Optional[str],
+    2:             deprecated(
+    1:                 "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+                   ),
+    1:         ] = None,
+    2:         discriminator: Union[str, None] = None,
+    2:         strict: Union[bool, None] = _Unset,
+    2:         multiple_of: Union[float, None] = _Unset,
+    2:         allow_inf_nan: Union[bool, None] = _Unset,
+    2:         max_digits: Union[int, None] = _Unset,
+    2:         decimal_places: Union[int, None] = _Unset,
+    2:         examples: Optional[List[Any]] = None,
+    2:         example: Annotated[
+    2:             Optional[Any],
+    2:             deprecated(
+    1:                 "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                       "although still supported. Use examples instead."
+                   ),
+    1:         ] = _Unset,
+    2:         openapi_examples: Optional[Dict[str, Example]] = None,
+    2:         deprecated: Optional[bool] = None,
+    2:         include_in_schema: bool = True,
+    2:         json_schema_extra: Union[Dict[str, Any], None] = None,
+    1:         **extra: Any,
+           ):
+>>>>>>         super().__init__(
+>>>>>>             default=default,
+>>>>>>             default_factory=default_factory,
+>>>>>>             annotation=annotation,
+>>>>>>             alias=alias,
+>>>>>>             alias_priority=alias_priority,
+>>>>>>             validation_alias=validation_alias,
+>>>>>>             serialization_alias=serialization_alias,
+>>>>>>             title=title,
+>>>>>>             description=description,
+>>>>>>             gt=gt,
+>>>>>>             ge=ge,
+>>>>>>             lt=lt,
+>>>>>>             le=le,
+>>>>>>             min_length=min_length,
+>>>>>>             max_length=max_length,
+>>>>>>             pattern=pattern,
+>>>>>>             regex=regex,
+>>>>>>             discriminator=discriminator,
+>>>>>>             strict=strict,
+>>>>>>             multiple_of=multiple_of,
+>>>>>>             allow_inf_nan=allow_inf_nan,
+>>>>>>             max_digits=max_digits,
+>>>>>>             decimal_places=decimal_places,
+>>>>>>             deprecated=deprecated,
+>>>>>>             example=example,
+>>>>>>             examples=examples,
+>>>>>>             openapi_examples=openapi_examples,
+>>>>>>             include_in_schema=include_in_schema,
+>>>>>>             json_schema_extra=json_schema_extra,
+>>>>>>             **extra,
+               )
+       
+       
+    2: class Header(Param):
+    1:     in_ = ParamTypes.header
+       
+    3:     def __init__(
+               self,
+    2:         default: Any = Undefined,
+               *,
+    2:         default_factory: Union[Callable[[], Any], None] = _Unset,
+    2:         annotation: Optional[Any] = None,
+    2:         alias: Optional[str] = None,
+    2:         alias_priority: Union[int, None] = _Unset,
+               # TODO: update when deprecating Pydantic v1, import these types
+               # validation_alias: str | AliasPath | AliasChoices | None
+    2:         validation_alias: Union[str, None] = None,
+    2:         serialization_alias: Union[str, None] = None,
+    2:         convert_underscores: bool = True,
+    2:         title: Optional[str] = None,
+    2:         description: Optional[str] = None,
+    2:         gt: Optional[float] = None,
+    2:         ge: Optional[float] = None,
+    2:         lt: Optional[float] = None,
+    2:         le: Optional[float] = None,
+    2:         min_length: Optional[int] = None,
+    2:         max_length: Optional[int] = None,
+    2:         pattern: Optional[str] = None,
+    2:         regex: Annotated[
+    2:             Optional[str],
+    2:             deprecated(
+    1:                 "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+                   ),
+    1:         ] = None,
+    2:         discriminator: Union[str, None] = None,
+    2:         strict: Union[bool, None] = _Unset,
+    2:         multiple_of: Union[float, None] = _Unset,
+    2:         allow_inf_nan: Union[bool, None] = _Unset,
+    2:         max_digits: Union[int, None] = _Unset,
+    2:         decimal_places: Union[int, None] = _Unset,
+    2:         examples: Optional[List[Any]] = None,
+    2:         example: Annotated[
+    2:             Optional[Any],
+    2:             deprecated(
+    1:                 "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                       "although still supported. Use examples instead."
+                   ),
+    1:         ] = _Unset,
+    2:         openapi_examples: Optional[Dict[str, Example]] = None,
+    2:         deprecated: Optional[bool] = None,
+    2:         include_in_schema: bool = True,
+    2:         json_schema_extra: Union[Dict[str, Any], None] = None,
+    1:         **extra: Any,
+           ):
+>>>>>>         self.convert_underscores = convert_underscores
+>>>>>>         super().__init__(
+>>>>>>             default=default,
+>>>>>>             default_factory=default_factory,
+>>>>>>             annotation=annotation,
+>>>>>>             alias=alias,
+>>>>>>             alias_priority=alias_priority,
+>>>>>>             validation_alias=validation_alias,
+>>>>>>             serialization_alias=serialization_alias,
+>>>>>>             title=title,
+>>>>>>             description=description,
+>>>>>>             gt=gt,
+>>>>>>             ge=ge,
+>>>>>>             lt=lt,
+>>>>>>             le=le,
+>>>>>>             min_length=min_length,
+>>>>>>             max_length=max_length,
+>>>>>>             pattern=pattern,
+>>>>>>             regex=regex,
+>>>>>>             discriminator=discriminator,
+>>>>>>             strict=strict,
+>>>>>>             multiple_of=multiple_of,
+>>>>>>             allow_inf_nan=allow_inf_nan,
+>>>>>>             max_digits=max_digits,
+>>>>>>             decimal_places=decimal_places,
+>>>>>>             deprecated=deprecated,
+>>>>>>             example=example,
+>>>>>>             examples=examples,
+>>>>>>             openapi_examples=openapi_examples,
+>>>>>>             include_in_schema=include_in_schema,
+>>>>>>             json_schema_extra=json_schema_extra,
+>>>>>>             **extra,
+               )
+       
+       
+    2: class Cookie(Param):
+    1:     in_ = ParamTypes.cookie
+       
+    3:     def __init__(
+               self,
+    2:         default: Any = Undefined,
+               *,
+    2:         default_factory: Union[Callable[[], Any], None] = _Unset,
+    2:         annotation: Optional[Any] = None,
+    2:         alias: Optional[str] = None,
+    2:         alias_priority: Union[int, None] = _Unset,
+               # TODO: update when deprecating Pydantic v1, import these types
+               # validation_alias: str | AliasPath | AliasChoices | None
+    2:         validation_alias: Union[str, None] = None,
+    2:         serialization_alias: Union[str, None] = None,
+    2:         title: Optional[str] = None,
+    2:         description: Optional[str] = None,
+    2:         gt: Optional[float] = None,
+    2:         ge: Optional[float] = None,
+    2:         lt: Optional[float] = None,
+    2:         le: Optional[float] = None,
+    2:         min_length: Optional[int] = None,
+    2:         max_length: Optional[int] = None,
+    2:         pattern: Optional[str] = None,
+    2:         regex: Annotated[
+    2:             Optional[str],
+    2:             deprecated(
+    1:                 "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+                   ),
+    1:         ] = None,
+    2:         discriminator: Union[str, None] = None,
+    2:         strict: Union[bool, None] = _Unset,
+    2:         multiple_of: Union[float, None] = _Unset,
+    2:         allow_inf_nan: Union[bool, None] = _Unset,
+    2:         max_digits: Union[int, None] = _Unset,
+    2:         decimal_places: Union[int, None] = _Unset,
+    2:         examples: Optional[List[Any]] = None,
+    2:         example: Annotated[
+    2:             Optional[Any],
+    2:             deprecated(
+    1:                 "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                       "although still supported. Use examples instead."
+                   ),
+    1:         ] = _Unset,
+    2:         openapi_examples: Optional[Dict[str, Example]] = None,
+    2:         deprecated: Optional[bool] = None,
+    2:         include_in_schema: bool = True,
+    2:         json_schema_extra: Union[Dict[str, Any], None] = None,
+    1:         **extra: Any,
+           ):
+>>>>>>         super().__init__(
+>>>>>>             default=default,
+>>>>>>             default_factory=default_factory,
+>>>>>>             annotation=annotation,
+>>>>>>             alias=alias,
+>>>>>>             alias_priority=alias_priority,
+>>>>>>             validation_alias=validation_alias,
+>>>>>>             serialization_alias=serialization_alias,
+>>>>>>             title=title,
+>>>>>>             description=description,
+>>>>>>             gt=gt,
+>>>>>>             ge=ge,
+>>>>>>             lt=lt,
+>>>>>>             le=le,
+>>>>>>             min_length=min_length,
+>>>>>>             max_length=max_length,
+>>>>>>             pattern=pattern,
+>>>>>>             regex=regex,
+>>>>>>             discriminator=discriminator,
+>>>>>>             strict=strict,
+>>>>>>             multiple_of=multiple_of,
+>>>>>>             allow_inf_nan=allow_inf_nan,
+>>>>>>             max_digits=max_digits,
+>>>>>>             decimal_places=decimal_places,
+>>>>>>             deprecated=deprecated,
+>>>>>>             example=example,
+>>>>>>             examples=examples,
+>>>>>>             openapi_examples=openapi_examples,
+>>>>>>             include_in_schema=include_in_schema,
+>>>>>>             json_schema_extra=json_schema_extra,
+>>>>>>             **extra,
+               )
+       
+       
+    2: class Body(FieldInfo):
+    3:     def __init__(
+               self,
+    2:         default: Any = Undefined,
+               *,
+    2:         default_factory: Union[Callable[[], Any], None] = _Unset,
+    2:         annotation: Optional[Any] = None,
+    2:         embed: bool = False,
+    2:         media_type: str = "application/json",
+    2:         alias: Optional[str] = None,
+    2:         alias_priority: Union[int, None] = _Unset,
+               # TODO: update when deprecating Pydantic v1, import these types
+               # validation_alias: str | AliasPath | AliasChoices | None
+    2:         validation_alias: Union[str, None] = None,
+    2:         serialization_alias: Union[str, None] = None,
+    2:         title: Optional[str] = None,
+    2:         description: Optional[str] = None,
+    2:         gt: Optional[float] = None,
+    2:         ge: Optional[float] = None,
+    2:         lt: Optional[float] = None,
+    2:         le: Optional[float] = None,
+    2:         min_length: Optional[int] = None,
+    2:         max_length: Optional[int] = None,
+    2:         pattern: Optional[str] = None,
+    2:         regex: Annotated[
+    2:             Optional[str],
+    2:             deprecated(
+    1:                 "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+                   ),
+    1:         ] = None,
+    2:         discriminator: Union[str, None] = None,
+    2:         strict: Union[bool, None] = _Unset,
+    2:         multiple_of: Union[float, None] = _Unset,
+    2:         allow_inf_nan: Union[bool, None] = _Unset,
+    2:         max_digits: Union[int, None] = _Unset,
+    2:         decimal_places: Union[int, None] = _Unset,
+    2:         examples: Optional[List[Any]] = None,
+    2:         example: Annotated[
+    2:             Optional[Any],
+    2:             deprecated(
+    1:                 "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                       "although still supported. Use examples instead."
+                   ),
+    1:         ] = _Unset,
+    2:         openapi_examples: Optional[Dict[str, Example]] = None,
+    2:         deprecated: Optional[bool] = None,
+    2:         include_in_schema: bool = True,
+    2:         json_schema_extra: Union[Dict[str, Any], None] = None,
+    1:         **extra: Any,
+           ):
+   45:         self.embed = embed
+   45:         self.media_type = media_type
+   45:         self.deprecated = deprecated
+   45:         if example is not _Unset:
+>>>>>>             warnings.warn(
+>>>>>>                 "`example` has been deprecated, please use `examples` instead",
+>>>>>>                 category=DeprecationWarning,
+>>>>>>                 stacklevel=4,
+                   )
+   45:         self.example = example
+   45:         self.include_in_schema = include_in_schema
+   45:         self.openapi_examples = openapi_examples
+  135:         kwargs = dict(
+   45:             default=default,
+   45:             default_factory=default_factory,
+   45:             alias=alias,
+   45:             title=title,
+   45:             description=description,
+   45:             gt=gt,
+   45:             ge=ge,
+   45:             lt=lt,
+   45:             le=le,
+   45:             min_length=min_length,
+   45:             max_length=max_length,
+   45:             discriminator=discriminator,
+   45:             multiple_of=multiple_of,
+   45:             allow_nan=allow_inf_nan,
+   45:             max_digits=max_digits,
+   45:             decimal_places=decimal_places,
+   45:             **extra,
+               )
+   45:         if examples is not None:
+>>>>>>             kwargs["examples"] = examples
+   45:         if regex is not None:
+>>>>>>             warnings.warn(
+>>>>>>                 "`regex` has been depreacated, please use `pattern` instead",
+>>>>>>                 category=DeprecationWarning,
+>>>>>>                 stacklevel=4,
+                   )
+   45:         current_json_schema_extra = json_schema_extra or extra
+   45:         if PYDANTIC_V2:
+   90:             kwargs.update(
+   45:                 {
+   45:                     "annotation": annotation,
+   45:                     "alias_priority": alias_priority,
+   45:                     "validation_alias": validation_alias,
+   45:                     "serialization_alias": serialization_alias,
+   45:                     "strict": strict,
+   45:                     "json_schema_extra": current_json_schema_extra,
+                       }
+                   )
+   45:             kwargs["pattern"] = pattern or regex
+               else:
+>>>>>>             kwargs["regex"] = pattern or regex
+>>>>>>             kwargs.update(**current_json_schema_extra)
+       
+ 1125:         use_kwargs = {k: v for k, v in kwargs.items() if v is not _Unset}
+       
+   45:         super().__init__(**use_kwargs)
+       
+    1:     def __repr__(self) -> str:
+   66:         return f"{self.__class__.__name__}({self.default})"
+       
+       
+    2: class Form(Body):
+    3:     def __init__(
+               self,
+    2:         default: Any = Undefined,
+               *,
+    2:         default_factory: Union[Callable[[], Any], None] = _Unset,
+    2:         annotation: Optional[Any] = None,
+    2:         media_type: str = "application/x-www-form-urlencoded",
+    2:         alias: Optional[str] = None,
+    2:         alias_priority: Union[int, None] = _Unset,
+               # TODO: update when deprecating Pydantic v1, import these types
+               # validation_alias: str | AliasPath | AliasChoices | None
+    2:         validation_alias: Union[str, None] = None,
+    2:         serialization_alias: Union[str, None] = None,
+    2:         title: Optional[str] = None,
+    2:         description: Optional[str] = None,
+    2:         gt: Optional[float] = None,
+    2:         ge: Optional[float] = None,
+    2:         lt: Optional[float] = None,
+    2:         le: Optional[float] = None,
+    2:         min_length: Optional[int] = None,
+    2:         max_length: Optional[int] = None,
+    2:         pattern: Optional[str] = None,
+    2:         regex: Annotated[
+    2:             Optional[str],
+    2:             deprecated(
+    1:                 "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+                   ),
+    1:         ] = None,
+    2:         discriminator: Union[str, None] = None,
+    2:         strict: Union[bool, None] = _Unset,
+    2:         multiple_of: Union[float, None] = _Unset,
+    2:         allow_inf_nan: Union[bool, None] = _Unset,
+    2:         max_digits: Union[int, None] = _Unset,
+    2:         decimal_places: Union[int, None] = _Unset,
+    2:         examples: Optional[List[Any]] = None,
+    2:         example: Annotated[
+    2:             Optional[Any],
+    2:             deprecated(
+    1:                 "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                       "although still supported. Use examples instead."
+                   ),
+    1:         ] = _Unset,
+    2:         openapi_examples: Optional[Dict[str, Example]] = None,
+    2:         deprecated: Optional[bool] = None,
+    2:         include_in_schema: bool = True,
+    2:         json_schema_extra: Union[Dict[str, Any], None] = None,
+    1:         **extra: Any,
+           ):
+   36:         super().__init__(
+   12:             default=default,
+   12:             default_factory=default_factory,
+   12:             annotation=annotation,
+   12:             embed=True,
+   12:             media_type=media_type,
+   12:             alias=alias,
+   12:             alias_priority=alias_priority,
+   12:             validation_alias=validation_alias,
+   12:             serialization_alias=serialization_alias,
+   12:             title=title,
+   12:             description=description,
+   12:             gt=gt,
+   12:             ge=ge,
+   12:             lt=lt,
+   12:             le=le,
+   12:             min_length=min_length,
+   12:             max_length=max_length,
+   12:             pattern=pattern,
+   12:             regex=regex,
+   12:             discriminator=discriminator,
+   12:             strict=strict,
+   12:             multiple_of=multiple_of,
+   12:             allow_inf_nan=allow_inf_nan,
+   12:             max_digits=max_digits,
+   12:             decimal_places=decimal_places,
+   12:             deprecated=deprecated,
+   12:             example=example,
+   12:             examples=examples,
+   12:             openapi_examples=openapi_examples,
+   12:             include_in_schema=include_in_schema,
+   12:             json_schema_extra=json_schema_extra,
+   12:             **extra,
+               )
+       
+       
+    2: class File(Form):
+    3:     def __init__(
+               self,
+    2:         default: Any = Undefined,
+               *,
+    2:         default_factory: Union[Callable[[], Any], None] = _Unset,
+    2:         annotation: Optional[Any] = None,
+    2:         media_type: str = "multipart/form-data",
+    2:         alias: Optional[str] = None,
+    2:         alias_priority: Union[int, None] = _Unset,
+               # TODO: update when deprecating Pydantic v1, import these types
+               # validation_alias: str | AliasPath | AliasChoices | None
+    2:         validation_alias: Union[str, None] = None,
+    2:         serialization_alias: Union[str, None] = None,
+    2:         title: Optional[str] = None,
+    2:         description: Optional[str] = None,
+    2:         gt: Optional[float] = None,
+    2:         ge: Optional[float] = None,
+    2:         lt: Optional[float] = None,
+    2:         le: Optional[float] = None,
+    2:         min_length: Optional[int] = None,
+    2:         max_length: Optional[int] = None,
+    2:         pattern: Optional[str] = None,
+    2:         regex: Annotated[
+    2:             Optional[str],
+    2:             deprecated(
+    1:                 "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+                   ),
+    1:         ] = None,
+    2:         discriminator: Union[str, None] = None,
+    2:         strict: Union[bool, None] = _Unset,
+    2:         multiple_of: Union[float, None] = _Unset,
+    2:         allow_inf_nan: Union[bool, None] = _Unset,
+    2:         max_digits: Union[int, None] = _Unset,
+    2:         decimal_places: Union[int, None] = _Unset,
+    2:         examples: Optional[List[Any]] = None,
+    2:         example: Annotated[
+    2:             Optional[Any],
+    2:             deprecated(
+    1:                 "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                       "although still supported. Use examples instead."
+                   ),
+    1:         ] = _Unset,
+    2:         openapi_examples: Optional[Dict[str, Example]] = None,
+    2:         deprecated: Optional[bool] = None,
+    2:         include_in_schema: bool = True,
+    2:         json_schema_extra: Union[Dict[str, Any], None] = None,
+    1:         **extra: Any,
+           ):
+>>>>>>         super().__init__(
+>>>>>>             default=default,
+>>>>>>             default_factory=default_factory,
+>>>>>>             annotation=annotation,
+>>>>>>             media_type=media_type,
+>>>>>>             alias=alias,
+>>>>>>             alias_priority=alias_priority,
+>>>>>>             validation_alias=validation_alias,
+>>>>>>             serialization_alias=serialization_alias,
+>>>>>>             title=title,
+>>>>>>             description=description,
+>>>>>>             gt=gt,
+>>>>>>             ge=ge,
+>>>>>>             lt=lt,
+>>>>>>             le=le,
+>>>>>>             min_length=min_length,
+>>>>>>             max_length=max_length,
+>>>>>>             pattern=pattern,
+>>>>>>             regex=regex,
+>>>>>>             discriminator=discriminator,
+>>>>>>             strict=strict,
+>>>>>>             multiple_of=multiple_of,
+>>>>>>             allow_inf_nan=allow_inf_nan,
+>>>>>>             max_digits=max_digits,
+>>>>>>             decimal_places=decimal_places,
+>>>>>>             deprecated=deprecated,
+>>>>>>             example=example,
+>>>>>>             examples=examples,
+>>>>>>             openapi_examples=openapi_examples,
+>>>>>>             include_in_schema=include_in_schema,
+>>>>>>             json_schema_extra=json_schema_extra,
+>>>>>>             **extra,
+               )
+       
+       
+    2: class Depends:
+    3:     def __init__(
+    2:         self, dependency: Optional[Callable[..., Any]] = None, *, use_cache: bool = True
+           ):
+   37:         self.dependency = dependency
+   37:         self.use_cache = use_cache
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         attr = getattr(self.dependency, "__name__", type(self.dependency).__name__)
+>>>>>>         cache = "" if self.use_cache else ", use_cache=False"
+>>>>>>         return f"{self.__class__.__name__}({attr}{cache})"
+       
+       
+    2: class Security(Depends):
+    3:     def __init__(
+               self,
+    1:         dependency: Optional[Callable[..., Any]] = None,
+               *,
+    2:         scopes: Optional[Sequence[str]] = None,
+    2:         use_cache: bool = True,
+           ):
+>>>>>>         super().__init__(dependency=dependency, use_cache=use_cache)
+>>>>>>         self.scopes = scopes or []

@@ -1,0 +1,294 @@
+       # __init__.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: from __future__ import annotations
+       
+    1: from typing import Any
+       
+    1: from . import util as _util
+    1: from .engine import AdaptedConnection as AdaptedConnection
+    1: from .engine import BaseRow as BaseRow
+    1: from .engine import BindTyping as BindTyping
+    1: from .engine import ChunkedIteratorResult as ChunkedIteratorResult
+    1: from .engine import Compiled as Compiled
+    1: from .engine import Connection as Connection
+    1: from .engine import create_engine as create_engine
+    1: from .engine import create_mock_engine as create_mock_engine
+    1: from .engine import create_pool_from_url as create_pool_from_url
+    1: from .engine import CreateEnginePlugin as CreateEnginePlugin
+    1: from .engine import CursorResult as CursorResult
+    1: from .engine import Dialect as Dialect
+    1: from .engine import Engine as Engine
+    1: from .engine import engine_from_config as engine_from_config
+    1: from .engine import ExceptionContext as ExceptionContext
+    1: from .engine import ExecutionContext as ExecutionContext
+    1: from .engine import FrozenResult as FrozenResult
+    1: from .engine import Inspector as Inspector
+    1: from .engine import IteratorResult as IteratorResult
+    1: from .engine import make_url as make_url
+    1: from .engine import MappingResult as MappingResult
+    1: from .engine import MergedResult as MergedResult
+    1: from .engine import NestedTransaction as NestedTransaction
+    1: from .engine import Result as Result
+    1: from .engine import result_tuple as result_tuple
+    1: from .engine import ResultProxy as ResultProxy
+    1: from .engine import RootTransaction as RootTransaction
+    1: from .engine import Row as Row
+    1: from .engine import RowMapping as RowMapping
+    1: from .engine import ScalarResult as ScalarResult
+    1: from .engine import Transaction as Transaction
+    1: from .engine import TwoPhaseTransaction as TwoPhaseTransaction
+    1: from .engine import TypeCompiler as TypeCompiler
+    1: from .engine import URL as URL
+    1: from .inspection import inspect as inspect
+    1: from .pool import AssertionPool as AssertionPool
+    1: from .pool import AsyncAdaptedQueuePool as AsyncAdaptedQueuePool
+    1: from .pool import (
+           FallbackAsyncAdaptedQueuePool as FallbackAsyncAdaptedQueuePool,
+       )
+    1: from .pool import NullPool as NullPool
+    1: from .pool import Pool as Pool
+    1: from .pool import PoolProxiedConnection as PoolProxiedConnection
+    1: from .pool import PoolResetState as PoolResetState
+    1: from .pool import QueuePool as QueuePool
+    1: from .pool import SingletonThreadPool as SingletonThreadPool
+    1: from .pool import StaticPool as StaticPool
+    1: from .schema import BaseDDLElement as BaseDDLElement
+    1: from .schema import BLANK_SCHEMA as BLANK_SCHEMA
+    1: from .schema import CheckConstraint as CheckConstraint
+    1: from .schema import Column as Column
+    1: from .schema import ColumnDefault as ColumnDefault
+    1: from .schema import Computed as Computed
+    1: from .schema import Constraint as Constraint
+    1: from .schema import DDL as DDL
+    1: from .schema import DDLElement as DDLElement
+    1: from .schema import DefaultClause as DefaultClause
+    1: from .schema import ExecutableDDLElement as ExecutableDDLElement
+    1: from .schema import FetchedValue as FetchedValue
+    1: from .schema import ForeignKey as ForeignKey
+    1: from .schema import ForeignKeyConstraint as ForeignKeyConstraint
+    1: from .schema import Identity as Identity
+    1: from .schema import Index as Index
+    1: from .schema import insert_sentinel as insert_sentinel
+    1: from .schema import MetaData as MetaData
+    1: from .schema import PrimaryKeyConstraint as PrimaryKeyConstraint
+    1: from .schema import Sequence as Sequence
+    1: from .schema import Table as Table
+    1: from .schema import UniqueConstraint as UniqueConstraint
+    1: from .sql import ColumnExpressionArgument as ColumnExpressionArgument
+    1: from .sql import NotNullable as NotNullable
+    1: from .sql import Nullable as Nullable
+    1: from .sql import SelectLabelStyle as SelectLabelStyle
+    1: from .sql.expression import Alias as Alias
+    1: from .sql.expression import alias as alias
+    1: from .sql.expression import AliasedReturnsRows as AliasedReturnsRows
+    1: from .sql.expression import all_ as all_
+    1: from .sql.expression import and_ as and_
+    1: from .sql.expression import any_ as any_
+    1: from .sql.expression import asc as asc
+    1: from .sql.expression import between as between
+    1: from .sql.expression import BinaryExpression as BinaryExpression
+    1: from .sql.expression import bindparam as bindparam
+    1: from .sql.expression import BindParameter as BindParameter
+    1: from .sql.expression import bitwise_not as bitwise_not
+    1: from .sql.expression import BooleanClauseList as BooleanClauseList
+    1: from .sql.expression import CacheKey as CacheKey
+    1: from .sql.expression import Case as Case
+    1: from .sql.expression import case as case
+    1: from .sql.expression import Cast as Cast
+    1: from .sql.expression import cast as cast
+    1: from .sql.expression import ClauseElement as ClauseElement
+    1: from .sql.expression import ClauseList as ClauseList
+    1: from .sql.expression import collate as collate
+    1: from .sql.expression import CollectionAggregate as CollectionAggregate
+    1: from .sql.expression import column as column
+    1: from .sql.expression import ColumnClause as ColumnClause
+    1: from .sql.expression import ColumnCollection as ColumnCollection
+    1: from .sql.expression import ColumnElement as ColumnElement
+    1: from .sql.expression import ColumnOperators as ColumnOperators
+    1: from .sql.expression import CompoundSelect as CompoundSelect
+    1: from .sql.expression import CTE as CTE
+    1: from .sql.expression import cte as cte
+    1: from .sql.expression import custom_op as custom_op
+    1: from .sql.expression import Delete as Delete
+    1: from .sql.expression import delete as delete
+    1: from .sql.expression import desc as desc
+    1: from .sql.expression import distinct as distinct
+    1: from .sql.expression import except_ as except_
+    1: from .sql.expression import except_all as except_all
+    1: from .sql.expression import Executable as Executable
+    1: from .sql.expression import Exists as Exists
+    1: from .sql.expression import exists as exists
+    1: from .sql.expression import Extract as Extract
+    1: from .sql.expression import extract as extract
+    1: from .sql.expression import false as false
+    1: from .sql.expression import False_ as False_
+    1: from .sql.expression import FromClause as FromClause
+    1: from .sql.expression import FromGrouping as FromGrouping
+    1: from .sql.expression import func as func
+    1: from .sql.expression import funcfilter as funcfilter
+    1: from .sql.expression import Function as Function
+    1: from .sql.expression import FunctionElement as FunctionElement
+    1: from .sql.expression import FunctionFilter as FunctionFilter
+    1: from .sql.expression import GenerativeSelect as GenerativeSelect
+    1: from .sql.expression import Grouping as Grouping
+    1: from .sql.expression import HasCTE as HasCTE
+    1: from .sql.expression import HasPrefixes as HasPrefixes
+    1: from .sql.expression import HasSuffixes as HasSuffixes
+    1: from .sql.expression import Insert as Insert
+    1: from .sql.expression import insert as insert
+    1: from .sql.expression import intersect as intersect
+    1: from .sql.expression import intersect_all as intersect_all
+    1: from .sql.expression import Join as Join
+    1: from .sql.expression import join as join
+    1: from .sql.expression import Label as Label
+    1: from .sql.expression import label as label
+    1: from .sql.expression import LABEL_STYLE_DEFAULT as LABEL_STYLE_DEFAULT
+    1: from .sql.expression import (
+           LABEL_STYLE_DISAMBIGUATE_ONLY as LABEL_STYLE_DISAMBIGUATE_ONLY,
+       )
+    1: from .sql.expression import LABEL_STYLE_NONE as LABEL_STYLE_NONE
+    1: from .sql.expression import (
+           LABEL_STYLE_TABLENAME_PLUS_COL as LABEL_STYLE_TABLENAME_PLUS_COL,
+       )
+    1: from .sql.expression import lambda_stmt as lambda_stmt
+    1: from .sql.expression import LambdaElement as LambdaElement
+    1: from .sql.expression import Lateral as Lateral
+    1: from .sql.expression import lateral as lateral
+    1: from .sql.expression import literal as literal
+    1: from .sql.expression import literal_column as literal_column
+    1: from .sql.expression import modifier as modifier
+    1: from .sql.expression import not_ as not_
+    1: from .sql.expression import Null as Null
+    1: from .sql.expression import null as null
+    1: from .sql.expression import nulls_first as nulls_first
+    1: from .sql.expression import nulls_last as nulls_last
+    1: from .sql.expression import nullsfirst as nullsfirst
+    1: from .sql.expression import nullslast as nullslast
+    1: from .sql.expression import Operators as Operators
+    1: from .sql.expression import or_ as or_
+    1: from .sql.expression import outerjoin as outerjoin
+    1: from .sql.expression import outparam as outparam
+    1: from .sql.expression import Over as Over
+    1: from .sql.expression import over as over
+    1: from .sql.expression import quoted_name as quoted_name
+    1: from .sql.expression import ReleaseSavepointClause as ReleaseSavepointClause
+    1: from .sql.expression import ReturnsRows as ReturnsRows
+    1: from .sql.expression import (
+           RollbackToSavepointClause as RollbackToSavepointClause,
+       )
+    1: from .sql.expression import SavepointClause as SavepointClause
+    1: from .sql.expression import ScalarSelect as ScalarSelect
+    1: from .sql.expression import Select as Select
+    1: from .sql.expression import select as select
+    1: from .sql.expression import Selectable as Selectable
+    1: from .sql.expression import SelectBase as SelectBase
+    1: from .sql.expression import SQLColumnExpression as SQLColumnExpression
+    1: from .sql.expression import StatementLambdaElement as StatementLambdaElement
+    1: from .sql.expression import Subquery as Subquery
+    1: from .sql.expression import table as table
+    1: from .sql.expression import TableClause as TableClause
+    1: from .sql.expression import TableSample as TableSample
+    1: from .sql.expression import tablesample as tablesample
+    1: from .sql.expression import TableValuedAlias as TableValuedAlias
+    1: from .sql.expression import text as text
+    1: from .sql.expression import TextAsFrom as TextAsFrom
+    1: from .sql.expression import TextClause as TextClause
+    1: from .sql.expression import TextualSelect as TextualSelect
+    1: from .sql.expression import true as true
+    1: from .sql.expression import True_ as True_
+    1: from .sql.expression import try_cast as try_cast
+    1: from .sql.expression import TryCast as TryCast
+    1: from .sql.expression import Tuple as Tuple
+    1: from .sql.expression import tuple_ as tuple_
+    1: from .sql.expression import type_coerce as type_coerce
+    1: from .sql.expression import TypeClause as TypeClause
+    1: from .sql.expression import TypeCoerce as TypeCoerce
+    1: from .sql.expression import UnaryExpression as UnaryExpression
+    1: from .sql.expression import union as union
+    1: from .sql.expression import union_all as union_all
+    1: from .sql.expression import Update as Update
+    1: from .sql.expression import update as update
+    1: from .sql.expression import UpdateBase as UpdateBase
+    1: from .sql.expression import Values as Values
+    1: from .sql.expression import values as values
+    1: from .sql.expression import ValuesBase as ValuesBase
+    1: from .sql.expression import Visitable as Visitable
+    1: from .sql.expression import within_group as within_group
+    1: from .sql.expression import WithinGroup as WithinGroup
+    1: from .types import ARRAY as ARRAY
+    1: from .types import BIGINT as BIGINT
+    1: from .types import BigInteger as BigInteger
+    1: from .types import BINARY as BINARY
+    1: from .types import BLOB as BLOB
+    1: from .types import BOOLEAN as BOOLEAN
+    1: from .types import Boolean as Boolean
+    1: from .types import CHAR as CHAR
+    1: from .types import CLOB as CLOB
+    1: from .types import DATE as DATE
+    1: from .types import Date as Date
+    1: from .types import DATETIME as DATETIME
+    1: from .types import DateTime as DateTime
+    1: from .types import DECIMAL as DECIMAL
+    1: from .types import DOUBLE as DOUBLE
+    1: from .types import Double as Double
+    1: from .types import DOUBLE_PRECISION as DOUBLE_PRECISION
+    1: from .types import Enum as Enum
+    1: from .types import FLOAT as FLOAT
+    1: from .types import Float as Float
+    1: from .types import INT as INT
+    1: from .types import INTEGER as INTEGER
+    1: from .types import Integer as Integer
+    1: from .types import Interval as Interval
+    1: from .types import JSON as JSON
+    1: from .types import LargeBinary as LargeBinary
+    1: from .types import NCHAR as NCHAR
+    1: from .types import NUMERIC as NUMERIC
+    1: from .types import Numeric as Numeric
+    1: from .types import NVARCHAR as NVARCHAR
+    1: from .types import PickleType as PickleType
+    1: from .types import REAL as REAL
+    1: from .types import SMALLINT as SMALLINT
+    1: from .types import SmallInteger as SmallInteger
+    1: from .types import String as String
+    1: from .types import TEXT as TEXT
+    1: from .types import Text as Text
+    1: from .types import TIME as TIME
+    1: from .types import Time as Time
+    1: from .types import TIMESTAMP as TIMESTAMP
+    1: from .types import TupleType as TupleType
+    1: from .types import TypeDecorator as TypeDecorator
+    1: from .types import Unicode as Unicode
+    1: from .types import UnicodeText as UnicodeText
+    1: from .types import UUID as UUID
+    1: from .types import Uuid as Uuid
+    1: from .types import VARBINARY as VARBINARY
+    1: from .types import VARCHAR as VARCHAR
+       
+    1: __version__ = "2.0.27"
+       
+       
+    1: def __go(lcls: Any) -> None:
+    1:     _util.preloaded.import_prefix("sqlalchemy")
+       
+    1:     from . import exc
+       
+    1:     exc._version_token = "".join(__version__.split(".")[0:2])
+       
+       
+    1: __go(locals())
+       
+       
+    1: def __getattr__(name: str) -> Any:
+    1:     if name == "SingleonThreadPool":
+>>>>>>         _util.warn_deprecated(
+>>>>>>             "SingleonThreadPool was a typo in the v2 series. "
+                   "Please use the correct SingletonThreadPool name.",
+>>>>>>             "2.0.24",
+               )
+>>>>>>         return SingletonThreadPool
+    1:     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

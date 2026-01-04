@@ -1,0 +1,468 @@
+    1: import asyncio
+    1: import threading
+    1: from abc import ABC, abstractmethod
+    1: from enum import Enum
+    1: from typing import Dict, List, Optional, Type, Union
+       
+    1: from redis.auth.token import TokenInterface
+    1: from redis.credentials import CredentialProvider, StreamingCredentialProvider
+       
+       
+    2: class EventListenerInterface(ABC):
+    1:     """
+           Represents a listener for given event object.
+           """
+       
+    1:     @abstractmethod
+    1:     def listen(self, event: object):
+>>>>>>         pass
+       
+       
+    2: class AsyncEventListenerInterface(ABC):
+    1:     """
+           Represents an async listener for given event object.
+           """
+       
+    1:     @abstractmethod
+    1:     async def listen(self, event: object):
+>>>>>>         pass
+       
+       
+    2: class EventDispatcherInterface(ABC):
+    1:     """
+           Represents a dispatcher that dispatches events to listeners
+           associated with given event.
+           """
+       
+    1:     @abstractmethod
+    1:     def dispatch(self, event: object):
+>>>>>>         pass
+       
+    1:     @abstractmethod
+    1:     async def dispatch_async(self, event: object):
+>>>>>>         pass
+       
+    1:     @abstractmethod
+    1:     def register_listeners(
+               self,
+    2:         mappings: Dict[
+    2:             Type[object],
+    1:             List[Union[EventListenerInterface, AsyncEventListenerInterface]],
+               ],
+           ):
+               """Register additional listeners."""
+>>>>>>         pass
+       
+       
+    2: class EventException(Exception):
+    1:     """
+           Exception wrapper that adds an event object into exception context.
+           """
+       
+    1:     def __init__(self, exception: Exception, event: object):
+>>>>>>         self.exception = exception
+>>>>>>         self.event = event
+>>>>>>         super().__init__(exception)
+       
+       
+    2: class EventDispatcher(EventDispatcherInterface):
+           # TODO: Make dispatcher to accept external mappings.
+    2:     def __init__(
+               self,
+    2:         event_listeners: Optional[
+    1:             Dict[Type[object], List[EventListenerInterface]]
+               ] = None,
+           ):
+               """
+               Dispatcher that dispatches events to listeners associated with given event.
+               """
+>>>>>>         self._event_listeners_mapping: Dict[
+                   Type[object], List[EventListenerInterface]
+>>>>>>         ] = {
+>>>>>>             AfterConnectionReleasedEvent: [
+>>>>>>                 ReAuthConnectionListener(),
+                   ],
+>>>>>>             AfterPooledConnectionsInstantiationEvent: [
+>>>>>>                 RegisterReAuthForPooledConnections()
+                   ],
+>>>>>>             AfterSingleConnectionInstantiationEvent: [
+>>>>>>                 RegisterReAuthForSingleConnection()
+                   ],
+>>>>>>             AfterPubSubConnectionInstantiationEvent: [RegisterReAuthForPubSub()],
+>>>>>>             AfterAsyncClusterInstantiationEvent: [RegisterReAuthForAsyncClusterNodes()],
+>>>>>>             AsyncAfterConnectionReleasedEvent: [
+>>>>>>                 AsyncReAuthConnectionListener(),
+                   ],
+               }
+       
+>>>>>>         self._lock = threading.Lock()
+>>>>>>         self._async_lock = None
+       
+>>>>>>         if event_listeners:
+>>>>>>             self.register_listeners(event_listeners)
+       
+    1:     def dispatch(self, event: object):
+>>>>>>         with self._lock:
+>>>>>>             listeners = self._event_listeners_mapping.get(type(event), [])
+       
+>>>>>>             for listener in listeners:
+>>>>>>                 listener.listen(event)
+       
+    1:     async def dispatch_async(self, event: object):
+>>>>>>         if self._async_lock is None:
+>>>>>>             self._async_lock = asyncio.Lock()
+       
+>>>>>>         async with self._async_lock:
+>>>>>>             listeners = self._event_listeners_mapping.get(type(event), [])
+       
+>>>>>>             for listener in listeners:
+>>>>>>                 await listener.listen(event)
+       
+    1:     def register_listeners(
+               self,
+    2:         mappings: Dict[
+    2:             Type[object],
+    1:             List[Union[EventListenerInterface, AsyncEventListenerInterface]],
+               ],
+           ):
+>>>>>>         with self._lock:
+>>>>>>             for event_type in mappings:
+>>>>>>                 if event_type in self._event_listeners_mapping:
+>>>>>>                     self._event_listeners_mapping[event_type] = list(
+>>>>>>                         set(
+>>>>>>                             self._event_listeners_mapping[event_type]
+>>>>>>                             + mappings[event_type]
+                               )
+                           )
+                       else:
+>>>>>>                     self._event_listeners_mapping[event_type] = mappings[event_type]
+       
+       
+    2: class AfterConnectionReleasedEvent:
+    1:     """
+           Event that will be fired before each command execution.
+           """
+       
+    1:     def __init__(self, connection):
+>>>>>>         self._connection = connection
+       
+    1:     @property
+    1:     def connection(self):
+>>>>>>         return self._connection
+       
+       
+    2: class AsyncAfterConnectionReleasedEvent(AfterConnectionReleasedEvent):
+    1:     pass
+       
+       
+    2: class ClientType(Enum):
+    1:     SYNC = ("sync",)
+    1:     ASYNC = ("async",)
+       
+       
+    2: class AfterPooledConnectionsInstantiationEvent:
+    1:     """
+           Event that will be fired after pooled connection instances was created.
+           """
+       
+    2:     def __init__(
+               self,
+    1:         connection_pools: List,
+    1:         client_type: ClientType,
+    1:         credential_provider: Optional[CredentialProvider] = None,
+           ):
+>>>>>>         self._connection_pools = connection_pools
+>>>>>>         self._client_type = client_type
+>>>>>>         self._credential_provider = credential_provider
+       
+    1:     @property
+    1:     def connection_pools(self):
+>>>>>>         return self._connection_pools
+       
+    1:     @property
+    1:     def client_type(self) -> ClientType:
+>>>>>>         return self._client_type
+       
+    1:     @property
+    1:     def credential_provider(self) -> Union[CredentialProvider, None]:
+>>>>>>         return self._credential_provider
+       
+       
+    2: class AfterSingleConnectionInstantiationEvent:
+    1:     """
+           Event that will be fired after single connection instances was created.
+       
+           :param connection_lock: For sync client thread-lock should be provided,
+           for async asyncio.Lock
+           """
+       
+    1:     def __init__(
+               self,
+               connection,
+    1:         client_type: ClientType,
+    1:         connection_lock: Union[threading.RLock, asyncio.Lock],
+           ):
+>>>>>>         self._connection = connection
+>>>>>>         self._client_type = client_type
+>>>>>>         self._connection_lock = connection_lock
+       
+    1:     @property
+    1:     def connection(self):
+>>>>>>         return self._connection
+       
+    1:     @property
+    1:     def client_type(self) -> ClientType:
+>>>>>>         return self._client_type
+       
+    1:     @property
+    1:     def connection_lock(self) -> Union[threading.RLock, asyncio.Lock]:
+>>>>>>         return self._connection_lock
+       
+       
+    2: class AfterPubSubConnectionInstantiationEvent:
+    1:     def __init__(
+               self,
+               pubsub_connection,
+               connection_pool,
+    1:         client_type: ClientType,
+    1:         connection_lock: Union[threading.RLock, asyncio.Lock],
+           ):
+>>>>>>         self._pubsub_connection = pubsub_connection
+>>>>>>         self._connection_pool = connection_pool
+>>>>>>         self._client_type = client_type
+>>>>>>         self._connection_lock = connection_lock
+       
+    1:     @property
+    1:     def pubsub_connection(self):
+>>>>>>         return self._pubsub_connection
+       
+    1:     @property
+    1:     def connection_pool(self):
+>>>>>>         return self._connection_pool
+       
+    1:     @property
+    1:     def client_type(self) -> ClientType:
+>>>>>>         return self._client_type
+       
+    1:     @property
+    1:     def connection_lock(self) -> Union[threading.RLock, asyncio.Lock]:
+>>>>>>         return self._connection_lock
+       
+       
+    2: class AfterAsyncClusterInstantiationEvent:
+    1:     """
+           Event that will be fired after async cluster instance was created.
+       
+           Async cluster doesn't use connection pools,
+           instead ClusterNode object manages connections.
+           """
+       
+    2:     def __init__(
+               self,
+    1:         nodes: dict,
+    1:         credential_provider: Optional[CredentialProvider] = None,
+           ):
+>>>>>>         self._nodes = nodes
+>>>>>>         self._credential_provider = credential_provider
+       
+    1:     @property
+    1:     def nodes(self) -> dict:
+>>>>>>         return self._nodes
+       
+    1:     @property
+    1:     def credential_provider(self) -> Union[CredentialProvider, None]:
+>>>>>>         return self._credential_provider
+       
+       
+    2: class OnCommandsFailEvent:
+    1:     """
+           Event fired whenever a command fails during the execution.
+           """
+       
+    1:     def __init__(
+               self,
+    1:         commands: tuple,
+    1:         exception: Exception,
+           ):
+>>>>>>         self._commands = commands
+>>>>>>         self._exception = exception
+       
+    1:     @property
+    1:     def commands(self) -> tuple:
+>>>>>>         return self._commands
+       
+    1:     @property
+    1:     def exception(self) -> Exception:
+>>>>>>         return self._exception
+       
+       
+    2: class AsyncOnCommandsFailEvent(OnCommandsFailEvent):
+    1:     pass
+       
+       
+    2: class ReAuthConnectionListener(EventListenerInterface):
+    1:     """
+           Listener that performs re-authentication of given connection.
+           """
+       
+    1:     def listen(self, event: AfterConnectionReleasedEvent):
+>>>>>>         event.connection.re_auth()
+       
+       
+    2: class AsyncReAuthConnectionListener(AsyncEventListenerInterface):
+    1:     """
+           Async listener that performs re-authentication of given connection.
+           """
+       
+    1:     async def listen(self, event: AsyncAfterConnectionReleasedEvent):
+>>>>>>         await event.connection.re_auth()
+       
+       
+    2: class RegisterReAuthForPooledConnections(EventListenerInterface):
+    1:     """
+           Listener that registers a re-authentication callback for pooled connections.
+           Required by :class:`StreamingCredentialProvider`.
+           """
+       
+    1:     def __init__(self):
+>>>>>>         self._event = None
+       
+    1:     def listen(self, event: AfterPooledConnectionsInstantiationEvent):
+>>>>>>         if isinstance(event.credential_provider, StreamingCredentialProvider):
+>>>>>>             self._event = event
+       
+>>>>>>             if event.client_type == ClientType.SYNC:
+>>>>>>                 event.credential_provider.on_next(self._re_auth)
+>>>>>>                 event.credential_provider.on_error(self._raise_on_error)
+                   else:
+>>>>>>                 event.credential_provider.on_next(self._re_auth_async)
+>>>>>>                 event.credential_provider.on_error(self._raise_on_error_async)
+       
+    1:     def _re_auth(self, token):
+>>>>>>         for pool in self._event.connection_pools:
+>>>>>>             pool.re_auth_callback(token)
+       
+    1:     async def _re_auth_async(self, token):
+>>>>>>         for pool in self._event.connection_pools:
+>>>>>>             await pool.re_auth_callback(token)
+       
+    1:     def _raise_on_error(self, error: Exception):
+>>>>>>         raise EventException(error, self._event)
+       
+    1:     async def _raise_on_error_async(self, error: Exception):
+>>>>>>         raise EventException(error, self._event)
+       
+       
+    2: class RegisterReAuthForSingleConnection(EventListenerInterface):
+    1:     """
+           Listener that registers a re-authentication callback for single connection.
+           Required by :class:`StreamingCredentialProvider`.
+           """
+       
+    1:     def __init__(self):
+>>>>>>         self._event = None
+       
+    1:     def listen(self, event: AfterSingleConnectionInstantiationEvent):
+>>>>>>         if isinstance(
+>>>>>>             event.connection.credential_provider, StreamingCredentialProvider
+               ):
+>>>>>>             self._event = event
+       
+>>>>>>             if event.client_type == ClientType.SYNC:
+>>>>>>                 event.connection.credential_provider.on_next(self._re_auth)
+>>>>>>                 event.connection.credential_provider.on_error(self._raise_on_error)
+                   else:
+>>>>>>                 event.connection.credential_provider.on_next(self._re_auth_async)
+>>>>>>                 event.connection.credential_provider.on_error(
+>>>>>>                     self._raise_on_error_async
+                       )
+       
+    1:     def _re_auth(self, token):
+>>>>>>         with self._event.connection_lock:
+>>>>>>             self._event.connection.send_command(
+>>>>>>                 "AUTH", token.try_get("oid"), token.get_value()
+                   )
+>>>>>>             self._event.connection.read_response()
+       
+    1:     async def _re_auth_async(self, token):
+>>>>>>         async with self._event.connection_lock:
+>>>>>>             await self._event.connection.send_command(
+>>>>>>                 "AUTH", token.try_get("oid"), token.get_value()
+                   )
+>>>>>>             await self._event.connection.read_response()
+       
+    1:     def _raise_on_error(self, error: Exception):
+>>>>>>         raise EventException(error, self._event)
+       
+    1:     async def _raise_on_error_async(self, error: Exception):
+>>>>>>         raise EventException(error, self._event)
+       
+       
+    2: class RegisterReAuthForAsyncClusterNodes(EventListenerInterface):
+    1:     def __init__(self):
+>>>>>>         self._event = None
+       
+    1:     def listen(self, event: AfterAsyncClusterInstantiationEvent):
+>>>>>>         if isinstance(event.credential_provider, StreamingCredentialProvider):
+>>>>>>             self._event = event
+>>>>>>             event.credential_provider.on_next(self._re_auth)
+>>>>>>             event.credential_provider.on_error(self._raise_on_error)
+       
+    1:     async def _re_auth(self, token: TokenInterface):
+>>>>>>         for key in self._event.nodes:
+>>>>>>             await self._event.nodes[key].re_auth_callback(token)
+       
+    1:     async def _raise_on_error(self, error: Exception):
+>>>>>>         raise EventException(error, self._event)
+       
+       
+    2: class RegisterReAuthForPubSub(EventListenerInterface):
+    1:     def __init__(self):
+>>>>>>         self._connection = None
+>>>>>>         self._connection_pool = None
+>>>>>>         self._client_type = None
+>>>>>>         self._connection_lock = None
+>>>>>>         self._event = None
+       
+    1:     def listen(self, event: AfterPubSubConnectionInstantiationEvent):
+>>>>>>         if isinstance(
+>>>>>>             event.pubsub_connection.credential_provider, StreamingCredentialProvider
+>>>>>>         ) and event.pubsub_connection.get_protocol() in [3, "3"]:
+>>>>>>             self._event = event
+>>>>>>             self._connection = event.pubsub_connection
+>>>>>>             self._connection_pool = event.connection_pool
+>>>>>>             self._client_type = event.client_type
+>>>>>>             self._connection_lock = event.connection_lock
+       
+>>>>>>             if self._client_type == ClientType.SYNC:
+>>>>>>                 self._connection.credential_provider.on_next(self._re_auth)
+>>>>>>                 self._connection.credential_provider.on_error(self._raise_on_error)
+                   else:
+>>>>>>                 self._connection.credential_provider.on_next(self._re_auth_async)
+>>>>>>                 self._connection.credential_provider.on_error(
+>>>>>>                     self._raise_on_error_async
+                       )
+       
+    1:     def _re_auth(self, token: TokenInterface):
+>>>>>>         with self._connection_lock:
+>>>>>>             self._connection.send_command(
+>>>>>>                 "AUTH", token.try_get("oid"), token.get_value()
+                   )
+>>>>>>             self._connection.read_response()
+       
+>>>>>>         self._connection_pool.re_auth_callback(token)
+       
+    1:     async def _re_auth_async(self, token: TokenInterface):
+>>>>>>         async with self._connection_lock:
+>>>>>>             await self._connection.send_command(
+>>>>>>                 "AUTH", token.try_get("oid"), token.get_value()
+                   )
+>>>>>>             await self._connection.read_response()
+       
+>>>>>>         await self._connection_pool.re_auth_callback(token)
+       
+    1:     def _raise_on_error(self, error: Exception):
+>>>>>>         raise EventException(error, self._event)
+       
+    1:     async def _raise_on_error_async(self, error: Exception):
+>>>>>>         raise EventException(error, self._event)

@@ -7,7 +7,7 @@ import logging
 from typing import List, Dict, Any
 from datetime import date, datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, case
 from models import (
     TriviaModeConfig, TriviaUserFreeModeDaily, TriviaFreeModeWinners,
     TriviaFreeModeLeaderboard, User
@@ -45,44 +45,55 @@ def get_eligible_participants_free_mode(db: Session, draw_date: date) -> List[Di
     
     questions_count = mode_config.questions_count
     
-    # Get all users who have answered questions for this date
-    user_attempts = db.query(TriviaUserFreeModeDaily).filter(
+    # Aggregate attempts per user to avoid N+1 lookups
+    attempts_subq = db.query(
+        TriviaUserFreeModeDaily.account_id.label("account_id"),
+        func.sum(
+            case(
+                (
+                    and_(
+                        TriviaUserFreeModeDaily.is_correct.is_(True),
+                        TriviaUserFreeModeDaily.status == 'answered_correct'
+                    ),
+                    1
+                ),
+                else_=0
+            )
+        ).label("correct_count"),
+        func.max(
+            case(
+                (
+                    TriviaUserFreeModeDaily.question_order == questions_count,
+                    TriviaUserFreeModeDaily.third_question_completed_at
+                ),
+                else_=None
+            )
+        ).label("third_question_completed_at")
+    ).filter(
         TriviaUserFreeModeDaily.date == draw_date
+    ).group_by(
+        TriviaUserFreeModeDaily.account_id
+    ).subquery()
+    
+    rows = db.query(
+        attempts_subq.c.account_id,
+        User.username,
+        attempts_subq.c.third_question_completed_at
+    ).join(
+        User, User.account_id == attempts_subq.c.account_id
+    ).filter(
+        attempts_subq.c.correct_count == questions_count,
+        attempts_subq.c.third_question_completed_at.isnot(None)
     ).all()
     
-    # Group by account_id
-    user_attempts_dict = {}
-    for attempt in user_attempts:
-        if attempt.account_id not in user_attempts_dict:
-            user_attempts_dict[attempt.account_id] = []
-        user_attempts_dict[attempt.account_id].append(attempt)
-    
-    # Filter users who answered all questions correctly
-    eligible_participants = []
-    for account_id, attempts in user_attempts_dict.items():
-        # Check if user has answered all required questions correctly
-        correct_attempts = [
-            a for a in attempts 
-            if a.is_correct is True and a.status == 'answered_correct'
-        ]
-        
-        if len(correct_attempts) == questions_count:
-            # User answered all questions correctly
-            # Get the third question completion time
-            third_question = next(
-                (a for a in attempts if a.question_order == questions_count and a.third_question_completed_at),
-                None
-            )
-            
-            if third_question and third_question.third_question_completed_at:
-                # Get user details
-                user = db.query(User).filter(User.account_id == account_id).first()
-                if user:
-                    eligible_participants.append({
-                        'account_id': account_id,
-                        'username': user.username,
-                        'third_question_completed_at': third_question.third_question_completed_at
-                    })
+    eligible_participants = [
+        {
+            'account_id': row.account_id,
+            'username': row.username,
+            'third_question_completed_at': row.third_question_completed_at
+        }
+        for row in rows
+    ]
     
     logger.info(f"Found {len(eligible_participants)} eligible participants for free mode draw on {draw_date}")
     return eligible_participants
@@ -161,11 +172,16 @@ def distribute_rewards_to_winners(
     
     for winner in winners:
         # Update user's gem balance
-        user = db.query(User).filter(User.account_id == winner['account_id']).first()
-        if user:
-            gems_to_award = winner.get('gems_awarded', 0)
-            user.gems += gems_to_award
-            total_gems_awarded += gems_to_award
+        gems_to_award = winner.get('gems_awarded', 0)
+        if gems_to_award:
+            updated = db.query(User).filter(
+                User.account_id == winner['account_id']
+            ).update(
+                {User.gems: User.gems + gems_to_award},
+                synchronize_session=False
+            )
+            if updated:
+                total_gems_awarded += gems_to_award
         
         # Create winner record
         winner_record = TriviaFreeModeWinners(
@@ -229,4 +245,3 @@ def cleanup_old_leaderboard(db: Session, previous_draw_date: date) -> int:
     
     logger.info(f"Cleaned up {deleted_count} leaderboard entries for draw date {previous_draw_date}")
     return deleted_count
-

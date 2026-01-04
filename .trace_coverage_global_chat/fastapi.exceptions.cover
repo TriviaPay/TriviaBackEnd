@@ -1,0 +1,176 @@
+    1: from typing import Any, Dict, Optional, Sequence, Type, Union
+       
+    1: from pydantic import BaseModel, create_model
+    1: from starlette.exceptions import HTTPException as StarletteHTTPException
+    1: from starlette.exceptions import WebSocketException as StarletteWebSocketException
+    1: from typing_extensions import Annotated, Doc  # type: ignore [attr-defined]
+       
+       
+    2: class HTTPException(StarletteHTTPException):
+    1:     """
+           An HTTP exception you can raise in your own code to show errors to the client.
+       
+           This is for client errors, invalid authentication, invalid data, etc. Not for server
+           errors in your code.
+       
+           Read more about it in the
+           [FastAPI docs for Handling Errors](https://fastapi.tiangolo.com/tutorial/handling-errors/).
+       
+           ## Example
+       
+           ```python
+           from fastapi import FastAPI, HTTPException
+       
+           app = FastAPI()
+       
+           items = {"foo": "The Foo Wrestlers"}
+       
+       
+           @app.get("/items/{item_id}")
+           async def read_item(item_id: str):
+               if item_id not in items:
+                   raise HTTPException(status_code=404, detail="Item not found")
+               return {"item": items[item_id]}
+           ```
+           """
+       
+    2:     def __init__(
+               self,
+    2:         status_code: Annotated[
+    2:             int,
+    2:             Doc(
+    1:                 """
+                       HTTP status code to send to the client.
+                       """
+                   ),
+               ],
+    2:         detail: Annotated[
+    2:             Any,
+    2:             Doc(
+    1:                 """
+                       Any data to be sent to the client in the `detail` key of the JSON
+                       response.
+                       """
+                   ),
+               ] = None,
+    2:         headers: Annotated[
+    2:             Optional[Dict[str, str]],
+    2:             Doc(
+    1:                 """
+                       Any headers to send to the client in the response.
+                       """
+                   ),
+               ] = None,
+    1:     ) -> None:
+    7:         super().__init__(status_code=status_code, detail=detail, headers=headers)
+       
+       
+    2: class WebSocketException(StarletteWebSocketException):
+    1:     """
+           A WebSocket exception you can raise in your own code to show errors to the client.
+       
+           This is for client errors, invalid authentication, invalid data, etc. Not for server
+           errors in your code.
+       
+           Read more about it in the
+           [FastAPI docs for WebSockets](https://fastapi.tiangolo.com/advanced/websockets/).
+       
+           ## Example
+       
+           ```python
+           from typing import Annotated
+       
+           from fastapi import (
+               Cookie,
+               FastAPI,
+               WebSocket,
+               WebSocketException,
+               status,
+           )
+       
+           app = FastAPI()
+       
+           @app.websocket("/items/{item_id}/ws")
+           async def websocket_endpoint(
+               *,
+               websocket: WebSocket,
+               session: Annotated[str | None, Cookie()] = None,
+               item_id: str,
+           ):
+               if session is None:
+                   raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+               await websocket.accept()
+               while True:
+                   data = await websocket.receive_text()
+                   await websocket.send_text(f"Session cookie is: {session}")
+                   await websocket.send_text(f"Message text was: {data}, for item ID: {item_id}")
+           ```
+           """
+       
+    2:     def __init__(
+               self,
+    2:         code: Annotated[
+    2:             int,
+    2:             Doc(
+    1:                 """
+                       A closing code from the
+                       [valid codes defined in the specification](https://datatracker.ietf.org/doc/html/rfc6455#section-7.4.1).
+                       """
+                   ),
+               ],
+    2:         reason: Annotated[
+    2:             Union[str, None],
+    2:             Doc(
+    1:                 """
+                       The reason to close the WebSocket connection.
+       
+                       It is UTF-8-encoded data. The interpretation of the reason is up to the
+                       application, it is not specified by the WebSocket specification.
+       
+                       It could contain text that could be human-readable or interpretable
+                       by the client code, etc.
+                       """
+                   ),
+               ] = None,
+    1:     ) -> None:
+>>>>>>         super().__init__(code=code, reason=reason)
+       
+       
+    1: RequestErrorModel: Type[BaseModel] = create_model("Request")
+    1: WebSocketErrorModel: Type[BaseModel] = create_model("WebSocket")
+       
+       
+    2: class FastAPIError(RuntimeError):
+    1:     """
+           A generic, FastAPI-specific error.
+           """
+       
+       
+    2: class ValidationException(Exception):
+    1:     def __init__(self, errors: Sequence[Any]) -> None:
+>>>>>>         self._errors = errors
+       
+    1:     def errors(self) -> Sequence[Any]:
+>>>>>>         return self._errors
+       
+       
+    2: class RequestValidationError(ValidationException):
+    1:     def __init__(self, errors: Sequence[Any], *, body: Any = None) -> None:
+>>>>>>         super().__init__(errors)
+>>>>>>         self.body = body
+       
+       
+    2: class WebSocketRequestValidationError(ValidationException):
+    1:     pass
+       
+       
+    2: class ResponseValidationError(ValidationException):
+    1:     def __init__(self, errors: Sequence[Any], *, body: Any = None) -> None:
+>>>>>>         super().__init__(errors)
+>>>>>>         self.body = body
+       
+    1:     def __str__(self) -> str:
+>>>>>>         message = f"{len(self._errors)} validation errors:\n"
+>>>>>>         for err in self._errors:
+>>>>>>             message += f"  {err}\n"
+>>>>>>         return message

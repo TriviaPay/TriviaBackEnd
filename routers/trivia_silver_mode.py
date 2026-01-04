@@ -117,21 +117,35 @@ async def get_silver_mode_question(
     if not daily_question:
         logger.info(f"No question allocated for {target_date}, attempting auto-allocation...")
         try:
-            # Get available questions (prefer unused)
-            unused_questions = db.query(TriviaQuestionsSilverMode).filter(
-                TriviaQuestionsSilverMode.is_used == False
-            ).all()
+            # Get available questions (prefer unused) without loading entire pool
+            unused_count = db.query(TriviaQuestionsSilverMode.id).filter(
+                TriviaQuestionsSilverMode.is_used.is_(False)
+            ).count()
             
-            if len(unused_questions) < 1:
-                all_questions = db.query(TriviaQuestionsSilverMode).all()
-                if len(all_questions) < 1:
+            if unused_count < 1:
+                total_count = db.query(TriviaQuestionsSilverMode.id).count()
+                if total_count < 1:
                     raise HTTPException(
                         status_code=404,
                         detail="No questions available in the question pool. Please add questions first."
                     )
-                selected_question = random.choice(all_questions)
+                random_offset = random.randrange(total_count)
+                selected_question = db.query(TriviaQuestionsSilverMode).order_by(
+                    TriviaQuestionsSilverMode.id
+                ).offset(random_offset).limit(1).first()
             else:
-                selected_question = random.choice(unused_questions)
+                random_offset = random.randrange(unused_count)
+                selected_question = db.query(TriviaQuestionsSilverMode).filter(
+                    TriviaQuestionsSilverMode.is_used.is_(False)
+                ).order_by(
+                    TriviaQuestionsSilverMode.id
+                ).offset(random_offset).limit(1).first()
+            
+            if not selected_question:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No questions available in the question pool. Please add questions first."
+                )
             
             # Allocate question to daily pool
             daily_question = TriviaQuestionsSilverModeDaily(
@@ -417,23 +431,32 @@ async def get_silver_mode_leaderboard(
         TriviaSilverModeLeaderboard.submitted_at
     ).all()
     
-    # Get user details with profile information
-    from utils.chat_helpers import get_user_chat_profile_data
-    from models import TriviaModeConfig
+    # Get user details with profile information in batch
+    from utils.chat_helpers import get_user_chat_profile_data_bulk
     
     result = []
-    for entry in leaderboard_entries:
-        user_obj = db.query(User).filter(User.account_id == entry.account_id).first()
-        if user_obj:
-            # Get profile data
-            profile_data = get_user_chat_profile_data(user_obj, db)
+    if leaderboard_entries:
+        account_ids = {entry.account_id for entry in leaderboard_entries}
+        users = db.query(User).filter(User.account_id.in_(list(account_ids))).all()
+        users_by_id = {user.account_id: user for user in users}
+        profile_cache = get_user_chat_profile_data_bulk(list(users_by_id.values()), db)
+        
+        for entry in leaderboard_entries:
+            user_obj = users_by_id.get(entry.account_id)
+            if not user_obj:
+                continue
             
-            # Get achievement badge image URL
-            badge_image_url = None
-            if user_obj.badge_id:
-                mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user_obj.badge_id).first()
-                if mode_config and mode_config.badge_image_url:
-                    badge_image_url = mode_config.badge_image_url
+            profile_data = profile_cache.get(entry.account_id, {
+                'profile_pic_url': None,
+                'avatar_url': None,
+                'frame_url': None,
+                'badge': None,
+                'subscription_badges': [],
+                'level': 1,
+                'level_progress': '0/100'
+            })
+            badge_info = profile_data.get('badge') or {}
+            badge_image_url = badge_info.get('image_url')
             
             result.append({
                 'position': entry.position,
@@ -455,4 +478,3 @@ async def get_silver_mode_leaderboard(
         'draw_date': target_date.isoformat(),
         'leaderboard': result
     }
-

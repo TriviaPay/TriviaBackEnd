@@ -1,0 +1,916 @@
+    1: """Deprecated from html5lib 1.1.
+       
+       See `here <https://github.com/html5lib/html5lib-python/issues/443>`_ for
+       information about its deprecation; `Bleach <https://github.com/mozilla/bleach>`_
+       is recommended as a replacement. Please let us know in the aforementioned issue
+       if Bleach is unsuitable for your needs.
+       
+       """
+    1: from __future__ import absolute_import, division, unicode_literals
+       
+    1: import re
+    1: import warnings
+    1: from xml.sax.saxutils import escape, unescape
+       
+    1: from bleach.six_shim import urllib_parse as urlparse
+       
+    1: from . import base
+    1: from ..constants import namespaces, prefixes
+       
+    1: __all__ = ["Filter"]
+       
+       
+    1: _deprecation_msg = (
+    1:     "html5lib's sanitizer is deprecated; see " +
+           "https://github.com/html5lib/html5lib-python/issues/443 and please let " +
+           "us know if Bleach is unsuitable for your needs"
+       )
+       
+    1: warnings.warn(_deprecation_msg, DeprecationWarning)
+       
+    2: allowed_elements = frozenset((
+    1:     (namespaces['html'], 'a'),
+    1:     (namespaces['html'], 'abbr'),
+    1:     (namespaces['html'], 'acronym'),
+    1:     (namespaces['html'], 'address'),
+    1:     (namespaces['html'], 'area'),
+    1:     (namespaces['html'], 'article'),
+    1:     (namespaces['html'], 'aside'),
+    1:     (namespaces['html'], 'audio'),
+    1:     (namespaces['html'], 'b'),
+    1:     (namespaces['html'], 'big'),
+    1:     (namespaces['html'], 'blockquote'),
+    1:     (namespaces['html'], 'br'),
+    1:     (namespaces['html'], 'button'),
+    1:     (namespaces['html'], 'canvas'),
+    1:     (namespaces['html'], 'caption'),
+    1:     (namespaces['html'], 'center'),
+    1:     (namespaces['html'], 'cite'),
+    1:     (namespaces['html'], 'code'),
+    1:     (namespaces['html'], 'col'),
+    1:     (namespaces['html'], 'colgroup'),
+    1:     (namespaces['html'], 'command'),
+    1:     (namespaces['html'], 'datagrid'),
+    1:     (namespaces['html'], 'datalist'),
+    1:     (namespaces['html'], 'dd'),
+    1:     (namespaces['html'], 'del'),
+    1:     (namespaces['html'], 'details'),
+    1:     (namespaces['html'], 'dfn'),
+    1:     (namespaces['html'], 'dialog'),
+    1:     (namespaces['html'], 'dir'),
+    1:     (namespaces['html'], 'div'),
+    1:     (namespaces['html'], 'dl'),
+    1:     (namespaces['html'], 'dt'),
+    1:     (namespaces['html'], 'em'),
+    1:     (namespaces['html'], 'event-source'),
+    1:     (namespaces['html'], 'fieldset'),
+    1:     (namespaces['html'], 'figcaption'),
+    1:     (namespaces['html'], 'figure'),
+    1:     (namespaces['html'], 'footer'),
+    1:     (namespaces['html'], 'font'),
+    1:     (namespaces['html'], 'form'),
+    1:     (namespaces['html'], 'header'),
+    1:     (namespaces['html'], 'h1'),
+    1:     (namespaces['html'], 'h2'),
+    1:     (namespaces['html'], 'h3'),
+    1:     (namespaces['html'], 'h4'),
+    1:     (namespaces['html'], 'h5'),
+    1:     (namespaces['html'], 'h6'),
+    1:     (namespaces['html'], 'hr'),
+    1:     (namespaces['html'], 'i'),
+    1:     (namespaces['html'], 'img'),
+    1:     (namespaces['html'], 'input'),
+    1:     (namespaces['html'], 'ins'),
+    1:     (namespaces['html'], 'keygen'),
+    1:     (namespaces['html'], 'kbd'),
+    1:     (namespaces['html'], 'label'),
+    1:     (namespaces['html'], 'legend'),
+    1:     (namespaces['html'], 'li'),
+    1:     (namespaces['html'], 'm'),
+    1:     (namespaces['html'], 'map'),
+    1:     (namespaces['html'], 'menu'),
+    1:     (namespaces['html'], 'meter'),
+    1:     (namespaces['html'], 'multicol'),
+    1:     (namespaces['html'], 'nav'),
+    1:     (namespaces['html'], 'nextid'),
+    1:     (namespaces['html'], 'ol'),
+    1:     (namespaces['html'], 'output'),
+    1:     (namespaces['html'], 'optgroup'),
+    1:     (namespaces['html'], 'option'),
+    1:     (namespaces['html'], 'p'),
+    1:     (namespaces['html'], 'pre'),
+    1:     (namespaces['html'], 'progress'),
+    1:     (namespaces['html'], 'q'),
+    1:     (namespaces['html'], 's'),
+    1:     (namespaces['html'], 'samp'),
+    1:     (namespaces['html'], 'section'),
+    1:     (namespaces['html'], 'select'),
+    1:     (namespaces['html'], 'small'),
+    1:     (namespaces['html'], 'sound'),
+    1:     (namespaces['html'], 'source'),
+    1:     (namespaces['html'], 'spacer'),
+    1:     (namespaces['html'], 'span'),
+    1:     (namespaces['html'], 'strike'),
+    1:     (namespaces['html'], 'strong'),
+    1:     (namespaces['html'], 'sub'),
+    1:     (namespaces['html'], 'sup'),
+    1:     (namespaces['html'], 'table'),
+    1:     (namespaces['html'], 'tbody'),
+    1:     (namespaces['html'], 'td'),
+    1:     (namespaces['html'], 'textarea'),
+    1:     (namespaces['html'], 'time'),
+    1:     (namespaces['html'], 'tfoot'),
+    1:     (namespaces['html'], 'th'),
+    1:     (namespaces['html'], 'thead'),
+    1:     (namespaces['html'], 'tr'),
+    1:     (namespaces['html'], 'tt'),
+    1:     (namespaces['html'], 'u'),
+    1:     (namespaces['html'], 'ul'),
+    1:     (namespaces['html'], 'var'),
+    1:     (namespaces['html'], 'video'),
+    1:     (namespaces['mathml'], 'maction'),
+    1:     (namespaces['mathml'], 'math'),
+    1:     (namespaces['mathml'], 'merror'),
+    1:     (namespaces['mathml'], 'mfrac'),
+    1:     (namespaces['mathml'], 'mi'),
+    1:     (namespaces['mathml'], 'mmultiscripts'),
+    1:     (namespaces['mathml'], 'mn'),
+    1:     (namespaces['mathml'], 'mo'),
+    1:     (namespaces['mathml'], 'mover'),
+    1:     (namespaces['mathml'], 'mpadded'),
+    1:     (namespaces['mathml'], 'mphantom'),
+    1:     (namespaces['mathml'], 'mprescripts'),
+    1:     (namespaces['mathml'], 'mroot'),
+    1:     (namespaces['mathml'], 'mrow'),
+    1:     (namespaces['mathml'], 'mspace'),
+    1:     (namespaces['mathml'], 'msqrt'),
+    1:     (namespaces['mathml'], 'mstyle'),
+    1:     (namespaces['mathml'], 'msub'),
+    1:     (namespaces['mathml'], 'msubsup'),
+    1:     (namespaces['mathml'], 'msup'),
+    1:     (namespaces['mathml'], 'mtable'),
+    1:     (namespaces['mathml'], 'mtd'),
+    1:     (namespaces['mathml'], 'mtext'),
+    1:     (namespaces['mathml'], 'mtr'),
+    1:     (namespaces['mathml'], 'munder'),
+    1:     (namespaces['mathml'], 'munderover'),
+    1:     (namespaces['mathml'], 'none'),
+    1:     (namespaces['svg'], 'a'),
+    1:     (namespaces['svg'], 'animate'),
+    1:     (namespaces['svg'], 'animateColor'),
+    1:     (namespaces['svg'], 'animateMotion'),
+    1:     (namespaces['svg'], 'animateTransform'),
+    1:     (namespaces['svg'], 'clipPath'),
+    1:     (namespaces['svg'], 'circle'),
+    1:     (namespaces['svg'], 'defs'),
+    1:     (namespaces['svg'], 'desc'),
+    1:     (namespaces['svg'], 'ellipse'),
+    1:     (namespaces['svg'], 'font-face'),
+    1:     (namespaces['svg'], 'font-face-name'),
+    1:     (namespaces['svg'], 'font-face-src'),
+    1:     (namespaces['svg'], 'g'),
+    1:     (namespaces['svg'], 'glyph'),
+    1:     (namespaces['svg'], 'hkern'),
+    1:     (namespaces['svg'], 'linearGradient'),
+    1:     (namespaces['svg'], 'line'),
+    1:     (namespaces['svg'], 'marker'),
+    1:     (namespaces['svg'], 'metadata'),
+    1:     (namespaces['svg'], 'missing-glyph'),
+    1:     (namespaces['svg'], 'mpath'),
+    1:     (namespaces['svg'], 'path'),
+    1:     (namespaces['svg'], 'polygon'),
+    1:     (namespaces['svg'], 'polyline'),
+    1:     (namespaces['svg'], 'radialGradient'),
+    1:     (namespaces['svg'], 'rect'),
+    1:     (namespaces['svg'], 'set'),
+    1:     (namespaces['svg'], 'stop'),
+    1:     (namespaces['svg'], 'svg'),
+    1:     (namespaces['svg'], 'switch'),
+    1:     (namespaces['svg'], 'text'),
+    1:     (namespaces['svg'], 'title'),
+    1:     (namespaces['svg'], 'tspan'),
+    1:     (namespaces['svg'], 'use'),
+       ))
+       
+    2: allowed_attributes = frozenset((
+           # HTML attributes
+    1:     (None, 'abbr'),
+    1:     (None, 'accept'),
+    1:     (None, 'accept-charset'),
+    1:     (None, 'accesskey'),
+    1:     (None, 'action'),
+    1:     (None, 'align'),
+    1:     (None, 'alt'),
+    1:     (None, 'autocomplete'),
+    1:     (None, 'autofocus'),
+    1:     (None, 'axis'),
+    1:     (None, 'background'),
+    1:     (None, 'balance'),
+    1:     (None, 'bgcolor'),
+    1:     (None, 'bgproperties'),
+    1:     (None, 'border'),
+    1:     (None, 'bordercolor'),
+    1:     (None, 'bordercolordark'),
+    1:     (None, 'bordercolorlight'),
+    1:     (None, 'bottompadding'),
+    1:     (None, 'cellpadding'),
+    1:     (None, 'cellspacing'),
+    1:     (None, 'ch'),
+    1:     (None, 'challenge'),
+    1:     (None, 'char'),
+    1:     (None, 'charoff'),
+    1:     (None, 'choff'),
+    1:     (None, 'charset'),
+    1:     (None, 'checked'),
+    1:     (None, 'cite'),
+    1:     (None, 'class'),
+    1:     (None, 'clear'),
+    1:     (None, 'color'),
+    1:     (None, 'cols'),
+    1:     (None, 'colspan'),
+    1:     (None, 'compact'),
+    1:     (None, 'contenteditable'),
+    1:     (None, 'controls'),
+    1:     (None, 'coords'),
+    1:     (None, 'data'),
+    1:     (None, 'datafld'),
+    1:     (None, 'datapagesize'),
+    1:     (None, 'datasrc'),
+    1:     (None, 'datetime'),
+    1:     (None, 'default'),
+    1:     (None, 'delay'),
+    1:     (None, 'dir'),
+    1:     (None, 'disabled'),
+    1:     (None, 'draggable'),
+    1:     (None, 'dynsrc'),
+    1:     (None, 'enctype'),
+    1:     (None, 'end'),
+    1:     (None, 'face'),
+    1:     (None, 'for'),
+    1:     (None, 'form'),
+    1:     (None, 'frame'),
+    1:     (None, 'galleryimg'),
+    1:     (None, 'gutter'),
+    1:     (None, 'headers'),
+    1:     (None, 'height'),
+    1:     (None, 'hidefocus'),
+    1:     (None, 'hidden'),
+    1:     (None, 'high'),
+    1:     (None, 'href'),
+    1:     (None, 'hreflang'),
+    1:     (None, 'hspace'),
+    1:     (None, 'icon'),
+    1:     (None, 'id'),
+    1:     (None, 'inputmode'),
+    1:     (None, 'ismap'),
+    1:     (None, 'keytype'),
+    1:     (None, 'label'),
+    1:     (None, 'leftspacing'),
+    1:     (None, 'lang'),
+    1:     (None, 'list'),
+    1:     (None, 'longdesc'),
+    1:     (None, 'loop'),
+    1:     (None, 'loopcount'),
+    1:     (None, 'loopend'),
+    1:     (None, 'loopstart'),
+    1:     (None, 'low'),
+    1:     (None, 'lowsrc'),
+    1:     (None, 'max'),
+    1:     (None, 'maxlength'),
+    1:     (None, 'media'),
+    1:     (None, 'method'),
+    1:     (None, 'min'),
+    1:     (None, 'multiple'),
+    1:     (None, 'name'),
+    1:     (None, 'nohref'),
+    1:     (None, 'noshade'),
+    1:     (None, 'nowrap'),
+    1:     (None, 'open'),
+    1:     (None, 'optimum'),
+    1:     (None, 'pattern'),
+    1:     (None, 'ping'),
+    1:     (None, 'point-size'),
+    1:     (None, 'poster'),
+    1:     (None, 'pqg'),
+    1:     (None, 'preload'),
+    1:     (None, 'prompt'),
+    1:     (None, 'radiogroup'),
+    1:     (None, 'readonly'),
+    1:     (None, 'rel'),
+    1:     (None, 'repeat-max'),
+    1:     (None, 'repeat-min'),
+    1:     (None, 'replace'),
+    1:     (None, 'required'),
+    1:     (None, 'rev'),
+    1:     (None, 'rightspacing'),
+    1:     (None, 'rows'),
+    1:     (None, 'rowspan'),
+    1:     (None, 'rules'),
+    1:     (None, 'scope'),
+    1:     (None, 'selected'),
+    1:     (None, 'shape'),
+    1:     (None, 'size'),
+    1:     (None, 'span'),
+    1:     (None, 'src'),
+    1:     (None, 'start'),
+    1:     (None, 'step'),
+    1:     (None, 'style'),
+    1:     (None, 'summary'),
+    1:     (None, 'suppress'),
+    1:     (None, 'tabindex'),
+    1:     (None, 'target'),
+    1:     (None, 'template'),
+    1:     (None, 'title'),
+    1:     (None, 'toppadding'),
+    1:     (None, 'type'),
+    1:     (None, 'unselectable'),
+    1:     (None, 'usemap'),
+    1:     (None, 'urn'),
+    1:     (None, 'valign'),
+    1:     (None, 'value'),
+    1:     (None, 'variable'),
+    1:     (None, 'volume'),
+    1:     (None, 'vspace'),
+    1:     (None, 'vrml'),
+    1:     (None, 'width'),
+    1:     (None, 'wrap'),
+    1:     (namespaces['xml'], 'lang'),
+           # MathML attributes
+    1:     (None, 'actiontype'),
+    1:     (None, 'align'),
+    1:     (None, 'columnalign'),
+    1:     (None, 'columnalign'),
+    1:     (None, 'columnalign'),
+    1:     (None, 'columnlines'),
+    1:     (None, 'columnspacing'),
+    1:     (None, 'columnspan'),
+    1:     (None, 'depth'),
+    1:     (None, 'display'),
+    1:     (None, 'displaystyle'),
+    1:     (None, 'equalcolumns'),
+    1:     (None, 'equalrows'),
+    1:     (None, 'fence'),
+    1:     (None, 'fontstyle'),
+    1:     (None, 'fontweight'),
+    1:     (None, 'frame'),
+    1:     (None, 'height'),
+    1:     (None, 'linethickness'),
+    1:     (None, 'lspace'),
+    1:     (None, 'mathbackground'),
+    1:     (None, 'mathcolor'),
+    1:     (None, 'mathvariant'),
+    1:     (None, 'mathvariant'),
+    1:     (None, 'maxsize'),
+    1:     (None, 'minsize'),
+    1:     (None, 'other'),
+    1:     (None, 'rowalign'),
+    1:     (None, 'rowalign'),
+    1:     (None, 'rowalign'),
+    1:     (None, 'rowlines'),
+    1:     (None, 'rowspacing'),
+    1:     (None, 'rowspan'),
+    1:     (None, 'rspace'),
+    1:     (None, 'scriptlevel'),
+    1:     (None, 'selection'),
+    1:     (None, 'separator'),
+    1:     (None, 'stretchy'),
+    1:     (None, 'width'),
+    1:     (None, 'width'),
+    1:     (namespaces['xlink'], 'href'),
+    1:     (namespaces['xlink'], 'show'),
+    1:     (namespaces['xlink'], 'type'),
+           # SVG attributes
+    1:     (None, 'accent-height'),
+    1:     (None, 'accumulate'),
+    1:     (None, 'additive'),
+    1:     (None, 'alphabetic'),
+    1:     (None, 'arabic-form'),
+    1:     (None, 'ascent'),
+    1:     (None, 'attributeName'),
+    1:     (None, 'attributeType'),
+    1:     (None, 'baseProfile'),
+    1:     (None, 'bbox'),
+    1:     (None, 'begin'),
+    1:     (None, 'by'),
+    1:     (None, 'calcMode'),
+    1:     (None, 'cap-height'),
+    1:     (None, 'class'),
+    1:     (None, 'clip-path'),
+    1:     (None, 'color'),
+    1:     (None, 'color-rendering'),
+    1:     (None, 'content'),
+    1:     (None, 'cx'),
+    1:     (None, 'cy'),
+    1:     (None, 'd'),
+    1:     (None, 'dx'),
+    1:     (None, 'dy'),
+    1:     (None, 'descent'),
+    1:     (None, 'display'),
+    1:     (None, 'dur'),
+    1:     (None, 'end'),
+    1:     (None, 'fill'),
+    1:     (None, 'fill-opacity'),
+    1:     (None, 'fill-rule'),
+    1:     (None, 'font-family'),
+    1:     (None, 'font-size'),
+    1:     (None, 'font-stretch'),
+    1:     (None, 'font-style'),
+    1:     (None, 'font-variant'),
+    1:     (None, 'font-weight'),
+    1:     (None, 'from'),
+    1:     (None, 'fx'),
+    1:     (None, 'fy'),
+    1:     (None, 'g1'),
+    1:     (None, 'g2'),
+    1:     (None, 'glyph-name'),
+    1:     (None, 'gradientUnits'),
+    1:     (None, 'hanging'),
+    1:     (None, 'height'),
+    1:     (None, 'horiz-adv-x'),
+    1:     (None, 'horiz-origin-x'),
+    1:     (None, 'id'),
+    1:     (None, 'ideographic'),
+    1:     (None, 'k'),
+    1:     (None, 'keyPoints'),
+    1:     (None, 'keySplines'),
+    1:     (None, 'keyTimes'),
+    1:     (None, 'lang'),
+    1:     (None, 'marker-end'),
+    1:     (None, 'marker-mid'),
+    1:     (None, 'marker-start'),
+    1:     (None, 'markerHeight'),
+    1:     (None, 'markerUnits'),
+    1:     (None, 'markerWidth'),
+    1:     (None, 'mathematical'),
+    1:     (None, 'max'),
+    1:     (None, 'min'),
+    1:     (None, 'name'),
+    1:     (None, 'offset'),
+    1:     (None, 'opacity'),
+    1:     (None, 'orient'),
+    1:     (None, 'origin'),
+    1:     (None, 'overline-position'),
+    1:     (None, 'overline-thickness'),
+    1:     (None, 'panose-1'),
+    1:     (None, 'path'),
+    1:     (None, 'pathLength'),
+    1:     (None, 'points'),
+    1:     (None, 'preserveAspectRatio'),
+    1:     (None, 'r'),
+    1:     (None, 'refX'),
+    1:     (None, 'refY'),
+    1:     (None, 'repeatCount'),
+    1:     (None, 'repeatDur'),
+    1:     (None, 'requiredExtensions'),
+    1:     (None, 'requiredFeatures'),
+    1:     (None, 'restart'),
+    1:     (None, 'rotate'),
+    1:     (None, 'rx'),
+    1:     (None, 'ry'),
+    1:     (None, 'slope'),
+    1:     (None, 'stemh'),
+    1:     (None, 'stemv'),
+    1:     (None, 'stop-color'),
+    1:     (None, 'stop-opacity'),
+    1:     (None, 'strikethrough-position'),
+    1:     (None, 'strikethrough-thickness'),
+    1:     (None, 'stroke'),
+    1:     (None, 'stroke-dasharray'),
+    1:     (None, 'stroke-dashoffset'),
+    1:     (None, 'stroke-linecap'),
+    1:     (None, 'stroke-linejoin'),
+    1:     (None, 'stroke-miterlimit'),
+    1:     (None, 'stroke-opacity'),
+    1:     (None, 'stroke-width'),
+    1:     (None, 'systemLanguage'),
+    1:     (None, 'target'),
+    1:     (None, 'text-anchor'),
+    1:     (None, 'to'),
+    1:     (None, 'transform'),
+    1:     (None, 'type'),
+    1:     (None, 'u1'),
+    1:     (None, 'u2'),
+    1:     (None, 'underline-position'),
+    1:     (None, 'underline-thickness'),
+    1:     (None, 'unicode'),
+    1:     (None, 'unicode-range'),
+    1:     (None, 'units-per-em'),
+    1:     (None, 'values'),
+    1:     (None, 'version'),
+    1:     (None, 'viewBox'),
+    1:     (None, 'visibility'),
+    1:     (None, 'width'),
+    1:     (None, 'widths'),
+    1:     (None, 'x'),
+    1:     (None, 'x-height'),
+    1:     (None, 'x1'),
+    1:     (None, 'x2'),
+    1:     (namespaces['xlink'], 'actuate'),
+    1:     (namespaces['xlink'], 'arcrole'),
+    1:     (namespaces['xlink'], 'href'),
+    1:     (namespaces['xlink'], 'role'),
+    1:     (namespaces['xlink'], 'show'),
+    1:     (namespaces['xlink'], 'title'),
+    1:     (namespaces['xlink'], 'type'),
+    1:     (namespaces['xml'], 'base'),
+    1:     (namespaces['xml'], 'lang'),
+    1:     (namespaces['xml'], 'space'),
+    1:     (None, 'y'),
+    1:     (None, 'y1'),
+    1:     (None, 'y2'),
+    1:     (None, 'zoomAndPan'),
+       ))
+       
+    2: attr_val_is_uri = frozenset((
+    1:     (None, 'href'),
+    1:     (None, 'src'),
+    1:     (None, 'cite'),
+    1:     (None, 'action'),
+    1:     (None, 'longdesc'),
+    1:     (None, 'poster'),
+    1:     (None, 'background'),
+    1:     (None, 'datasrc'),
+    1:     (None, 'dynsrc'),
+    1:     (None, 'lowsrc'),
+    1:     (None, 'ping'),
+    1:     (namespaces['xlink'], 'href'),
+    1:     (namespaces['xml'], 'base'),
+       ))
+       
+    1: svg_attr_val_allows_ref = frozenset((
+           (None, 'clip-path'),
+           (None, 'color-profile'),
+           (None, 'cursor'),
+           (None, 'fill'),
+           (None, 'filter'),
+           (None, 'marker'),
+           (None, 'marker-start'),
+           (None, 'marker-mid'),
+           (None, 'marker-end'),
+           (None, 'mask'),
+           (None, 'stroke'),
+       ))
+       
+    1: svg_allow_local_href = frozenset((
+           (None, 'altGlyph'),
+           (None, 'animate'),
+           (None, 'animateColor'),
+           (None, 'animateMotion'),
+           (None, 'animateTransform'),
+           (None, 'cursor'),
+           (None, 'feImage'),
+           (None, 'filter'),
+           (None, 'linearGradient'),
+           (None, 'pattern'),
+           (None, 'radialGradient'),
+           (None, 'textpath'),
+           (None, 'tref'),
+           (None, 'set'),
+           (None, 'use')
+       ))
+       
+    1: allowed_css_properties = frozenset((
+           'azimuth',
+           'background-color',
+           'border-bottom-color',
+           'border-collapse',
+           'border-color',
+           'border-left-color',
+           'border-right-color',
+           'border-top-color',
+           'clear',
+           'color',
+           'cursor',
+           'direction',
+           'display',
+           'elevation',
+           'float',
+           'font',
+           'font-family',
+           'font-size',
+           'font-style',
+           'font-variant',
+           'font-weight',
+           'height',
+           'letter-spacing',
+           'line-height',
+           'overflow',
+           'pause',
+           'pause-after',
+           'pause-before',
+           'pitch',
+           'pitch-range',
+           'richness',
+           'speak',
+           'speak-header',
+           'speak-numeral',
+           'speak-punctuation',
+           'speech-rate',
+           'stress',
+           'text-align',
+           'text-decoration',
+           'text-indent',
+           'unicode-bidi',
+           'vertical-align',
+           'voice-family',
+           'volume',
+           'white-space',
+           'width',
+       ))
+       
+    1: allowed_css_keywords = frozenset((
+           'auto',
+           'aqua',
+           'black',
+           'block',
+           'blue',
+           'bold',
+           'both',
+           'bottom',
+           'brown',
+           'center',
+           'collapse',
+           'dashed',
+           'dotted',
+           'fuchsia',
+           'gray',
+           'green',
+           '!important',
+           'italic',
+           'left',
+           'lime',
+           'maroon',
+           'medium',
+           'none',
+           'navy',
+           'normal',
+           'nowrap',
+           'olive',
+           'pointer',
+           'purple',
+           'red',
+           'right',
+           'solid',
+           'silver',
+           'teal',
+           'top',
+           'transparent',
+           'underline',
+           'white',
+           'yellow',
+       ))
+       
+    1: allowed_svg_properties = frozenset((
+           'fill',
+           'fill-opacity',
+           'fill-rule',
+           'stroke',
+           'stroke-width',
+           'stroke-linecap',
+           'stroke-linejoin',
+           'stroke-opacity',
+       ))
+       
+    1: allowed_protocols = frozenset((
+           'ed2k',
+           'ftp',
+           'http',
+           'https',
+           'irc',
+           'mailto',
+           'news',
+           'gopher',
+           'nntp',
+           'telnet',
+           'webcal',
+           'xmpp',
+           'callto',
+           'feed',
+           'urn',
+           'aim',
+           'rsync',
+           'tag',
+           'ssh',
+           'sftp',
+           'rtsp',
+           'afs',
+           'data',
+       ))
+       
+    1: allowed_content_types = frozenset((
+           'image/png',
+           'image/jpeg',
+           'image/gif',
+           'image/webp',
+           'image/bmp',
+           'text/plain',
+       ))
+       
+       
+    2: data_content_type = re.compile(r'''
+                                       ^
+                                       # Match a content type <application>/<type>
+                                       (?P<content_type>[-a-zA-Z0-9.]+/[-a-zA-Z0-9.]+)
+                                       # Match any character set and encoding
+                                       (?:(?:;charset=(?:[-a-zA-Z0-9]+)(?:;(?:base64))?)
+                                         |(?:;(?:base64))?(?:;charset=(?:[-a-zA-Z0-9]+))?)
+                                       # Assume the rest is data
+                                       ,.*
+                                       $
+                                       ''',
+    1:                                re.VERBOSE)
+       
+       
+    2: class Filter(base.Filter):
+    1:     """Sanitizes token stream of XHTML+MathML+SVG and of inline style attributes"""
+    1:     def __init__(self,
+                        source,
+    1:                  allowed_elements=allowed_elements,
+    1:                  allowed_attributes=allowed_attributes,
+    1:                  allowed_css_properties=allowed_css_properties,
+    1:                  allowed_css_keywords=allowed_css_keywords,
+    1:                  allowed_svg_properties=allowed_svg_properties,
+    1:                  allowed_protocols=allowed_protocols,
+    1:                  allowed_content_types=allowed_content_types,
+    1:                  attr_val_is_uri=attr_val_is_uri,
+    1:                  svg_attr_val_allows_ref=svg_attr_val_allows_ref,
+    1:                  svg_allow_local_href=svg_allow_local_href):
+               """Creates a Filter
+       
+               :arg allowed_elements: set of elements to allow--everything else will
+                   be escaped
+       
+               :arg allowed_attributes: set of attributes to allow in
+                   elements--everything else will be stripped
+       
+               :arg allowed_css_properties: set of CSS properties to allow--everything
+                   else will be stripped
+       
+               :arg allowed_css_keywords: set of CSS keywords to allow--everything
+                   else will be stripped
+       
+               :arg allowed_svg_properties: set of SVG properties to allow--everything
+                   else will be removed
+       
+               :arg allowed_protocols: set of allowed protocols for URIs
+       
+               :arg allowed_content_types: set of allowed content types for ``data`` URIs.
+       
+               :arg attr_val_is_uri: set of attributes that have URI values--values
+                   that have a scheme not listed in ``allowed_protocols`` are removed
+       
+               :arg svg_attr_val_allows_ref: set of SVG attributes that can have
+                   references
+       
+               :arg svg_allow_local_href: set of SVG elements that can have local
+                   hrefs--these are removed
+       
+               """
+>>>>>>         super(Filter, self).__init__(source)
+       
+>>>>>>         warnings.warn(_deprecation_msg, DeprecationWarning)
+       
+>>>>>>         self.allowed_elements = allowed_elements
+>>>>>>         self.allowed_attributes = allowed_attributes
+>>>>>>         self.allowed_css_properties = allowed_css_properties
+>>>>>>         self.allowed_css_keywords = allowed_css_keywords
+>>>>>>         self.allowed_svg_properties = allowed_svg_properties
+>>>>>>         self.allowed_protocols = allowed_protocols
+>>>>>>         self.allowed_content_types = allowed_content_types
+>>>>>>         self.attr_val_is_uri = attr_val_is_uri
+>>>>>>         self.svg_attr_val_allows_ref = svg_attr_val_allows_ref
+>>>>>>         self.svg_allow_local_href = svg_allow_local_href
+       
+    1:     def __iter__(self):
+>>>>>>         for token in base.Filter.__iter__(self):
+>>>>>>             token = self.sanitize_token(token)
+>>>>>>             if token:
+>>>>>>                 yield token
+       
+           # Sanitize the +html+, escaping all elements not in ALLOWED_ELEMENTS, and
+           # stripping out all attributes not in ALLOWED_ATTRIBUTES. Style attributes
+           # are parsed, and a restricted set, specified by ALLOWED_CSS_PROPERTIES and
+           # ALLOWED_CSS_KEYWORDS, are allowed through. attributes in ATTR_VAL_IS_URI
+           # are scanned, and only URI schemes specified in ALLOWED_PROTOCOLS are
+           # allowed.
+           #
+           #   sanitize_html('<script> do_nasty_stuff() </script>')
+           #    => &lt;script> do_nasty_stuff() &lt;/script>
+           #   sanitize_html('<a href="javascript: sucker();">Click here for $100</a>')
+           #    => <a>Click here for $100</a>
+    1:     def sanitize_token(self, token):
+       
+               # accommodate filters which use token_type differently
+>>>>>>         token_type = token["type"]
+>>>>>>         if token_type in ("StartTag", "EndTag", "EmptyTag"):
+>>>>>>             name = token["name"]
+>>>>>>             namespace = token["namespace"]
+>>>>>>             if ((namespace, name) in self.allowed_elements or
+>>>>>>                 (namespace is None and
+>>>>>>                  (namespaces["html"], name) in self.allowed_elements)):
+>>>>>>                 return self.allowed_token(token)
+                   else:
+>>>>>>                 return self.disallowed_token(token)
+>>>>>>         elif token_type == "Comment":
+>>>>>>             pass
+               else:
+>>>>>>             return token
+       
+    1:     def allowed_token(self, token):
+>>>>>>         if "data" in token:
+>>>>>>             attrs = token["data"]
+>>>>>>             attr_names = set(attrs.keys())
+       
+                   # Remove forbidden attributes
+>>>>>>             for to_remove in (attr_names - self.allowed_attributes):
+>>>>>>                 del token["data"][to_remove]
+>>>>>>                 attr_names.remove(to_remove)
+       
+                   # Remove attributes with disallowed URL values
+>>>>>>             for attr in (attr_names & self.attr_val_is_uri):
+>>>>>>                 assert attr in attrs
+                       # I don't have a clue where this regexp comes from or why it matches those
+                       # characters, nor why we call unescape. I just know it's always been here.
+                       # Should you be worried by this comment in a sanitizer? Yes. On the other hand, all
+                       # this will do is remove *more* than it otherwise would.
+>>>>>>                 val_unescaped = re.sub("[`\x00-\x20\x7f-\xa0\\s]+", '',
+>>>>>>                                        unescape(attrs[attr])).lower()
+                       # remove replacement characters from unescaped characters
+>>>>>>                 val_unescaped = val_unescaped.replace("\ufffd", "")
+>>>>>>                 try:
+>>>>>>                     uri = urlparse.urlparse(val_unescaped)
+>>>>>>                 except ValueError:
+>>>>>>                     uri = None
+>>>>>>                     del attrs[attr]
+>>>>>>                 if uri and uri.scheme:
+>>>>>>                     if uri.scheme not in self.allowed_protocols:
+>>>>>>                         del attrs[attr]
+>>>>>>                     if uri.scheme == 'data':
+>>>>>>                         m = data_content_type.match(uri.path)
+>>>>>>                         if not m:
+>>>>>>                             del attrs[attr]
+>>>>>>                         elif m.group('content_type') not in self.allowed_content_types:
+>>>>>>                             del attrs[attr]
+       
+>>>>>>             for attr in self.svg_attr_val_allows_ref:
+>>>>>>                 if attr in attrs:
+>>>>>>                     attrs[attr] = re.sub(r'url\s*\(\s*[^#\s][^)]+?\)',
+>>>>>>                                          ' ',
+>>>>>>                                          unescape(attrs[attr]))
+>>>>>>             if (token["name"] in self.svg_allow_local_href and
+>>>>>>                 (namespaces['xlink'], 'href') in attrs and re.search(r'^\s*[^#\s].*',
+>>>>>>                                                                      attrs[(namespaces['xlink'], 'href')])):
+>>>>>>                 del attrs[(namespaces['xlink'], 'href')]
+>>>>>>             if (None, 'style') in attrs:
+>>>>>>                 attrs[(None, 'style')] = self.sanitize_css(attrs[(None, 'style')])
+>>>>>>             token["data"] = attrs
+>>>>>>         return token
+       
+    1:     def disallowed_token(self, token):
+>>>>>>         token_type = token["type"]
+>>>>>>         if token_type == "EndTag":
+>>>>>>             token["data"] = "</%s>" % token["name"]
+>>>>>>         elif token["data"]:
+>>>>>>             assert token_type in ("StartTag", "EmptyTag")
+>>>>>>             attrs = []
+>>>>>>             for (ns, name), v in token["data"].items():
+>>>>>>                 attrs.append(' %s="%s"' % (name if ns is None else "%s:%s" % (prefixes[ns], name), escape(v)))
+>>>>>>             token["data"] = "<%s%s>" % (token["name"], ''.join(attrs))
+               else:
+>>>>>>             token["data"] = "<%s>" % token["name"]
+>>>>>>         if token.get("selfClosing"):
+>>>>>>             token["data"] = token["data"][:-1] + "/>"
+       
+>>>>>>         token["type"] = "Characters"
+       
+>>>>>>         del token["name"]
+>>>>>>         return token
+       
+    1:     def sanitize_css(self, style):
+               # disallow urls
+>>>>>>         style = re.compile(r'url\s*\(\s*[^\s)]+?\s*\)\s*').sub(' ', style)
+       
+               # gauntlet
+>>>>>>         if not re.match(r"""^([:,;#%.\sa-zA-Z0-9!]|\w-\w|'[\s\w]+'|"[\s\w]+"|\([\d,\s]+\))*$""", style):
+>>>>>>             return ''
+>>>>>>         if not re.match(r"^\s*([-\w]+\s*:[^:;]*(;\s*|$))*$", style):
+>>>>>>             return ''
+       
+>>>>>>         clean = []
+>>>>>>         for prop, value in re.findall(r"([-\w]+)\s*:\s*([^:;]*)", style):
+>>>>>>             if not value:
+>>>>>>                 continue
+>>>>>>             if prop.lower() in self.allowed_css_properties:
+>>>>>>                 clean.append(prop + ': ' + value + ';')
+>>>>>>             elif prop.split('-')[0].lower() in ['background', 'border', 'margin',
+                                                       'padding']:
+>>>>>>                 for keyword in value.split():
+>>>>>>                     if keyword not in self.allowed_css_keywords and \
+>>>>>>                             not re.match(r"^(#[0-9a-fA-F]+|rgb\(\d+%?,\d*%?,?\d*%?\)?|\d{0,2}\.?\d{0,2}(cm|em|ex|in|mm|pc|pt|px|%|,|\))?)$", keyword):  # noqa
+>>>>>>                         break
+                       else:
+>>>>>>                     clean.append(prop + ': ' + value + ';')
+>>>>>>             elif prop.lower() in self.allowed_svg_properties:
+>>>>>>                 clean.append(prop + ': ' + value + ';')
+       
+>>>>>>         return ' '.join(clean)

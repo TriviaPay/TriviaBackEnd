@@ -1,0 +1,75 @@
+    1: from .api_jwk import PyJWK, PyJWKSet
+    1: from .api_jws import (
+           PyJWS,
+           get_algorithm_by_name,
+           get_unverified_header,
+           register_algorithm,
+           unregister_algorithm,
+       )
+    1: from .api_jwt import PyJWT, decode, decode_complete, encode
+    1: from .exceptions import (
+           DecodeError,
+           ExpiredSignatureError,
+           ImmatureSignatureError,
+           InvalidAlgorithmError,
+           InvalidAudienceError,
+           InvalidIssuedAtError,
+           InvalidIssuerError,
+           InvalidKeyError,
+           InvalidSignatureError,
+           InvalidTokenError,
+           MissingRequiredClaimError,
+           PyJWKClientConnectionError,
+           PyJWKClientError,
+           PyJWKError,
+           PyJWKSetError,
+           PyJWTError,
+       )
+    1: from .jwks_client import PyJWKClient
+       
+    1: __version__ = "2.10.1"
+       
+    1: __title__ = "PyJWT"
+    1: __description__ = "JSON Web Token implementation in Python"
+    1: __url__ = "https://pyjwt.readthedocs.io"
+    1: __uri__ = __url__
+    1: __doc__ = f"{__description__} <{__uri__}>"
+       
+    1: __author__ = "José Padilla"
+    1: __email__ = "hello@jpadilla.com"
+       
+    1: __license__ = "MIT"
+    1: __copyright__ = "Copyright 2015-2022 José Padilla"
+       
+       
+    1: __all__ = [
+           "PyJWS",
+           "PyJWT",
+           "PyJWKClient",
+           "PyJWK",
+           "PyJWKSet",
+           "decode",
+           "decode_complete",
+           "encode",
+           "get_unverified_header",
+           "register_algorithm",
+           "unregister_algorithm",
+           "get_algorithm_by_name",
+           # Exceptions
+           "DecodeError",
+           "ExpiredSignatureError",
+           "ImmatureSignatureError",
+           "InvalidAlgorithmError",
+           "InvalidAudienceError",
+           "InvalidIssuedAtError",
+           "InvalidIssuerError",
+           "InvalidKeyError",
+           "InvalidSignatureError",
+           "InvalidTokenError",
+           "MissingRequiredClaimError",
+           "PyJWKClientConnectionError",
+           "PyJWKClientError",
+           "PyJWKError",
+           "PyJWKSetError",
+           "PyJWTError",
+       ]

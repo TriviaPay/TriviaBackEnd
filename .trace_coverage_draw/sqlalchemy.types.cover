@@ -1,0 +1,76 @@
+       # types.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """Compatibility namespace for sqlalchemy.sql.types.
+       
+       """
+       
+       
+    1: from __future__ import annotations
+       
+    1: from .sql.sqltypes import _Binary as _Binary
+    1: from .sql.sqltypes import ARRAY as ARRAY
+    1: from .sql.sqltypes import BIGINT as BIGINT
+    1: from .sql.sqltypes import BigInteger as BigInteger
+    1: from .sql.sqltypes import BINARY as BINARY
+    1: from .sql.sqltypes import BLOB as BLOB
+    1: from .sql.sqltypes import BOOLEAN as BOOLEAN
+    1: from .sql.sqltypes import Boolean as Boolean
+    1: from .sql.sqltypes import CHAR as CHAR
+    1: from .sql.sqltypes import CLOB as CLOB
+    1: from .sql.sqltypes import Concatenable as Concatenable
+    1: from .sql.sqltypes import DATE as DATE
+    1: from .sql.sqltypes import Date as Date
+    1: from .sql.sqltypes import DATETIME as DATETIME
+    1: from .sql.sqltypes import DateTime as DateTime
+    1: from .sql.sqltypes import DECIMAL as DECIMAL
+    1: from .sql.sqltypes import DOUBLE as DOUBLE
+    1: from .sql.sqltypes import Double as Double
+    1: from .sql.sqltypes import DOUBLE_PRECISION as DOUBLE_PRECISION
+    1: from .sql.sqltypes import Enum as Enum
+    1: from .sql.sqltypes import FLOAT as FLOAT
+    1: from .sql.sqltypes import Float as Float
+    1: from .sql.sqltypes import Indexable as Indexable
+    1: from .sql.sqltypes import INT as INT
+    1: from .sql.sqltypes import INTEGER as INTEGER
+    1: from .sql.sqltypes import Integer as Integer
+    1: from .sql.sqltypes import Interval as Interval
+    1: from .sql.sqltypes import JSON as JSON
+    1: from .sql.sqltypes import LargeBinary as LargeBinary
+    1: from .sql.sqltypes import MatchType as MatchType
+    1: from .sql.sqltypes import NCHAR as NCHAR
+    1: from .sql.sqltypes import NULLTYPE as NULLTYPE
+    1: from .sql.sqltypes import NullType as NullType
+    1: from .sql.sqltypes import NUMERIC as NUMERIC
+    1: from .sql.sqltypes import Numeric as Numeric
+    1: from .sql.sqltypes import NVARCHAR as NVARCHAR
+    1: from .sql.sqltypes import PickleType as PickleType
+    1: from .sql.sqltypes import REAL as REAL
+    1: from .sql.sqltypes import SchemaType as SchemaType
+    1: from .sql.sqltypes import SMALLINT as SMALLINT
+    1: from .sql.sqltypes import SmallInteger as SmallInteger
+    1: from .sql.sqltypes import String as String
+    1: from .sql.sqltypes import STRINGTYPE as STRINGTYPE
+    1: from .sql.sqltypes import TEXT as TEXT
+    1: from .sql.sqltypes import Text as Text
+    1: from .sql.sqltypes import TIME as TIME
+    1: from .sql.sqltypes import Time as Time
+    1: from .sql.sqltypes import TIMESTAMP as TIMESTAMP
+    1: from .sql.sqltypes import TupleType as TupleType
+    1: from .sql.sqltypes import Unicode as Unicode
+    1: from .sql.sqltypes import UnicodeText as UnicodeText
+    1: from .sql.sqltypes import UUID as UUID
+    1: from .sql.sqltypes import Uuid as Uuid
+    1: from .sql.sqltypes import VARBINARY as VARBINARY
+    1: from .sql.sqltypes import VARCHAR as VARCHAR
+    1: from .sql.type_api import adapt_type as adapt_type
+    1: from .sql.type_api import ExternalType as ExternalType
+    1: from .sql.type_api import to_instance as to_instance
+    1: from .sql.type_api import TypeDecorator as TypeDecorator
+    1: from .sql.type_api import TypeEngine as TypeEngine
+    1: from .sql.type_api import UserDefinedType as UserDefinedType
+    1: from .sql.type_api import Variant as Variant

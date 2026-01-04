@@ -1,0 +1,301 @@
+    2: from fastapi import APIRouter, Depends, HTTPException
+    2: from pydantic import BaseModel, Field
+    2: from sqlalchemy.orm import Session
+    2: from sqlalchemy import or_
+    2: from sqlalchemy.exc import IntegrityError
+    2: from datetime import datetime, timedelta
+    2: from typing import Optional
+    2: import uuid
+    2: import secrets
+    2: import logging
+       
+    2: from db import get_db
+    2: from models import User, Group, GroupInvite, GroupParticipant, GroupBan
+    2: from routers.dependencies import get_current_user
+    2: from config import GROUPS_ENABLED, GROUP_MAX_PARTICIPANTS, GROUP_INVITE_EXPIRY_HOURS
+    2: from routers.group_members import check_group_role, increment_group_epoch
+       
+    2: logger = logging.getLogger(__name__)
+       
+    2: router = APIRouter(prefix="/groups", tags=["Group Invites"])
+       
+       
+    4: class CreateInviteRequest(BaseModel):
+    2:     type: str = Field(..., pattern="^(link|direct)$", example="link")
+    2:     expires_at: Optional[datetime] = Field(None, example="2025-11-12T16:00:00Z")
+    2:     max_uses: Optional[int] = Field(None, ge=1, example=10)
+    2:     target_user_id: Optional[int] = Field(None, example=1142961859)
+           
+    4:     class Config:
+    2:         json_schema_extra = {
+    4:             "example": {
+    2:                 "type": "link",
+    2:                 "expires_at": "2025-11-12T16:00:00Z",
+    2:             "max_uses": 10,
+    2:             "target_user_id": 1142961859
+               }
+           }
+       
+       
+    4: class JoinGroupRequest(BaseModel):
+    2:     code: str = Field(..., example="ABC123XYZ")
+           
+    4:     class Config:
+    2:         json_schema_extra = {
+    4:             "example": {
+    2:                 "code": "ABC123XYZ"
+                   }
+               }
+       
+       
+    2: def generate_invite_code() -> str:
+           """Generate a short, URL-safe invite code."""
+>>>>>>     return secrets.token_urlsafe(8)[:12].upper()
+       
+       
+    2: @router.post("/{group_id}/invites")
+    4: async def create_invite(
+    2:     group_id: str,
+    2:     request: CreateInviteRequest,
+    4:     db: Session = Depends(get_db),
+    4:     current_user: User = Depends(get_current_user)
+       ):
+           """Create invite link/code. Owner/admin only."""
+    3:     if not GROUPS_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="Groups feature is not enabled")
+           
+    3:     try:
+    3:         group_uuid = uuid.UUID(group_id)
+>>>>>>     except ValueError:
+>>>>>>         raise HTTPException(status_code=400, detail="Invalid group ID format")
+           
+    3:     group = db.query(Group).filter(Group.id == group_uuid).first()
+    3:     if not group:
+>>>>>>         raise HTTPException(status_code=404, detail="Group not found")
+           
+    3:     if group.is_closed:
+>>>>>>         raise HTTPException(status_code=403, detail="Group is closed")
+           
+           # Check permissions
+    3:     check_group_role(db, group_uuid, current_user.account_id, ['owner', 'admin'])
+           
+           # Set default expiry
+    3:     expires_at = request.expires_at
+    3:     if not expires_at:
+    2:         expires_at = datetime.utcnow() + timedelta(hours=GROUP_INVITE_EXPIRY_HOURS)
+    3:     if expires_at and expires_at < datetime.utcnow():
+    1:         raise HTTPException(status_code=400, detail="EXPIRY_IN_PAST")
+       
+    2:     if request.type == "direct" and not request.target_user_id:
+    1:         raise HTTPException(status_code=400, detail="TARGET_USER_REQUIRED")
+           
+           # Generate unique code (retry on unique constraint)
+    2:     for _ in range(5):
+    2:         code = generate_invite_code()
+    4:         invite = GroupInvite(
+    2:             id=uuid.uuid4(),
+    2:             group_id=group_uuid,
+    2:             created_by=current_user.account_id,
+    2:             type=request.type,
+    2:             code=code,
+    2:             expires_at=expires_at,
+    2:             max_uses=request.max_uses,
+    2:             uses=0,
+    2:             target_user_id=request.target_user_id
+               )
+    2:         db.add(invite)
+    2:         try:
+    2:             db.commit()
+    1:             db.refresh(invite)
+    1:             return {
+    1:                 "id": str(invite.id),
+    1:                 "code": invite.code,
+    1:                 "type": invite.type,
+    1:                 "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+    1:                 "max_uses": invite.max_uses,
+    1:                 "uses": invite.uses,
+    1:                 "target_user_id": invite.target_user_id
+                   }
+    1:         except IntegrityError:
+    1:             db.rollback()
+    1:             continue
+>>>>>>         except Exception as e:
+>>>>>>             db.rollback()
+>>>>>>             logger.error(f"Error creating invite: {e}")
+>>>>>>             raise HTTPException(status_code=500, detail="Failed to create invite")
+           
+>>>>>>     raise HTTPException(status_code=500, detail="Failed to generate unique invite code")
+       
+       
+    2: @router.get("/{group_id}/invites")
+    4: async def list_invites(
+    2:     group_id: str,
+    4:     db: Session = Depends(get_db),
+    4:     current_user: User = Depends(get_current_user)
+       ):
+           """List active invites. Owner/admin only."""
+    1:     if not GROUPS_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="Groups feature is not enabled")
+           
+    1:     try:
+    1:         group_uuid = uuid.UUID(group_id)
+>>>>>>     except ValueError:
+>>>>>>         raise HTTPException(status_code=400, detail="Invalid group ID format")
+           
+           # Check permissions
+    1:     check_group_role(db, group_uuid, current_user.account_id, ['owner', 'admin'])
+           
+           # Get active invites (not expired, not maxed out)
+    1:     now = datetime.utcnow()
+    2:     active_invites = db.query(GroupInvite).filter(
+    1:         GroupInvite.group_id == group_uuid,
+    1:         GroupInvite.expires_at > now,
+    1:         or_(GroupInvite.max_uses.is_(None), GroupInvite.uses < GroupInvite.max_uses)
+           ).all()
+           
+    1:     active_invites_payload = []
+    2:     for invite in active_invites:
+    2:         active_invites_payload.append({
+    1:             "id": str(invite.id),
+    1:             "code": invite.code,
+    1:             "type": invite.type,
+    1:             "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+    1:             "max_uses": invite.max_uses,
+    1:             "uses": invite.uses,
+    1:             "created_at": invite.created_at.isoformat() if invite.created_at else None,
+    1:             "target_user_id": invite.target_user_id
+               })
+           
+    1:     return {"invites": active_invites_payload}
+       
+       
+    2: @router.delete("/{group_id}/invites/{invite_id}")
+    4: async def revoke_invite(
+    2:     group_id: str,
+    2:     invite_id: str,
+    4:     db: Session = Depends(get_db),
+    4:     current_user: User = Depends(get_current_user)
+       ):
+           """Revoke invite. Owner/admin only."""
+>>>>>>     if not GROUPS_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="Groups feature is not enabled")
+           
+>>>>>>     try:
+>>>>>>         group_uuid = uuid.UUID(group_id)
+>>>>>>         invite_uuid = uuid.UUID(invite_id)
+>>>>>>     except ValueError:
+>>>>>>         raise HTTPException(status_code=400, detail="Invalid ID format")
+           
+           # Check permissions
+>>>>>>     check_group_role(db, group_uuid, current_user.account_id, ['owner', 'admin'])
+           
+>>>>>>     invite = db.query(GroupInvite).filter(
+>>>>>>         GroupInvite.id == invite_uuid,
+>>>>>>         GroupInvite.group_id == group_uuid
+           ).first()
+           
+>>>>>>     if not invite:
+>>>>>>         raise HTTPException(status_code=404, detail="Invite not found")
+           
+>>>>>>     db.delete(invite)
+           
+>>>>>>     try:
+>>>>>>         db.commit()
+>>>>>>         return {"message": "Invite revoked"}
+>>>>>>     except Exception as e:
+>>>>>>         db.rollback()
+>>>>>>         logger.error(f"Error revoking invite: {e}")
+>>>>>>         raise HTTPException(status_code=500, detail="Failed to revoke invite")
+       
+       
+    2: @router.post("/join")
+    4: async def join_group(
+    2:     request: JoinGroupRequest,
+    4:     db: Session = Depends(get_db),
+    4:     current_user: User = Depends(get_current_user)
+       ):
+           """Join group via invite code. Validates capacity, bans. Triggers rekey."""
+    8:     if not GROUPS_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="Groups feature is not enabled")
+           
+           # Find invite
+   16:     invite = db.query(GroupInvite).filter(
+    8:         GroupInvite.code == request.code
+           ).with_for_update().first()
+    8:     if not invite:
+>>>>>>         raise HTTPException(status_code=404, detail="Invalid invite code")
+           
+           # Check expiry
+    8:     if invite.expires_at and invite.expires_at < datetime.utcnow():
+    1:         raise HTTPException(status_code=410, detail="GONE")
+           
+           # Check max uses
+    7:     if invite.max_uses and invite.uses >= invite.max_uses:
+    1:         raise HTTPException(status_code=409, detail="MAX_USES")
+       
+    6:     if invite.type == "direct" and invite.target_user_id != current_user.account_id:
+    1:         raise HTTPException(status_code=403, detail="NOT_INVITED")
+           
+    5:     group = db.query(Group).filter(Group.id == invite.group_id).with_for_update().first()
+    5:     if not group:
+>>>>>>         raise HTTPException(status_code=404, detail="Group not found")
+           
+    5:     if group.is_closed:
+    1:         raise HTTPException(status_code=403, detail="Group is closed")
+           
+           # Check if banned
+    8:     ban = db.query(GroupBan).filter(
+    4:         GroupBan.group_id == group.id,
+    4:         GroupBan.user_id == current_user.account_id
+           ).first()
+           
+    4:     if ban:
+    1:         raise HTTPException(status_code=403, detail="BANNED")
+           
+           # Check if already a member
+    6:     existing = db.query(GroupParticipant).filter(
+    3:         GroupParticipant.group_id == group.id,
+    3:         GroupParticipant.user_id == current_user.account_id
+           ).first()
+           
+    3:     if existing:
+    1:         if existing.is_banned:
+>>>>>>             raise HTTPException(status_code=403, detail="BANNED")
+    1:         return {"message": "Already a member", "group_id": str(group.id)}
+           
+           # Check capacity
+    4:     participant_count = db.query(GroupParticipant).filter(
+    2:         GroupParticipant.group_id == group.id,
+    2:         GroupParticipant.is_banned == False
+           ).count()
+           
+    2:     if participant_count >= GROUP_MAX_PARTICIPANTS:
+    1:         raise HTTPException(status_code=409, detail="GROUP_FULL")
+           
+           # Add participant
+    1:     if not existing:
+    2:         participant = GroupParticipant(
+    1:             group_id=group.id,
+    1:             user_id=current_user.account_id,
+    1:             role='member',
+    1:             joined_at=datetime.utcnow()
+               )
+    1:         db.add(participant)
+           
+           # Increment invite uses
+    1:     invite.uses += 1
+           
+           # Increment epoch (triggers rekey)
+    1:     increment_group_epoch(db, group)
+           
+    1:     try:
+    1:         db.commit()
+    1:         return {
+    1:             "message": "Joined group",
+    1:             "group_id": str(group.id),
+    1:             "new_epoch": group.group_epoch
+               }
+>>>>>>     except Exception as e:
+>>>>>>         db.rollback()
+>>>>>>         logger.error(f"Error joining group: {e}")
+>>>>>>         raise HTTPException(status_code=500, detail="Failed to join group")

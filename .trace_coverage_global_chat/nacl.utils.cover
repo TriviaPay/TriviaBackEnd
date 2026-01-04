@@ -1,0 +1,88 @@
+       # Copyright 2013 Donald Stufft and individual contributors
+       #
+       # Licensed under the Apache License, Version 2.0 (the "License");
+       # you may not use this file except in compliance with the License.
+       # You may obtain a copy of the License at
+       #
+       # http://www.apache.org/licenses/LICENSE-2.0
+       #
+       # Unless required by applicable law or agreed to in writing, software
+       # distributed under the License is distributed on an "AS IS" BASIS,
+       # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       # See the License for the specific language governing permissions and
+       # limitations under the License.
+       
+       
+    1: import os
+    1: from typing import SupportsBytes, Type, TypeVar
+       
+    1: import nacl.bindings
+    1: from nacl import encoding
+       
+    1: _EncryptedMessage = TypeVar("_EncryptedMessage", bound="EncryptedMessage")
+       
+       
+    2: class EncryptedMessage(bytes):
+    1:     """
+           A bytes subclass that holds a messaged that has been encrypted by a
+           :class:`SecretBox`.
+           """
+       
+    1:     _nonce: bytes
+    1:     _ciphertext: bytes
+       
+    1:     @classmethod
+    1:     def _from_parts(
+    1:         cls: Type[_EncryptedMessage],
+    1:         nonce: bytes,
+    1:         ciphertext: bytes,
+    1:         combined: bytes,
+    1:     ) -> _EncryptedMessage:
+>>>>>>         obj = cls(combined)
+>>>>>>         obj._nonce = nonce
+>>>>>>         obj._ciphertext = ciphertext
+>>>>>>         return obj
+       
+    1:     @property
+    1:     def nonce(self) -> bytes:
+               """
+               The nonce used during the encryption of the :class:`EncryptedMessage`.
+               """
+>>>>>>         return self._nonce
+       
+    1:     @property
+    1:     def ciphertext(self) -> bytes:
+               """
+               The ciphertext contained within the :class:`EncryptedMessage`.
+               """
+>>>>>>         return self._ciphertext
+       
+       
+    2: class StringFixer:
+    1:     def __str__(self: SupportsBytes) -> str:
+>>>>>>         return str(self.__bytes__())
+       
+       
+    1: def bytes_as_string(bytes_in: bytes) -> str:
+>>>>>>     return bytes_in.decode("ascii")
+       
+       
+    1: def random(size: int = 32) -> bytes:
+>>>>>>     return os.urandom(size)
+       
+       
+    2: def randombytes_deterministic(
+    2:     size: int, seed: bytes, encoder: encoding.Encoder = encoding.RawEncoder
+    1: ) -> bytes:
+           """
+           Returns ``size`` number of deterministically generated pseudorandom bytes
+           from a seed
+       
+           :param size: int
+           :param seed: bytes
+           :param encoder: The encoder class used to encode the produced bytes
+           :rtype: bytes
+           """
+>>>>>>     raw_data = nacl.bindings.randombytes_buf_deterministic(size, seed)
+       
+>>>>>>     return encoder.encode(raw_data)

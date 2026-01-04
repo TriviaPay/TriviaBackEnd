@@ -1,0 +1,174 @@
+    1: from __future__ import annotations
+       
+    1: import enum
+    1: import sys
+    1: from dataclasses import dataclass
+    1: from typing import Any, Generic, TypeVar, overload
+    1: from weakref import WeakKeyDictionary
+       
+    1: from ._core._eventloop import get_asynclib
+       
+    1: if sys.version_info >= (3, 8):
+    1:     from typing import Literal
+       else:
+>>>>>>     from typing_extensions import Literal
+       
+    1: T = TypeVar("T")
+    1: D = TypeVar("D")
+       
+       
+    1: async def checkpoint() -> None:
+           """
+           Check for cancellation and allow the scheduler to switch to another task.
+       
+           Equivalent to (but more efficient than)::
+       
+               await checkpoint_if_cancelled()
+               await cancel_shielded_checkpoint()
+       
+       
+           .. versionadded:: 3.0
+       
+           """
+  117:     await get_asynclib().checkpoint()
+       
+       
+    1: async def checkpoint_if_cancelled() -> None:
+           """
+           Enter a checkpoint if the enclosing cancel scope has been cancelled.
+       
+           This does not allow the scheduler to switch to a different task.
+       
+           .. versionadded:: 3.0
+       
+           """
+>>>>>>     await get_asynclib().checkpoint_if_cancelled()
+       
+       
+    1: async def cancel_shielded_checkpoint() -> None:
+           """
+           Allow the scheduler to switch to another task but without checking for cancellation.
+       
+           Equivalent to (but potentially more efficient than)::
+       
+               with CancelScope(shield=True):
+                   await checkpoint()
+       
+       
+           .. versionadded:: 3.0
+       
+           """
+>>>>>>     await get_asynclib().cancel_shielded_checkpoint()
+       
+       
+    1: def current_token() -> object:
+           """Return a backend specific token object that can be used to get back to the event loop."""
+  212:     return get_asynclib().current_token()
+       
+       
+    1: _run_vars: WeakKeyDictionary[Any, dict[str, Any]] = WeakKeyDictionary()
+    1: _token_wrappers: dict[Any, _TokenWrapper] = {}
+       
+       
+    2: @dataclass(frozen=True)
+    1: class _TokenWrapper:
+    1:     __slots__ = "_token", "__weakref__"
+    1:     _token: object
+       
+       
+    2: class _NoValueSet(enum.Enum):
+    1:     NO_VALUE_SET = enum.auto()
+       
+       
+    2: class RunvarToken(Generic[T]):
+    1:     __slots__ = "_var", "_value", "_redeemed"
+       
+    1:     def __init__(self, var: RunVar[T], value: T | Literal[_NoValueSet.NO_VALUE_SET]):
+   52:         self._var = var
+   52:         self._value: T | Literal[_NoValueSet.NO_VALUE_SET] = value
+   52:         self._redeemed = False
+       
+       
+    2: class RunVar(Generic[T]):
+    1:     """
+           Like a :class:`~contextvars.ContextVar`, except scoped to the running event loop.
+           """
+       
+    1:     __slots__ = "_name", "_default"
+       
+    1:     NO_VALUE_SET: Literal[_NoValueSet.NO_VALUE_SET] = _NoValueSet.NO_VALUE_SET
+       
+    1:     _token_wrappers: set[_TokenWrapper] = set()
+       
+    1:     def __init__(
+               self,
+               name: str,
+    1:         default: T | Literal[_NoValueSet.NO_VALUE_SET] = NO_VALUE_SET,
+           ):
+    6:         self._name = name
+    6:         self._default = default
+       
+    1:     @property
+    1:     def _current_vars(self) -> dict[str, T]:
+  212:         token = current_token()
+               while True:
+  212:             try:
+  212:                 return _run_vars[token]
+   13:             except TypeError:
+                       # Happens when token isn't weak referable (TrioToken).
+                       # This workaround does mean that some memory will leak on Trio until the problem
+                       # is fixed on their end.
+>>>>>>                 token = _TokenWrapper(token)
+>>>>>>                 self._token_wrappers.add(token)
+   13:             except KeyError:
+   13:                 run_vars = _run_vars[token] = {}
+   13:                 return run_vars
+       
+    1:     @overload
+    1:     def get(self, default: D) -> T | D:
+>>>>>>         ...
+       
+    1:     @overload
+    1:     def get(self) -> T:
+>>>>>>         ...
+       
+    1:     def get(
+    1:         self, default: D | Literal[_NoValueSet.NO_VALUE_SET] = NO_VALUE_SET
+           ) -> T | D:
+  160:         try:
+  160:             return self._current_vars[self._name]
+   39:         except KeyError:
+   39:             if default is not RunVar.NO_VALUE_SET:
+   13:                 return default
+   26:             elif self._default is not RunVar.NO_VALUE_SET:
+>>>>>>                 return self._default
+       
+   52:         raise LookupError(
+   26:             f'Run variable "{self._name}" has no value and no default set'
+               )
+       
+    1:     def set(self, value: T) -> RunvarToken[T]:
+   52:         current_vars = self._current_vars
+   52:         token = RunvarToken(self, current_vars.get(self._name, RunVar.NO_VALUE_SET))
+   52:         current_vars[self._name] = value
+   52:         return token
+       
+    1:     def reset(self, token: RunvarToken[T]) -> None:
+>>>>>>         if token._var is not self:
+>>>>>>             raise ValueError("This token does not belong to this RunVar")
+       
+>>>>>>         if token._redeemed:
+>>>>>>             raise ValueError("This token has already been used")
+       
+>>>>>>         if token._value is _NoValueSet.NO_VALUE_SET:
+>>>>>>             try:
+>>>>>>                 del self._current_vars[self._name]
+>>>>>>             except KeyError:
+>>>>>>                 pass
+               else:
+>>>>>>             self._current_vars[self._name] = token._value
+       
+>>>>>>         token._redeemed = True
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<RunVar name={self._name!r}>"

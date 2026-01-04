@@ -15,6 +15,7 @@ from config import (
     GROUPS_ENABLED,
     GROUP_MESSAGE_RATE_PER_USER_PER_MIN,
     GROUP_BURST_PER_5S,
+    GROUP_BURST_WINDOW_SECONDS,
     E2EE_DM_MAX_MESSAGE_SIZE
 )
 from utils.redis_pubsub import publish_group_message
@@ -166,10 +167,13 @@ async def send_message(
     ).first()
     
     if not sender_device:
+        revoked_device = db.query(E2EEDevice).filter(
+            E2EEDevice.user_id == current_user.account_id,
+            E2EEDevice.status == "revoked"
+        ).first()
+        if revoked_device:
+            raise HTTPException(status_code=409, detail="DEVICE_REVOKED", headers={"X-Error-Code": "DEVICE_REVOKED"})
         raise HTTPException(status_code=400, detail="No active device found")
-    
-    if sender_device.status == "revoked":
-        raise HTTPException(status_code=409, detail="DEVICE_REVOKED", headers={"X-Error-Code": "DEVICE_REVOKED"})
     
     # Check for duplicate (idempotency)
     if request.client_message_id:
@@ -196,12 +200,14 @@ async def send_message(
     
     # Rate limiting - per user per minute
     one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
-    recent_messages = db.query(GroupMessage).filter(
+    recent_messages = db.query(GroupMessage.id).filter(
         GroupMessage.sender_user_id == current_user.account_id,
         GroupMessage.created_at >= one_minute_ago
-    ).count()
+    ).order_by(GroupMessage.created_at.desc()).limit(
+        GROUP_MESSAGE_RATE_PER_USER_PER_MIN
+    ).all()
     
-    if recent_messages >= GROUP_MESSAGE_RATE_PER_USER_PER_MIN:
+    if len(recent_messages) >= GROUP_MESSAGE_RATE_PER_USER_PER_MIN:
         oldest_message = db.query(GroupMessage).filter(
             GroupMessage.sender_user_id == current_user.account_id,
             GroupMessage.created_at >= one_minute_ago
@@ -224,14 +230,16 @@ async def send_message(
         )
     
     # Rate limiting - per group burst
-    burst_window_start = datetime.utcnow() - timedelta(seconds=GROUP_BURST_PER_5S)
-    recent_group_messages = db.query(GroupMessage).filter(
+    burst_window_start = datetime.utcnow() - timedelta(seconds=GROUP_BURST_WINDOW_SECONDS)
+    recent_group_messages = db.query(GroupMessage.id).filter(
         GroupMessage.sender_user_id == current_user.account_id,
         GroupMessage.group_id == group_uuid,
         GroupMessage.created_at >= burst_window_start
-    ).count()
+    ).order_by(GroupMessage.created_at.desc()).limit(
+        GROUP_BURST_PER_5S
+    ).all()
     
-    if recent_group_messages >= GROUP_BURST_PER_5S:
+    if len(recent_group_messages) >= GROUP_BURST_PER_5S:
         oldest_burst = db.query(GroupMessage).filter(
             GroupMessage.sender_user_id == current_user.account_id,
             GroupMessage.group_id == group_uuid,
@@ -239,10 +247,10 @@ async def send_message(
         ).order_by(GroupMessage.created_at.asc()).first()
         
         if oldest_burst:
-            time_until_reset = (oldest_burst.created_at + timedelta(seconds=GROUP_BURST_PER_5S) - datetime.utcnow()).total_seconds()
+            time_until_reset = (oldest_burst.created_at + timedelta(seconds=GROUP_BURST_WINDOW_SECONDS) - datetime.utcnow()).total_seconds()
             retry_in_seconds = max(1, int(time_until_reset))
         else:
-            retry_in_seconds = GROUP_BURST_PER_5S
+            retry_in_seconds = GROUP_BURST_WINDOW_SECONDS
         
         raise HTTPException(
             status_code=429,
@@ -289,8 +297,7 @@ async def send_message(
     group.updated_at = datetime.utcnow()
     
     try:
-        db.commit()
-        db.refresh(new_message)
+        db.flush()
         
         # Get all participants (for delivery records and publishing)
         participants = db.query(GroupParticipant).filter(
@@ -299,15 +306,16 @@ async def send_message(
         ).all()
         
         # Create delivery records for all participants except sender
-        for p in participants:
-            if p.user_id != current_user.account_id:
-                delivery = GroupDelivery(
-                    message_id=new_message.id,
-                    recipient_user_id=p.user_id
-                )
-                db.add(delivery)
+        deliveries = [
+            GroupDelivery(message_id=new_message.id, recipient_user_id=p.user_id)
+            for p in participants
+            if p.user_id != current_user.account_id
+        ]
+        if deliveries:
+            db.bulk_save_objects(deliveries)
         
         db.commit()
+        db.refresh(new_message)
         
         # Publish to Redis
         event = {
@@ -465,4 +473,3 @@ async def delete_message(
     # Soft delete: In a real implementation, you'd add a deleted_at column
     # For now, we'll just return success (client-side filtering)
     return {"message": "Message deleted"}
-

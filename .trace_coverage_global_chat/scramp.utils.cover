@@ -1,0 +1,34 @@
+    1: import hmac as hmaca
+    1: from base64 import b64decode, b64encode
+       
+       
+    1: def hmac(hf, key, msg):
+ 4100:     return hmaca.new(key, msg=msg, digestmod=hf).digest()
+       
+       
+    1: def h(hf, msg):
+    1:     return hf(msg).digest()
+       
+       
+    1: def hi(hf, password, salt, iterations):
+    1:     u = ui = hmac(hf, password, salt + b"\x00\x00\x00\x01")
+ 4096:     for i in range(iterations - 1):
+ 4095:         ui = hmac(hf, password, ui)
+ 4095:         u = xor(u, ui)
+    1:     return u
+       
+       
+    1: def xor(bytes1, bytes2):
+139264:     return bytes(a ^ b for a, b in zip(bytes1, bytes2))
+       
+       
+    1: def b64enc(binary):
+    3:     return b64encode(binary).decode("utf8")
+       
+       
+    1: def b64dec(string):
+    1:     return b64decode(string)
+       
+       
+    1: def uenc(string):
+    2:     return string.encode("utf-8")

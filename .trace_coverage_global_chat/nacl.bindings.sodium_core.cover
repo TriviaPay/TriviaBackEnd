@@ -1,0 +1,33 @@
+       # Copyright 2013 Donald Stufft and individual contributors
+       #
+       # Licensed under the Apache License, Version 2.0 (the "License");
+       # you may not use this file except in compliance with the License.
+       # You may obtain a copy of the License at
+       #
+       # http://www.apache.org/licenses/LICENSE-2.0
+       #
+       # Unless required by applicable law or agreed to in writing, software
+       # distributed under the License is distributed on an "AS IS" BASIS,
+       # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       # See the License for the specific language governing permissions and
+       # limitations under the License.
+       
+    1: from nacl import exceptions as exc
+    1: from nacl._sodium import ffi, lib
+    1: from nacl.exceptions import ensure
+       
+       
+    1: def _sodium_init() -> None:
+    2:     ensure(
+    1:         lib.sodium_init() != -1,
+    1:         "Could not initialize sodium",
+    1:         raising=exc.RuntimeError,
+           )
+       
+       
+    1: def sodium_init() -> None:
+           """
+           Initializes sodium, picking the best implementations available for this
+           machine.
+           """
+    1:     ffi.init_once(_sodium_init, "libsodium")

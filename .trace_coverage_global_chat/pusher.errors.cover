@@ -1,0 +1,27 @@
+       # -*- coding: utf-8 -*-
+       
+    1: from __future__ import (
+           print_function,
+           unicode_literals,
+           absolute_import,
+           division)
+       
+       
+    2: class PusherError(Exception):
+    1:     pass
+       
+       
+    2: class PusherBadRequest(PusherError):
+    1:     pass
+       
+       
+    2: class PusherBadAuth(PusherError):
+    1:     pass
+       
+       
+    2: class PusherForbidden(PusherError):
+    1:     pass
+       
+       
+    2: class PusherBadStatus(PusherError):
+    1:     pass

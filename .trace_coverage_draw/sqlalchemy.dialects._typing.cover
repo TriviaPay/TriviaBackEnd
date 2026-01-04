@@ -1,0 +1,25 @@
+       # dialects/_typing.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+    1: from __future__ import annotations
+       
+    1: from typing import Any
+    1: from typing import Iterable
+    1: from typing import Mapping
+    1: from typing import Optional
+    1: from typing import Union
+       
+    1: from ..sql._typing import _DDLColumnArgument
+    1: from ..sql.elements import DQLDMLClauseElement
+    1: from ..sql.schema import ColumnCollectionConstraint
+    1: from ..sql.schema import Index
+       
+       
+    1: _OnConflictConstraintT = Union[str, ColumnCollectionConstraint, Index, None]
+    1: _OnConflictIndexElementsT = Optional[Iterable[_DDLColumnArgument]]
+    1: _OnConflictIndexWhereT = Optional[DQLDMLClauseElement]
+    1: _OnConflictSetT = Optional[Mapping[Any, Any]]
+    1: _OnConflictWhereT = Union[DQLDMLClauseElement, str, None]

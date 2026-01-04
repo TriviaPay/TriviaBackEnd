@@ -6,7 +6,7 @@ from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, Integer, cast, select
 from db import SessionLocal
-from rewards_logic import reset_daily_eligibility_flags, reset_weekly_daily_rewards
+from rewards_logic import reset_daily_eligibility_flags, reset_weekly_daily_rewards, calculate_prize_pool
 # Legacy cleanup_unused_questions removed - TriviaQuestionsDaily and Trivia tables deleted
 # Legacy perform_draw removed - use mode-specific draws instead
 from models import (
@@ -32,7 +32,12 @@ from utils.silver_mode_service import (
     calculate_total_pool_silver_mode, distribute_rewards_to_winners_silver_mode,
     cleanup_old_leaderboard_silver_mode
 )
-from utils.trivia_mode_service import get_mode_config, get_active_draw_date, get_date_range_for_query
+from utils.trivia_mode_service import (
+    get_mode_config,
+    get_active_draw_date,
+    get_date_range_for_query,
+    get_today_in_app_timezone
+)
 from utils.mode_draw_service import register_mode_handler, execute_mode_draw
 
 # Configure logging
@@ -136,6 +141,21 @@ def get_draw_time():
         "timezone": os.environ.get("DRAW_TIMEZONE", "US/Eastern")  # Default EST
     }
 
+def run_daily_company_revenue_update() -> None:
+    """
+    Update monthly company revenue using the current subscriber count.
+    Scheduled once per day to avoid per-request writes.
+    """
+    db = SessionLocal()
+    try:
+        draw_date = get_today_in_app_timezone()
+        calculate_prize_pool(db, draw_date, commit_revenue=True)
+        logger.info(f"Company revenue updated for {draw_date}")
+    except Exception as e:
+        logger.error(f"Error updating company revenue: {str(e)}")
+    finally:
+        db.close()
+
 def schedule_draws():
     """
     Schedule the daily draw and question reset.
@@ -173,6 +193,15 @@ def schedule_draws():
         run_weekly_rewards_reset,
         CronTrigger(day_of_week="mon", hour=0, minute=0, timezone=timezone),
         id="weekly_rewards_reset",
+        replace_existing=True,
+        misfire_grace_time=3600
+    )
+
+    # Schedule daily revenue update (once per day)
+    scheduler.add_job(
+        run_daily_company_revenue_update,
+        CronTrigger(hour=hour, minute=minute, timezone=timezone),
+        id="daily_company_revenue_update",
         replace_existing=True,
         misfire_grace_time=3600
     )

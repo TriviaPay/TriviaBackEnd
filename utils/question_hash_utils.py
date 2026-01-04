@@ -2,6 +2,7 @@
 Utility functions for question hash generation and duplicate checking.
 """
 import hashlib
+from typing import Iterable, Set
 from sqlalchemy.orm import Session
 from models import TriviaQuestionsFreeMode, TriviaQuestionsBronzeMode, TriviaQuestionsSilverMode
 # Trivia model removed - legacy table deleted
@@ -97,3 +98,32 @@ def check_duplicate_in_mode(db: Session, question_hash: str, mode_id: str) -> bo
     
     return False
 
+
+def get_existing_hashes_in_mode(
+    db: Session,
+    hashes: Iterable[str],
+    mode_id: str,
+    chunk_size: int = 1000
+) -> Set[str]:
+    """
+    Fetch existing question_hash values for a mode in batches.
+    """
+    hashes = [h for h in hashes if h]
+    if not hashes:
+        return set()
+
+    if mode_id == 'free_mode':
+        model = TriviaQuestionsFreeMode
+    elif mode_id == 'bronze':
+        model = TriviaQuestionsBronzeMode
+    elif mode_id == 'silver':
+        model = TriviaQuestionsSilverMode
+    else:
+        return set()
+
+    existing: Set[str] = set()
+    for i in range(0, len(hashes), chunk_size):
+        batch = hashes[i:i + chunk_size]
+        rows = db.query(model.question_hash).filter(model.question_hash.in_(batch)).all()
+        existing.update(row[0] for row in rows)
+    return existing

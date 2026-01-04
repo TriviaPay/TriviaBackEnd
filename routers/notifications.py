@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, and_, or_, case
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
+import os
 
 from db import get_db
 from models import User, Notification
@@ -13,6 +14,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
+NOTIFICATIONS_DEBUG = os.getenv("NOTIFICATIONS_DEBUG", "false").lower() == "true"
 
 
 # ======== Models ========
@@ -48,6 +50,7 @@ async def get_notifications(
     limit: int = Query(50, ge=1, le=100, description="Maximum number of notifications to return"),
     offset: int = Query(0, ge=0, description="Number of notifications to skip"),
     unread_only: bool = Query(False, description="If true, only return unread notifications"),
+    cursor: Optional[str] = Query(None, description="Cursor for keyset pagination: ISO8601|id"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -56,45 +59,55 @@ async def get_notifications(
     
     Supports pagination and filtering by read status.
     """
-    logger.info(f"🔍 Querying notifications for account_id={current_user.account_id} (descope_user_id={current_user.descope_user_id}, type: {type(current_user.account_id)})")
-    query = db.query(Notification).filter(
+    if NOTIFICATIONS_DEBUG:
+        logger.info(f"🔍 Querying notifications for account_id={current_user.account_id} (descope_user_id={current_user.descope_user_id}, type: {type(current_user.account_id)})")
+
+    base_query = db.query(Notification).filter(
         Notification.user_id == current_user.account_id
     )
-    
-    # Debug: Check if any notifications exist for this user
-    total_before_filter = db.query(func.count(Notification.id)).filter(
-        Notification.user_id == current_user.account_id
-    ).scalar() or 0
-    logger.info(f"🔍 Total notifications for account_id {current_user.account_id} before filters: {total_before_filter}")
-    
-    # Also check what notifications exist in general
-    all_notifications_count = db.query(func.count(Notification.id)).scalar() or 0
-    logger.info(f"🔍 Total notifications in database: {all_notifications_count}")
-    
-    # Sample a few notifications to see what user_ids they have
-    sample_notifications = db.query(Notification.user_id).distinct().limit(5).all()
-    logger.info(f"🔍 Sample user_ids in notifications table: {[n[0] for n in sample_notifications]}")
-    
-    # Check if current user has ANY notifications (any type)
-    any_notifications = db.query(func.count(Notification.id)).filter(
-        Notification.user_id == current_user.account_id
-    ).scalar() or 0
-    logger.info(f"🔍 Current user (account_id={current_user.account_id}) has {any_notifications} total notifications of any type")
-    
+
     if unread_only:
-        query = query.filter(Notification.read == False)
+        base_query = base_query.filter(Notification.read == False)
     
-    # Get total count before pagination
-    total = query.count()
+    total_expr = func.count(Notification.id)
+    if unread_only:
+        total_expr = func.sum(case((Notification.read == False, 1), else_=0))
+
+    counts = db.query(
+        total_expr,
+        func.sum(case((Notification.read == False, 1), else_=0))
+    ).filter(
+        Notification.user_id == current_user.account_id
+    ).first()
+    total = counts[0] if counts and counts[0] is not None else 0
+    unread_count = counts[1] if counts and counts[1] is not None else 0
     
-    # Get unread count
-    unread_count = db.query(func.count(Notification.id)).filter(
-        Notification.user_id == current_user.account_id,
-        Notification.read == False
-    ).scalar() or 0
-    
+    query = base_query
+    if cursor:
+        try:
+            cursor_parts = cursor.split("|")
+            cursor_time = datetime.fromisoformat(cursor_parts[0])
+            cursor_id = int(cursor_parts[1]) if len(cursor_parts) > 1 else None
+            if cursor_id is not None:
+                query = query.filter(
+                    or_(
+                        Notification.created_at < cursor_time,
+                        and_(
+                            Notification.created_at == cursor_time,
+                            Notification.id < cursor_id
+                        )
+                    )
+                )
+            else:
+                query = query.filter(Notification.created_at < cursor_time)
+        except Exception:
+            pass
+
     # Apply pagination and ordering
-    notifications = query.order_by(desc(Notification.created_at)).offset(offset).limit(limit).all()
+    if cursor:
+        notifications = query.order_by(desc(Notification.created_at), desc(Notification.id)).limit(limit).all()
+    else:
+        notifications = query.order_by(desc(Notification.created_at), desc(Notification.id)).offset(offset).limit(limit).all()
     
     return NotificationListResponse(
         notifications=[
@@ -146,12 +159,12 @@ async def mark_notifications_read(
         raise HTTPException(status_code=400, detail="notification_ids cannot be empty")
     
     # Verify all notifications belong to the current user
-    notifications = db.query(Notification).filter(
+    notifications_count = db.query(func.count(Notification.id)).filter(
         Notification.id.in_(request.notification_ids),
         Notification.user_id == current_user.account_id
-    ).all()
-    
-    if len(notifications) != len(request.notification_ids):
+    ).scalar() or 0
+
+    if notifications_count != len(request.notification_ids):
         raise HTTPException(
             status_code=404,
             detail="One or more notifications not found or not owned by user"
@@ -159,16 +172,19 @@ async def mark_notifications_read(
     
     # Mark as read
     now = datetime.utcnow()
-    for notification in notifications:
-        if not notification.read:
-            notification.read = True
-            notification.read_at = now
-    
+    updated_count = db.query(Notification).filter(
+        Notification.id.in_(request.notification_ids),
+        Notification.user_id == current_user.account_id,
+        Notification.read == False
+    ).update(
+        {Notification.read: True, Notification.read_at: now},
+        synchronize_session=False
+    )
     db.commit()
     
     return {
-        "message": f"Marked {len(notifications)} notification(s) as read",
-        "marked_count": len(notifications)
+        "message": f"Marked {updated_count} notification(s) as read",
+        "marked_count": updated_count
     }
 
 
@@ -291,4 +307,3 @@ async def create_test_notification(
         read_at=notification.read_at.isoformat() if notification.read_at else None,
         created_at=notification.created_at.isoformat()
     )
-

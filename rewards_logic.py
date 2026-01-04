@@ -102,7 +102,7 @@ def calculate_prize_distribution(total_prize: float, winner_count: int) -> List[
     
     return [round_down(prize, 2) for prize in prizes]
 
-def calculate_prize_pool(db: Session, draw_date: date) -> float:
+def calculate_prize_pool(db: Session, draw_date: date, commit_revenue: bool = True) -> float:
     """
     Calculate the prize pool for a specific date.
     
@@ -127,26 +127,27 @@ def calculate_prize_pool(db: Session, draw_date: date) -> float:
         monthly_prize_pool = subscriber_count * 3.526
         company_revenue_amount = subscriber_count * 0.774
         
-        # Add to company revenue table
-        month_start = date(draw_date.year, draw_date.month, 1)
-        existing_revenue = db.query(CompanyRevenue).filter(
-            CompanyRevenue.month_start_date == month_start
-        ).first()
-        
-        if existing_revenue:
-            existing_revenue.revenue_amount += company_revenue_amount
-            existing_revenue.subscriber_count = subscriber_count
-            existing_revenue.updated_at = datetime.utcnow()
-        else:
-            new_revenue = CompanyRevenue(
-                month_start_date=month_start,
-                revenue_amount=company_revenue_amount,
-                subscriber_count=subscriber_count
-            )
-            db.add(new_revenue)
-        
-        db.commit()
-        logger.info(f"Added ${company_revenue_amount} to company revenue for {month_start}")
+        if commit_revenue:
+            # Add to company revenue table
+            month_start = date(draw_date.year, draw_date.month, 1)
+            existing_revenue = db.query(CompanyRevenue).filter(
+                CompanyRevenue.month_start_date == month_start
+            ).first()
+            
+            if existing_revenue:
+                existing_revenue.revenue_amount = company_revenue_amount
+                existing_revenue.subscriber_count = subscriber_count
+                existing_revenue.updated_at = datetime.utcnow()
+            else:
+                new_revenue = CompanyRevenue(
+                    month_start_date=month_start,
+                    revenue_amount=company_revenue_amount,
+                    subscriber_count=subscriber_count
+                )
+                db.add(new_revenue)
+            
+            db.commit()
+            logger.info(f"Added ${company_revenue_amount} to company revenue for {month_start}")
     
     # Get days in current month
     days_in_month = calendar.monthrange(draw_date.year, draw_date.month)[1]

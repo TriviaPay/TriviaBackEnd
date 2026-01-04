@@ -1,0 +1,585 @@
+       # sql/annotation.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """The :class:`.Annotated` class and related routines; creates hash-equivalent
+       copies of SQL constructs which contain context-specific markers and
+       associations.
+       
+       Note that the :class:`.Annotated` concept as implemented in this module is not
+       related in any way to the pep-593 concept of "Annotated".
+       
+       
+       """
+       
+    1: from __future__ import annotations
+       
+    1: import typing
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import cast
+    1: from typing import Dict
+    1: from typing import FrozenSet
+    1: from typing import Mapping
+    1: from typing import Optional
+    1: from typing import overload
+    1: from typing import Sequence
+    1: from typing import Tuple
+    1: from typing import Type
+    1: from typing import TYPE_CHECKING
+    1: from typing import TypeVar
+       
+    1: from . import operators
+    1: from .cache_key import HasCacheKey
+    1: from .visitors import anon_map
+    1: from .visitors import ExternallyTraversible
+    1: from .visitors import InternalTraversal
+    1: from .. import util
+    1: from ..util.typing import Literal
+    1: from ..util.typing import Self
+       
+    1: if TYPE_CHECKING:
+>>>>>>     from .base import _EntityNamespace
+>>>>>>     from .visitors import _TraverseInternalsType
+       
+    1: _AnnotationDict = Mapping[str, Any]
+       
+    1: EMPTY_ANNOTATIONS: util.immutabledict[str, Any] = util.EMPTY_DICT
+       
+       
+    2: class SupportsAnnotations(ExternallyTraversible):
+    1:     __slots__ = ()
+       
+    1:     _annotations: util.immutabledict[str, Any] = EMPTY_ANNOTATIONS
+       
+    1:     proxy_set: util.generic_fn_descriptor[FrozenSet[Any]]
+       
+    1:     _is_immutable: bool
+       
+    1:     def _annotate(self, values: _AnnotationDict) -> Self:
+>>>>>>         raise NotImplementedError()
+       
+    1:     @overload
+    1:     def _deannotate(
+               self,
+               values: Literal[None] = ...,
+               clone: bool = ...,
+>>>>>>     ) -> Self: ...
+       
+    1:     @overload
+    1:     def _deannotate(
+               self,
+               values: Sequence[str] = ...,
+               clone: bool = ...,
+>>>>>>     ) -> SupportsAnnotations: ...
+       
+    1:     def _deannotate(
+               self,
+               values: Optional[Sequence[str]] = None,
+               clone: bool = False,
+           ) -> SupportsAnnotations:
+>>>>>>         raise NotImplementedError()
+       
+    1:     @util.memoized_property
+    1:     def _annotations_cache_key(self) -> Tuple[Any, ...]:
+    1:         anon_map_ = anon_map()
+       
+    1:         return self._gen_annotations_cache_key(anon_map_)
+       
+    1:     def _gen_annotations_cache_key(
+               self, anon_map: anon_map
+           ) -> Tuple[Any, ...]:
+    1:         return (
+    1:             "_annotations",
+    6:             tuple(
+    3:                 (
+    3:                     key,
+                           (
+    3:                         value._gen_cache_key(anon_map, [])
+    3:                         if isinstance(value, HasCacheKey)
+>>>>>>                         else value
+                           ),
+                       )
+    9:                 for key, value in [
+    3:                     (key, self._annotations[key])
+    4:                     for key in sorted(self._annotations)
+                       ]
+                   ),
+               )
+       
+       
+    2: class SupportsWrappingAnnotations(SupportsAnnotations):
+    1:     __slots__ = ()
+       
+    1:     _constructor: Callable[..., SupportsWrappingAnnotations]
+       
+    1:     if TYPE_CHECKING:
+       
+>>>>>>         @util.ro_non_memoized_property
+>>>>>>         def entity_namespace(self) -> _EntityNamespace: ...
+       
+    1:     def _annotate(self, values: _AnnotationDict) -> Self:
+               """return a copy of this ClauseElement with annotations
+               updated by the given dictionary.
+       
+               """
+  617:         return Annotated._as_annotated_instance(self, values)  # type: ignore
+       
+    1:     def _with_annotations(self, values: _AnnotationDict) -> Self:
+               """return a copy of this ClauseElement with annotations
+               replaced by the given dictionary.
+       
+               """
+>>>>>>         return Annotated._as_annotated_instance(self, values)  # type: ignore
+       
+    1:     @overload
+    1:     def _deannotate(
+               self,
+               values: Literal[None] = ...,
+               clone: bool = ...,
+>>>>>>     ) -> Self: ...
+       
+    1:     @overload
+    1:     def _deannotate(
+               self,
+               values: Sequence[str] = ...,
+               clone: bool = ...,
+>>>>>>     ) -> SupportsAnnotations: ...
+       
+    1:     def _deannotate(
+               self,
+               values: Optional[Sequence[str]] = None,
+               clone: bool = False,
+           ) -> SupportsAnnotations:
+               """return a copy of this :class:`_expression.ClauseElement`
+               with annotations
+               removed.
+       
+               :param values: optional tuple of individual values
+                to remove.
+       
+               """
+ 2102:         if clone:
+  455:             s = self._clone()
+  455:             return s
+               else:
+ 1647:             return self
+       
+       
+    2: class SupportsCloneAnnotations(SupportsWrappingAnnotations):
+           # SupportsCloneAnnotations extends from SupportsWrappingAnnotations
+           # to support the structure of having the base ClauseElement
+           # be a subclass of SupportsWrappingAnnotations.  Any ClauseElement
+           # subclass that wants to extend from SupportsCloneAnnotations
+           # will inherently also be subclassing SupportsWrappingAnnotations, so
+           # make that specific here.
+       
+    1:     if not typing.TYPE_CHECKING:
+    1:         __slots__ = ()
+       
+    1:     _clone_annotations_traverse_internals: _TraverseInternalsType = [
+    1:         ("_annotations", InternalTraversal.dp_annotations_key)
+           ]
+       
+    1:     def _annotate(self, values: _AnnotationDict) -> Self:
+               """return a copy of this ClauseElement with annotations
+               updated by the given dictionary.
+       
+               """
+>>>>>>         new = self._clone()
+>>>>>>         new._annotations = new._annotations.union(values)
+>>>>>>         new.__dict__.pop("_annotations_cache_key", None)
+>>>>>>         new.__dict__.pop("_generate_cache_key", None)
+>>>>>>         return new
+       
+    1:     def _with_annotations(self, values: _AnnotationDict) -> Self:
+               """return a copy of this ClauseElement with annotations
+               replaced by the given dictionary.
+       
+               """
+>>>>>>         new = self._clone()
+>>>>>>         new._annotations = util.immutabledict(values)
+>>>>>>         new.__dict__.pop("_annotations_cache_key", None)
+>>>>>>         new.__dict__.pop("_generate_cache_key", None)
+>>>>>>         return new
+       
+    1:     @overload
+    1:     def _deannotate(
+               self,
+               values: Literal[None] = ...,
+               clone: bool = ...,
+>>>>>>     ) -> Self: ...
+       
+    1:     @overload
+    1:     def _deannotate(
+               self,
+               values: Sequence[str] = ...,
+               clone: bool = ...,
+>>>>>>     ) -> SupportsAnnotations: ...
+       
+    1:     def _deannotate(
+               self,
+               values: Optional[Sequence[str]] = None,
+               clone: bool = False,
+           ) -> SupportsAnnotations:
+               """return a copy of this :class:`_expression.ClauseElement`
+               with annotations
+               removed.
+       
+               :param values: optional tuple of individual values
+                to remove.
+       
+               """
+>>>>>>         if clone or self._annotations:
+                   # clone is used when we are also copying
+                   # the expression for a deep deannotation
+>>>>>>             new = self._clone()
+>>>>>>             new._annotations = util.immutabledict()
+>>>>>>             new.__dict__.pop("_annotations_cache_key", None)
+>>>>>>             return new
+               else:
+>>>>>>             return self
+       
+       
+    2: class Annotated(SupportsAnnotations):
+    1:     """clones a SupportsAnnotations and applies an 'annotations' dictionary.
+       
+           Unlike regular clones, this clone also mimics __hash__() and
+           __eq__() of the original element so that it takes its place
+           in hashed collections.
+       
+           A reference to the original element is maintained, for the important
+           reason of keeping its hash value current.  When GC'ed, the
+           hash value may be reused, causing conflicts.
+       
+           .. note::  The rationale for Annotated producing a brand new class,
+              rather than placing the functionality directly within ClauseElement,
+              is **performance**.  The __hash__() method is absent on plain
+              ClauseElement which leads to significantly reduced function call
+              overhead, as the use of sets and dictionaries against ClauseElement
+              objects is prevalent, but most are not "annotated".
+       
+           """
+       
+    1:     _is_column_operators = False
+       
+    1:     @classmethod
+    1:     def _as_annotated_instance(
+               cls, element: SupportsWrappingAnnotations, values: _AnnotationDict
+           ) -> Annotated:
+  617:         try:
+  617:             cls = annotated_classes[element.__class__]
+>>>>>>         except KeyError:
+>>>>>>             cls = _new_annotation_type(element.__class__, cls)
+  617:         return cls(element, values)
+       
+    1:     _annotations: util.immutabledict[str, Any]
+    1:     __element: SupportsWrappingAnnotations
+    1:     _hash: int
+       
+    1:     def __new__(cls: Type[Self], *args: Any) -> Self:
+  909:         return object.__new__(cls)
+       
+    1:     def __init__(
+               self, element: SupportsWrappingAnnotations, values: _AnnotationDict
+           ):
+  617:         self.__dict__ = element.__dict__.copy()
+  617:         self.__dict__.pop("_annotations_cache_key", None)
+  617:         self.__dict__.pop("_generate_cache_key", None)
+  617:         self.__element = element
+  617:         self._annotations = util.immutabledict(values)
+  617:         self._hash = hash(element)
+       
+    1:     def _annotate(self, values: _AnnotationDict) -> Self:
+  292:         _values = self._annotations.union(values)
+  292:         new = self._with_annotations(_values)
+  292:         return new
+       
+    1:     def _with_annotations(self, values: _AnnotationDict) -> Self:
+  292:         clone = self.__class__.__new__(self.__class__)
+  292:         clone.__dict__ = self.__dict__.copy()
+  292:         clone.__dict__.pop("_annotations_cache_key", None)
+  292:         clone.__dict__.pop("_generate_cache_key", None)
+  292:         clone._annotations = util.immutabledict(values)
+  292:         return clone
+       
+    1:     @overload
+    1:     def _deannotate(
+               self,
+               values: Literal[None] = ...,
+               clone: bool = ...,
+>>>>>>     ) -> Self: ...
+       
+    1:     @overload
+    1:     def _deannotate(
+               self,
+               values: Sequence[str] = ...,
+               clone: bool = ...,
+>>>>>>     ) -> Annotated: ...
+       
+    1:     def _deannotate(
+               self,
+               values: Optional[Sequence[str]] = None,
+               clone: bool = True,
+           ) -> SupportsAnnotations:
+  761:         if values is None:
+  761:             return self.__element
+               else:
+>>>>>>             return self._with_annotations(
+>>>>>>                 util.immutabledict(
+>>>>>>                     {
+>>>>>>                         key: value
+>>>>>>                         for key, value in self._annotations.items()
+>>>>>>                         if key not in values
+                           }
+                       )
+                   )
+       
+    1:     if not typing.TYPE_CHECKING:
+               # manually proxy some methods that need extra attention
+    1:         def _compiler_dispatch(self, visitor: Any, **kw: Any) -> Any:
+>>>>>>             return self.__element.__class__._compiler_dispatch(
+>>>>>>                 self, visitor, **kw
+                   )
+       
+    1:         @property
+    1:         def _constructor(self):
+>>>>>>             return self.__element._constructor
+       
+    1:     def _clone(self, **kw: Any) -> Self:
+  344:         clone = self.__element._clone(**kw)
+  344:         if clone is self.__element:
+                   # detect immutable, don't change anything
+  344:             return self
+               else:
+                   # update the clone with any changes that have occurred
+                   # to this object's __dict__.
+>>>>>>             clone.__dict__.update(self.__dict__)
+>>>>>>             return self.__class__(clone, self._annotations)
+       
+    1:     def __reduce__(self) -> Tuple[Type[Annotated], Tuple[Any, ...]]:
+>>>>>>         return self.__class__, (self.__element, self._annotations)
+       
+    1:     def __hash__(self) -> int:
+ 2806:         return self._hash
+       
+    1:     def __eq__(self, other: Any) -> bool:
+  387:         if self._is_column_operators:
+  387:             return self.__element.__class__.__eq__(self, other)
+               else:
+>>>>>>             return hash(other) == hash(self)
+       
+    1:     @util.ro_non_memoized_property
+    1:     def entity_namespace(self) -> _EntityNamespace:
+>>>>>>         if "entity_namespace" in self._annotations:
+>>>>>>             return cast(
+>>>>>>                 SupportsWrappingAnnotations,
+>>>>>>                 self._annotations["entity_namespace"],
+                   ).entity_namespace
+               else:
+>>>>>>             return self.__element.entity_namespace
+       
+       
+       # hard-generate Annotated subclasses.  this technique
+       # is used instead of on-the-fly types (i.e. type.__new__())
+       # so that the resulting objects are pickleable; additionally, other
+       # decisions can be made up front about the type of object being annotated
+       # just once per class rather than per-instance.
+    1: annotated_classes: Dict[Type[SupportsWrappingAnnotations], Type[Annotated]] = (
+    1:     {}
+       )
+       
+    1: _SA = TypeVar("_SA", bound="SupportsAnnotations")
+       
+       
+    1: def _safe_annotate(to_annotate: _SA, annotations: _AnnotationDict) -> _SA:
+>>>>>>     try:
+>>>>>>         _annotate = to_annotate._annotate
+>>>>>>     except AttributeError:
+               # skip objects that don't actually have an `_annotate`
+               # attribute, namely QueryableAttribute inside of a join
+               # condition
+>>>>>>         return to_annotate
+           else:
+>>>>>>         return _annotate(annotations)
+       
+       
+    2: def _deep_annotate(
+           element: _SA,
+           annotations: _AnnotationDict,
+           exclude: Optional[Sequence[SupportsAnnotations]] = None,
+           *,
+    1:     detect_subquery_cols: bool = False,
+    1:     ind_cols_on_fromclause: bool = False,
+           annotate_callable: Optional[
+               Callable[[SupportsAnnotations, _AnnotationDict], SupportsAnnotations]
+    1:     ] = None,
+       ) -> _SA:
+           """Deep copy the given ClauseElement, annotating each element
+           with the given annotations dictionary.
+       
+           Elements within the exclude collection will be cloned but not annotated.
+       
+           """
+       
+           # annotated objects hack the __hash__() method so if we want to
+           # uniquely process them we have to use id()
+       
+>>>>>>     cloned_ids: Dict[int, SupportsAnnotations] = {}
+       
+>>>>>>     def clone(elem: SupportsAnnotations, **kw: Any) -> SupportsAnnotations:
+               # ind_cols_on_fromclause means make sure an AnnotatedFromClause
+               # has its own .c collection independent of that which its proxying.
+               # this is used specifically by orm.LoaderCriteriaOption to break
+               # a reference cycle that it's otherwise prone to building,
+               # see test_relationship_criteria->
+               # test_loader_criteria_subquery_w_same_entity.  logic here was
+               # changed for #8796 and made explicit; previously it occurred
+               # by accident
+       
+>>>>>>         kw["detect_subquery_cols"] = detect_subquery_cols
+>>>>>>         id_ = id(elem)
+       
+>>>>>>         if id_ in cloned_ids:
+>>>>>>             return cloned_ids[id_]
+       
+>>>>>>         if (
+>>>>>>             exclude
+>>>>>>             and hasattr(elem, "proxy_set")
+>>>>>>             and elem.proxy_set.intersection(exclude)
+               ):
+>>>>>>             newelem = elem._clone(clone=clone, **kw)
+>>>>>>         elif annotations != elem._annotations:
+>>>>>>             if detect_subquery_cols and elem._is_immutable:
+>>>>>>                 to_annotate = elem._clone(clone=clone, **kw)
+                   else:
+>>>>>>                 to_annotate = elem
+>>>>>>             if annotate_callable:
+>>>>>>                 newelem = annotate_callable(to_annotate, annotations)
+                   else:
+>>>>>>                 newelem = _safe_annotate(to_annotate, annotations)
+               else:
+>>>>>>             newelem = elem
+       
+>>>>>>         newelem._copy_internals(
+>>>>>>             clone=clone, ind_cols_on_fromclause=ind_cols_on_fromclause
+               )
+       
+>>>>>>         cloned_ids[id_] = newelem
+>>>>>>         return newelem
+       
+>>>>>>     if element is not None:
+>>>>>>         element = cast(_SA, clone(element))
+>>>>>>     clone = None  # type: ignore  # remove gc cycles
+>>>>>>     return element
+       
+       
+    1: @overload
+    1: def _deep_deannotate(
+           element: Literal[None], values: Optional[Sequence[str]] = None
+>>>>>> ) -> Literal[None]: ...
+       
+       
+    1: @overload
+    1: def _deep_deannotate(
+           element: _SA, values: Optional[Sequence[str]] = None
+>>>>>> ) -> _SA: ...
+       
+       
+    1: def _deep_deannotate(
+           element: Optional[_SA], values: Optional[Sequence[str]] = None
+       ) -> Optional[_SA]:
+           """Deep copy the given element, removing annotations."""
+       
+  179:     cloned: Dict[Any, SupportsAnnotations] = {}
+       
+  179:     def clone(elem: SupportsAnnotations, **kw: Any) -> SupportsAnnotations:
+               key: Any
+  537:         if values:
+  414:             key = id(elem)
+               else:
+  123:             key = elem
+       
+  537:         if key not in cloned:
+  537:             newelem = elem._deannotate(values=values, clone=True)
+  537:             newelem._copy_internals(clone=clone)
+  537:             cloned[key] = newelem
+  537:             return newelem
+               else:
+>>>>>>             return cloned[key]
+       
+  179:     if element is not None:
+  179:         element = cast(_SA, clone(element))
+  179:     clone = None  # type: ignore  # remove gc cycles
+  179:     return element
+       
+       
+    1: def _shallow_annotate(element: _SA, annotations: _AnnotationDict) -> _SA:
+           """Annotate the given ClauseElement and copy its internals so that
+           internal objects refer to the new annotated object.
+       
+           Basically used to apply a "don't traverse" annotation to a
+           selectable, without digging throughout the whole
+           structure wasting time.
+           """
+>>>>>>     element = element._annotate(annotations)
+>>>>>>     element._copy_internals()
+>>>>>>     return element
+       
+       
+    1: def _new_annotation_type(
+           cls: Type[SupportsWrappingAnnotations], base_cls: Type[Annotated]
+       ) -> Type[Annotated]:
+           """Generates a new class that subclasses Annotated and proxies a given
+           element type.
+       
+           """
+  172:     if issubclass(cls, Annotated):
+   38:         return cls
+  134:     elif cls in annotated_classes:
+   38:         return annotated_classes[cls]
+       
+  328:     for super_ in cls.__mro__:
+               # check if an Annotated subclass more specific than
+               # the given base_cls is already registered, such
+               # as AnnotatedColumnElement.
+  325:         if super_ in annotated_classes:
+   93:             base_cls = annotated_classes[super_]
+   93:             break
+       
+  192:     annotated_classes[cls] = anno_cls = cast(
+   96:         Type[Annotated],
+   96:         type("Annotated%s" % cls.__name__, (base_cls, cls), {}),
+           )
+   96:     globals()["Annotated%s" % cls.__name__] = anno_cls
+       
+   96:     if "_traverse_internals" in cls.__dict__:
+   80:         anno_cls._traverse_internals = list(cls._traverse_internals) + [
+   40:             ("_annotations", InternalTraversal.dp_annotations_key)
+               ]
+   56:     elif cls.__dict__.get("inherit_cache", False):
+   92:         anno_cls._traverse_internals = list(cls._traverse_internals) + [
+   46:             ("_annotations", InternalTraversal.dp_annotations_key)
+               ]
+       
+           # some classes include this even if they have traverse_internals
+           # e.g. BindParameter, add it if present.
+   96:     if cls.__dict__.get("inherit_cache", False):
+   48:         anno_cls.inherit_cache = True  # type: ignore
+   48:     elif "inherit_cache" in cls.__dict__:
+>>>>>>         anno_cls.inherit_cache = cls.__dict__["inherit_cache"]  # type: ignore
+       
+   96:     anno_cls._is_column_operators = issubclass(cls, operators.ColumnOperators)
+       
+   96:     return anno_cls
+       
+       
+    1: def _prepare_annotations(
+           target_hierarchy: Type[SupportsWrappingAnnotations],
+           base_cls: Type[Annotated],
+       ) -> None:
+  175:     for cls in util.walk_subclasses(target_hierarchy):
+  172:         _new_annotation_type(cls, base_cls)

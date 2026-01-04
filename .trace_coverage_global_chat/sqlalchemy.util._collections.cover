@@ -1,0 +1,715 @@
+       # util/_collections.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       # mypy: allow-untyped-defs, allow-untyped-calls
+       
+    1: """Collection classes and helpers."""
+    1: from __future__ import annotations
+       
+    1: import operator
+    1: import threading
+    1: import types
+    1: import typing
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import cast
+    1: from typing import Dict
+    1: from typing import FrozenSet
+    1: from typing import Generic
+    1: from typing import Iterable
+    1: from typing import Iterator
+    1: from typing import List
+    1: from typing import Mapping
+    1: from typing import NoReturn
+    1: from typing import Optional
+    1: from typing import overload
+    1: from typing import Sequence
+    1: from typing import Set
+    1: from typing import Tuple
+    1: from typing import TypeVar
+    1: from typing import Union
+    1: from typing import ValuesView
+    1: import weakref
+       
+    1: from ._has_cy import HAS_CYEXTENSION
+    1: from .typing import is_non_string_iterable
+    1: from .typing import Literal
+    1: from .typing import Protocol
+       
+    1: if typing.TYPE_CHECKING or not HAS_CYEXTENSION:
+>>>>>>     from ._py_collections import immutabledict as immutabledict
+>>>>>>     from ._py_collections import IdentitySet as IdentitySet
+>>>>>>     from ._py_collections import ReadOnlyContainer as ReadOnlyContainer
+>>>>>>     from ._py_collections import ImmutableDictBase as ImmutableDictBase
+>>>>>>     from ._py_collections import OrderedSet as OrderedSet
+>>>>>>     from ._py_collections import unique_list as unique_list
+       else:
+    1:     from sqlalchemy.cyextension.immutabledict import (
+               ReadOnlyContainer as ReadOnlyContainer,
+           )
+    1:     from sqlalchemy.cyextension.immutabledict import (
+               ImmutableDictBase as ImmutableDictBase,
+           )
+    1:     from sqlalchemy.cyextension.immutabledict import (
+               immutabledict as immutabledict,
+           )
+    1:     from sqlalchemy.cyextension.collections import IdentitySet as IdentitySet
+    1:     from sqlalchemy.cyextension.collections import OrderedSet as OrderedSet
+    1:     from sqlalchemy.cyextension.collections import (  # noqa
+               unique_list as unique_list,
+           )
+       
+       
+    1: _T = TypeVar("_T", bound=Any)
+    1: _KT = TypeVar("_KT", bound=Any)
+    1: _VT = TypeVar("_VT", bound=Any)
+    1: _T_co = TypeVar("_T_co", covariant=True)
+       
+    1: EMPTY_SET: FrozenSet[Any] = frozenset()
+    1: NONE_SET: FrozenSet[Any] = frozenset([None])
+       
+       
+    1: def merge_lists_w_ordering(a: List[Any], b: List[Any]) -> List[Any]:
+           """merge two lists, maintaining ordering as much as possible.
+       
+           this is to reconcile vars(cls) with cls.__annotations__.
+       
+           Example::
+       
+               >>> a = ['__tablename__', 'id', 'x', 'created_at']
+               >>> b = ['id', 'name', 'data', 'y', 'created_at']
+               >>> merge_lists_w_ordering(a, b)
+               ['__tablename__', 'id', 'name', 'data', 'y', 'x', 'created_at']
+       
+           This is not necessarily the ordering that things had on the class,
+           in this case the class is::
+       
+               class User(Base):
+                   __tablename__ = "users"
+       
+                   id: Mapped[int] = mapped_column(primary_key=True)
+                   name: Mapped[str]
+                   data: Mapped[Optional[str]]
+                   x = Column(Integer)
+                   y: Mapped[int]
+                   created_at: Mapped[datetime.datetime] = mapped_column()
+       
+           But things are *mostly* ordered.
+       
+           The algorithm could also be done by creating a partial ordering for
+           all items in both lists and then using topological_sort(), but that
+           is too much overhead.
+       
+           Background on how I came up with this is at:
+           https://gist.github.com/zzzeek/89de958cf0803d148e74861bd682ebae
+       
+           """
+  135:     overlap = set(a).intersection(b)
+       
+  135:     result = []
+       
+  135:     current, other = iter(a), iter(b)
+       
+           while True:
+ 2258:         for element in current:
+ 2123:             if element in overlap:
+>>>>>>                 overlap.discard(element)
+>>>>>>                 other, current = current, other
+>>>>>>                 break
+       
+ 2123:             result.append(element)
+               else:
+  135:             result.extend(other)
+  135:             break
+       
+  135:     return result
+       
+       
+    1: def coerce_to_immutabledict(d: Mapping[_KT, _VT]) -> immutabledict[_KT, _VT]:
+   91:     if not d:
+>>>>>>         return EMPTY_DICT
+   91:     elif isinstance(d, immutabledict):
+   26:         return d
+           else:
+   65:         return immutabledict(d)
+       
+       
+    1: EMPTY_DICT: immutabledict[Any, Any] = immutabledict()
+       
+       
+    2: class FacadeDict(ImmutableDictBase[_KT, _VT]):
+    1:     """A dictionary that is not publicly mutable."""
+       
+    1:     def __new__(cls, *args: Any) -> FacadeDict[Any, Any]:
+    2:         new = ImmutableDictBase.__new__(cls)
+    2:         return new
+       
+    1:     def copy(self) -> NoReturn:
+>>>>>>         raise NotImplementedError(
+>>>>>>             "an immutabledict shouldn't need to be copied.  use dict(d) "
+                   "if you need a mutable dictionary."
+               )
+       
+    1:     def __reduce__(self) -> Any:
+>>>>>>         return FacadeDict, (dict(self),)
+       
+    1:     def _insert_item(self, key: _KT, value: _VT) -> None:
+               """insert an item into the dictionary directly."""
+   56:         dict.__setitem__(self, key, value)
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return "FacadeDict(%s)" % dict.__repr__(self)
+       
+       
+    1: _DT = TypeVar("_DT", bound=Any)
+       
+    1: _F = TypeVar("_F", bound=Any)
+       
+       
+    2: class Properties(Generic[_T]):
+    1:     """Provide a __getattr__/__setattr__ interface over a dict."""
+       
+    1:     __slots__ = ("_data",)
+       
+    1:     _data: Dict[str, _T]
+       
+    1:     def __init__(self, data: Dict[str, _T]):
+   53:         object.__setattr__(self, "_data", data)
+       
+    1:     def __len__(self) -> int:
+>>>>>>         return len(self._data)
+       
+    1:     def __iter__(self) -> Iterator[_T]:
+   82:         return iter(list(self._data.values()))
+       
+    1:     def __dir__(self) -> List[str]:
+>>>>>>         return dir(super()) + [str(k) for k in self._data.keys()]
+       
+    1:     def __add__(self, other: Properties[_F]) -> List[Union[_T, _F]]:
+>>>>>>         return list(self) + list(other)
+       
+    1:     def __setitem__(self, key: str, obj: _T) -> None:
+>>>>>>         self._data[key] = obj
+       
+    1:     def __getitem__(self, key: str) -> _T:
+    1:         return self._data[key]
+       
+    1:     def __delitem__(self, key: str) -> None:
+>>>>>>         del self._data[key]
+       
+    1:     def __setattr__(self, key: str, obj: _T) -> None:
+>>>>>>         self._data[key] = obj
+       
+    1:     def __getstate__(self) -> Dict[str, Any]:
+>>>>>>         return {"_data": self._data}
+       
+    1:     def __setstate__(self, state: Dict[str, Any]) -> None:
+>>>>>>         object.__setattr__(self, "_data", state["_data"])
+       
+    1:     def __getattr__(self, key: str) -> _T:
+>>>>>>         try:
+>>>>>>             return self._data[key]
+>>>>>>         except KeyError:
+>>>>>>             raise AttributeError(key)
+       
+    1:     def __contains__(self, key: str) -> bool:
+    1:         return key in self._data
+       
+    1:     def as_readonly(self) -> ReadOnlyProperties[_T]:
+               """Return an immutable proxy for this :class:`.Properties`."""
+       
+>>>>>>         return ReadOnlyProperties(self._data)
+       
+    1:     def update(self, value: Dict[str, _T]) -> None:
+>>>>>>         self._data.update(value)
+       
+    1:     @overload
+    1:     def get(self, key: str) -> Optional[_T]: ...
+       
+    1:     @overload
+    1:     def get(self, key: str, default: Union[_DT, _T]) -> Union[_DT, _T]: ...
+       
+    1:     def get(
+               self, key: str, default: Optional[Union[_DT, _T]] = None
+           ) -> Optional[Union[_T, _DT]]:
+>>>>>>         if key in self:
+>>>>>>             return self[key]
+               else:
+>>>>>>             return default
+       
+    1:     def keys(self) -> List[str]:
+   24:         return list(self._data)
+       
+    1:     def values(self) -> List[_T]:
+>>>>>>         return list(self._data.values())
+       
+    1:     def items(self) -> List[Tuple[str, _T]]:
+>>>>>>         return list(self._data.items())
+       
+    1:     def has_key(self, key: str) -> bool:
+>>>>>>         return key in self._data
+       
+    1:     def clear(self) -> None:
+>>>>>>         self._data.clear()
+       
+       
+    2: class OrderedProperties(Properties[_T]):
+    1:     """Provide a __getattr__/__setattr__ interface with an OrderedDict
+           as backing store."""
+       
+    1:     __slots__ = ()
+       
+    1:     def __init__(self):
+>>>>>>         Properties.__init__(self, OrderedDict())
+       
+       
+    2: class ReadOnlyProperties(ReadOnlyContainer, Properties[_T]):
+    1:     """Provide immutable dict/object attribute to an underlying dictionary."""
+       
+    1:     __slots__ = ()
+       
+       
+    1: def _ordered_dictionary_sort(d, key=None):
+           """Sort an OrderedDict in-place."""
+       
+>>>>>>     items = [(k, d[k]) for k in sorted(d, key=key)]
+       
+>>>>>>     d.clear()
+       
+>>>>>>     d.update(items)
+       
+       
+    1: OrderedDict = dict
+    1: sort_dictionary = _ordered_dictionary_sort
+       
+       
+    2: class WeakSequence(Sequence[_T]):
+    1:     def __init__(self, __elements: Sequence[_T] = ()):
+               # adapted from weakref.WeakKeyDictionary, prevent reference
+               # cycles in the collection itself
+  183:         def _remove(item, selfref=weakref.ref(self)):
+>>>>>>             self = selfref()
+>>>>>>             if self is not None:
+>>>>>>                 self._storage.remove(item)
+       
+  183:         self._remove = _remove
+  687:         self._storage = [
+  321:             weakref.ref(element, _remove) for element in __elements
+               ]
+       
+    1:     def append(self, item):
+>>>>>>         self._storage.append(weakref.ref(item, self._remove))
+       
+    1:     def __len__(self):
+>>>>>>         return len(self._storage)
+       
+    1:     def __iter__(self):
+10035:         return (
+ 9378:             obj for obj in (ref() for ref in self._storage) if obj is not None
+               )
+       
+    1:     def __getitem__(self, index):
+>>>>>>         try:
+>>>>>>             obj = self._storage[index]
+>>>>>>         except KeyError:
+>>>>>>             raise IndexError("Index %s out of range" % index)
+               else:
+>>>>>>             return obj()
+       
+       
+    2: class OrderedIdentitySet(IdentitySet):
+    1:     def __init__(self, iterable: Optional[Iterable[Any]] = None):
+>>>>>>         IdentitySet.__init__(self)
+>>>>>>         self._members = OrderedDict()
+>>>>>>         if iterable:
+>>>>>>             for o in iterable:
+>>>>>>                 self.add(o)
+       
+       
+    2: class PopulateDict(Dict[_KT, _VT]):
+    1:     """A dict which populates missing values via a creation function.
+       
+           Note the creation function takes a key, unlike
+           collections.defaultdict.
+       
+           """
+       
+    1:     def __init__(self, creator: Callable[[_KT], _VT]):
+  319:         self.creator = creator
+       
+    1:     def __missing__(self, key: Any) -> Any:
+  828:         self[key] = val = self.creator(key)
+  828:         return val
+       
+       
+    2: class WeakPopulateDict(Dict[_KT, _VT]):
+    1:     """Like PopulateDict, but assumes a self + a method and does not create
+           a reference cycle.
+       
+           """
+       
+    1:     def __init__(self, creator_method: types.MethodType):
+    7:         self.creator = creator_method.__func__
+    7:         weakself = creator_method.__self__
+    7:         self.weakself = weakref.ref(weakself)
+       
+    1:     def __missing__(self, key: Any) -> Any:
+  270:         self[key] = val = self.creator(self.weakself(), key)
+  270:         return val
+       
+       
+       # Define collections that are capable of storing
+       # ColumnElement objects as hashable keys/elements.
+       # At this point, these are mostly historical, things
+       # used to be more complicated.
+    1: column_set = set
+    1: column_dict = dict
+    1: ordered_column_set = OrderedSet
+       
+       
+    2: class UniqueAppender(Generic[_T]):
+    1:     """Appends items to a collection ensuring uniqueness.
+       
+           Additional appends() of the same object are ignored.  Membership is
+           determined by identity (``is a``) not equality (``==``).
+           """
+       
+    1:     __slots__ = "data", "_data_appender", "_unique"
+       
+    1:     data: Union[Iterable[_T], Set[_T], List[_T]]
+    1:     _data_appender: Callable[[_T], None]
+    1:     _unique: Dict[int, Literal[True]]
+       
+    1:     def __init__(
+               self,
+               data: Union[Iterable[_T], Set[_T], List[_T]],
+               via: Optional[str] = None,
+           ):
+>>>>>>         self.data = data
+>>>>>>         self._unique = {}
+>>>>>>         if via:
+>>>>>>             self._data_appender = getattr(data, via)
+>>>>>>         elif hasattr(data, "append"):
+>>>>>>             self._data_appender = cast("List[_T]", data).append
+>>>>>>         elif hasattr(data, "add"):
+>>>>>>             self._data_appender = cast("Set[_T]", data).add
+       
+    1:     def append(self, item: _T) -> None:
+>>>>>>         id_ = id(item)
+>>>>>>         if id_ not in self._unique:
+>>>>>>             self._data_appender(item)
+>>>>>>             self._unique[id_] = True
+       
+    1:     def __iter__(self) -> Iterator[_T]:
+>>>>>>         return iter(self.data)
+       
+       
+    1: def coerce_generator_arg(arg: Any) -> List[Any]:
+   55:     if len(arg) == 1 and isinstance(arg[0], types.GeneratorType):
+>>>>>>         return list(arg[0])
+           else:
+   55:         return cast("List[Any]", arg)
+       
+       
+    1: def to_list(x: Any, default: Optional[List[Any]] = None) -> List[Any]:
+  557:     if x is None:
+   45:         return default  # type: ignore
+  512:     if not is_non_string_iterable(x):
+  428:         return [x]
+   84:     elif isinstance(x, list):
+   12:         return x
+           else:
+   72:         return list(x)
+       
+       
+    1: def has_intersection(set_, iterable):
+           r"""return True if any items of set\_ are present in iterable.
+       
+           Goes through special effort to ensure __hash__ is not called
+           on items in iterable that don't support it.
+       
+           """
+           # TODO: optimize, write in C, etc.
+>>>>>>     return bool(set_.intersection([i for i in iterable if i.__hash__]))
+       
+       
+    1: def to_set(x):
+>>>>>>     if x is None:
+>>>>>>         return set()
+>>>>>>     if not isinstance(x, set):
+>>>>>>         return set(to_list(x))
+           else:
+>>>>>>         return x
+       
+       
+    1: def to_column_set(x: Any) -> Set[Any]:
+  194:     if x is None:
+  141:         return column_set()
+   53:     if not isinstance(x, column_set):
+   12:         return column_set(to_list(x))
+           else:
+   41:         return x
+       
+       
+    1: def update_copy(d, _new=None, **kw):
+           """Copy the given dict and update with the given values."""
+       
+    5:     d = d.copy()
+    5:     if _new:
+    5:         d.update(_new)
+    5:     d.update(**kw)
+    5:     return d
+       
+       
+    1: def flatten_iterator(x: Iterable[_T]) -> Iterator[_T]:
+           """Given an iterator of which further sub-elements may also be
+           iterators, flatten the sub-elements into a single iterator.
+       
+           """
+           elem: _T
+   13:     for elem in x:
+    6:         if not isinstance(elem, str) and hasattr(elem, "__iter__"):
+>>>>>>             yield from flatten_iterator(elem)
+               else:
+    6:             yield elem
+       
+       
+    2: class LRUCache(typing.MutableMapping[_KT, _VT]):
+    1:     """Dictionary with 'squishy' removal of least
+           recently used items.
+       
+           Note that either get() or [] should be used here, but
+           generally its not safe to do an "in" check first as the dictionary
+           can change subsequent to that call.
+       
+           """
+       
+    1:     __slots__ = (
+               "capacity",
+               "threshold",
+               "size_alert",
+               "_data",
+               "_counter",
+               "_mutex",
+           )
+       
+    1:     capacity: int
+    1:     threshold: float
+    1:     size_alert: Optional[Callable[[LRUCache[_KT, _VT]], None]]
+       
+    1:     def __init__(
+               self,
+               capacity: int = 100,
+               threshold: float = 0.5,
+               size_alert: Optional[Callable[..., None]] = None,
+           ):
+    8:         self.capacity = capacity
+    8:         self.threshold = threshold
+    8:         self.size_alert = size_alert
+    8:         self._counter = 0
+    8:         self._mutex = threading.Lock()
+    8:         self._data: Dict[_KT, Tuple[_KT, _VT, List[int]]] = {}
+       
+    1:     def _inc_counter(self):
+ 1416:         self._counter += 1
+ 1416:         return self._counter
+       
+    1:     @overload
+    1:     def get(self, key: _KT) -> Optional[_VT]: ...
+       
+    1:     @overload
+    1:     def get(self, key: _KT, default: Union[_VT, _T]) -> Union[_VT, _T]: ...
+       
+    1:     def get(
+               self, key: _KT, default: Optional[Union[_VT, _T]] = None
+           ) -> Optional[Union[_VT, _T]]:
+ 1416:         item = self._data.get(key)
+ 1416:         if item is not None:
+ 1335:             item[2][0] = self._inc_counter()
+ 1335:             return item[1]
+               else:
+   81:             return default
+       
+    1:     def __getitem__(self, key: _KT) -> _VT:
+>>>>>>         item = self._data[key]
+>>>>>>         item[2][0] = self._inc_counter()
+>>>>>>         return item[1]
+       
+    1:     def __iter__(self) -> Iterator[_KT]:
+>>>>>>         return iter(self._data)
+       
+    1:     def __len__(self) -> int:
+   81:         return len(self._data)
+       
+    1:     def values(self) -> ValuesView[_VT]:
+>>>>>>         return typing.ValuesView({k: i[1] for k, i in self._data.items()})
+       
+    1:     def __setitem__(self, key: _KT, value: _VT) -> None:
+   81:         self._data[key] = (key, value, [self._inc_counter()])
+   81:         self._manage_size()
+       
+    1:     def __delitem__(self, __v: _KT) -> None:
+>>>>>>         del self._data[__v]
+       
+    1:     @property
+    1:     def size_threshold(self) -> float:
+>>>>>>         return self.capacity + self.capacity * self.threshold
+       
+    1:     def _manage_size(self) -> None:
+   81:         if not self._mutex.acquire(False):
+>>>>>>             return
+   81:         try:
+   81:             size_alert = bool(self.size_alert)
+   81:             while len(self) > self.capacity + self.capacity * self.threshold:
+>>>>>>                 if size_alert:
+>>>>>>                     size_alert = False
+>>>>>>                     self.size_alert(self)  # type: ignore
+>>>>>>                 by_counter = sorted(
+>>>>>>                     self._data.values(),
+>>>>>>                     key=operator.itemgetter(2),
+>>>>>>                     reverse=True,
+                       )
+>>>>>>                 for item in by_counter[self.capacity :]:
+>>>>>>                     try:
+>>>>>>                         del self._data[item[0]]
+>>>>>>                     except KeyError:
+                               # deleted elsewhere; skip
+>>>>>>                         continue
+               finally:
+   81:             self._mutex.release()
+       
+       
+    2: class _CreateFuncType(Protocol[_T_co]):
+    1:     def __call__(self) -> _T_co: ...
+       
+       
+    2: class _ScopeFuncType(Protocol):
+    1:     def __call__(self) -> Any: ...
+       
+       
+    2: class ScopedRegistry(Generic[_T]):
+    1:     """A Registry that can store one or multiple instances of a single
+           class on the basis of a "scope" function.
+       
+           The object implements ``__call__`` as the "getter", so by
+           calling ``myregistry()`` the contained object is returned
+           for the current scope.
+       
+           :param createfunc:
+             a callable that returns a new object to be placed in the registry
+       
+           :param scopefunc:
+             a callable that will return a key to store/retrieve an object.
+           """
+       
+    1:     __slots__ = "createfunc", "scopefunc", "registry"
+       
+    1:     createfunc: _CreateFuncType[_T]
+    1:     scopefunc: _ScopeFuncType
+    1:     registry: Any
+       
+    1:     def __init__(
+               self, createfunc: Callable[[], _T], scopefunc: Callable[[], Any]
+           ):
+               """Construct a new :class:`.ScopedRegistry`.
+       
+               :param createfunc:  A creation function that will generate
+                 a new value for the current scope, if none is present.
+       
+               :param scopefunc:  A function that returns a hashable
+                 token representing the current scope (such as, current
+                 thread identifier).
+       
+               """
+>>>>>>         self.createfunc = createfunc
+>>>>>>         self.scopefunc = scopefunc
+>>>>>>         self.registry = {}
+       
+    1:     def __call__(self) -> _T:
+>>>>>>         key = self.scopefunc()
+>>>>>>         try:
+>>>>>>             return self.registry[key]  # type: ignore[no-any-return]
+>>>>>>         except KeyError:
+>>>>>>             return self.registry.setdefault(key, self.createfunc())  # type: ignore[no-any-return] # noqa: E501
+       
+    1:     def has(self) -> bool:
+               """Return True if an object is present in the current scope."""
+       
+>>>>>>         return self.scopefunc() in self.registry
+       
+    1:     def set(self, obj: _T) -> None:
+               """Set the value for the current scope."""
+       
+>>>>>>         self.registry[self.scopefunc()] = obj
+       
+    1:     def clear(self) -> None:
+               """Clear the current scope, if any."""
+       
+>>>>>>         try:
+>>>>>>             del self.registry[self.scopefunc()]
+>>>>>>         except KeyError:
+>>>>>>             pass
+       
+       
+    2: class ThreadLocalRegistry(ScopedRegistry[_T]):
+    1:     """A :class:`.ScopedRegistry` that uses a ``threading.local()``
+           variable for storage.
+       
+           """
+       
+    1:     def __init__(self, createfunc: Callable[[], _T]):
+>>>>>>         self.createfunc = createfunc
+>>>>>>         self.registry = threading.local()
+       
+    1:     def __call__(self) -> _T:
+>>>>>>         try:
+>>>>>>             return self.registry.value  # type: ignore[no-any-return]
+>>>>>>         except AttributeError:
+>>>>>>             val = self.registry.value = self.createfunc()
+>>>>>>             return val
+       
+    1:     def has(self) -> bool:
+>>>>>>         return hasattr(self.registry, "value")
+       
+    1:     def set(self, obj: _T) -> None:
+>>>>>>         self.registry.value = obj
+       
+    1:     def clear(self) -> None:
+>>>>>>         try:
+>>>>>>             del self.registry.value
+>>>>>>         except AttributeError:
+>>>>>>             pass
+       
+       
+    1: def has_dupes(sequence, target):
+           """Given a sequence and search object, return True if there's more
+           than one, False if zero or one of them.
+       
+       
+           """
+           # compare to .index version below, this version introduces less function
+           # overhead and is usually the same speed.  At 15000 items (way bigger than
+           # a relationship-bound collection in memory usually is) it begins to
+           # fall behind the other version only by microseconds.
+>>>>>>     c = 0
+>>>>>>     for item in sequence:
+>>>>>>         if item is target:
+>>>>>>             c += 1
+>>>>>>             if c > 1:
+>>>>>>                 return True
+>>>>>>     return False
+       
+       
+       # .index version.  the two __contains__ calls as well
+       # as .index() and isinstance() slow this down.
+       # def has_dupes(sequence, target):
+       #    if target not in sequence:
+       #        return False
+       #    elif not isinstance(sequence, collections_abc.Sequence):
+       #        return False
+       #
+       #    idx = sequence.index(target)
+       #    return target in sequence[idx + 1:]

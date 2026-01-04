@@ -108,8 +108,9 @@ async def get_recent_winners(
         users = {u.account_id: u for u in db.query(User).filter(User.account_id.in_(list(all_user_ids))).all()}
         
         # Get profile data for all users
-        from utils.chat_helpers import get_user_chat_profile_data
-        from models import TriviaModeConfig
+        from utils.chat_helpers import get_user_chat_profile_data_bulk
+        
+        profile_map = get_user_chat_profile_data_bulk(list(users.values()), db)
         
         result = []
         
@@ -119,14 +120,8 @@ async def get_recent_winners(
             if not user:
                 continue
             
-            profile_data = get_user_chat_profile_data(user, db)
-            
-            # Get achievement badge image URL
-            badge_image_url = None
-            if user.badge_id:
-                mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user.badge_id).first()
-                if mode_config and mode_config.badge_image_url:
-                    badge_image_url = mode_config.badge_image_url
+            profile_data = profile_map.get(winner.account_id, {})
+            badge_data = profile_data.get('badge') or {}
             
             result.append({
                 'mode': 'bronze',
@@ -136,7 +131,7 @@ async def get_recent_winners(
                 'money_awarded': round_down(float(winner.money_awarded), 2),
                 'submitted_at': winner.submitted_at.isoformat() if winner.submitted_at else None,
                 'profile_pic': profile_data.get('profile_pic_url'),
-                'badge_image_url': badge_image_url,
+                'badge_image_url': badge_data.get('image_url'),
                 'avatar_url': profile_data.get('avatar_url'),
                 'frame_url': profile_data.get('frame_url'),
                 'subscription_badges': profile_data.get('subscription_badges', []),
@@ -151,14 +146,8 @@ async def get_recent_winners(
             if not user:
                 continue
             
-            profile_data = get_user_chat_profile_data(user, db)
-            
-            # Get achievement badge image URL
-            badge_image_url = None
-            if user.badge_id:
-                mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user.badge_id).first()
-                if mode_config and mode_config.badge_image_url:
-                    badge_image_url = mode_config.badge_image_url
+            profile_data = profile_map.get(winner.account_id, {})
+            badge_data = profile_data.get('badge') or {}
             
             result.append({
                 'mode': 'silver',
@@ -168,7 +157,7 @@ async def get_recent_winners(
                 'money_awarded': round_down(float(winner.money_awarded), 2),
                 'submitted_at': winner.submitted_at.isoformat() if winner.submitted_at else None,
                 'profile_pic': profile_data.get('profile_pic_url'),
-                'badge_image_url': badge_image_url,
+                'badge_image_url': badge_data.get('image_url'),
                 'avatar_url': profile_data.get('avatar_url'),
                 'frame_url': profile_data.get('frame_url'),
                 'subscription_badges': profile_data.get('subscription_badges', []),

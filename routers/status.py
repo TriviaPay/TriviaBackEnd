@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, and_
+from sqlalchemy import desc, and_, or_
 from datetime import datetime, timedelta
 from typing import Optional, List
 import uuid
 import logging
 
 from db import get_db
-from models import User, StatusPost, StatusAudience, StatusView, DMParticipant, DMConversation
+from models import User, StatusPost, StatusAudience, StatusView, DMParticipant, DMConversation, Block
 from routers.dependencies import get_current_user
 from config import STATUS_ENABLED, STATUS_TTL_HOURS, STATUS_MAX_POSTS_PER_DAY, STATUS_ATTACHMENT_MAX_MB
 from utils.redis_pubsub import publish_dm_message
@@ -51,22 +51,16 @@ class MarkViewedRequest(BaseModel):
 
 def get_user_contacts(db: Session, user_id: int) -> List[int]:
     """Get list of user IDs the user has DM conversations with."""
-    conversations = db.query(DMConversation).join(
-        DMParticipant, DMConversation.id == DMParticipant.conversation_id
-    ).filter(
+    conversation_ids = db.query(DMParticipant.conversation_id).filter(
         DMParticipant.user_id == user_id
-    ).all()
-    
-    contact_ids = set()
-    for conv in conversations:
-        participants = db.query(DMParticipant).filter(
-            DMParticipant.conversation_id == conv.id,
-            DMParticipant.user_id != user_id
-        ).all()
-        for p in participants:
-            contact_ids.add(p.user_id)
-    
-    return list(contact_ids)
+    ).subquery()
+
+    contacts = db.query(DMParticipant.user_id).filter(
+        DMParticipant.conversation_id.in_(conversation_ids),
+        DMParticipant.user_id != user_id
+    ).distinct().all()
+
+    return [row[0] for row in contacts]
 
 
 @router.post("/posts")
@@ -82,6 +76,8 @@ async def create_status_post(
     if not STATUS_ENABLED:
         raise HTTPException(status_code=403, detail="Status feature is not enabled")
     
+    db.query(User).filter(User.account_id == current_user.account_id).with_for_update().first()
+
     # Check daily limit
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     today_posts = db.query(StatusPost).filter(
@@ -118,12 +114,12 @@ async def create_status_post(
     db.add(new_post)
     
     # Create audience records
-    for viewer_id in audience_user_ids:
-        audience = StatusAudience(
-            post_id=new_post.id,
-            viewer_user_id=viewer_id
-        )
-        db.add(audience)
+    audience_records = [
+        StatusAudience(post_id=new_post.id, viewer_user_id=viewer_id)
+        for viewer_id in audience_user_ids
+    ]
+    if audience_records:
+        db.bulk_save_objects(audience_records)
     
     try:
         db.commit()
@@ -217,35 +213,59 @@ async def mark_viewed(
         raise HTTPException(status_code=403, detail="Status feature is not enabled")
     
     viewed_posts = []
+    parsed_ids = []
     for post_id_str in request.post_ids:
         try:
-            post_uuid = uuid.UUID(post_id_str)
+            parsed_ids.append(uuid.UUID(post_id_str))
         except ValueError:
             continue
-        
-        # Check if user is in audience
-        audience = db.query(StatusAudience).filter(
-            StatusAudience.post_id == post_uuid,
-            StatusAudience.viewer_user_id == current_user.account_id
-        ).first()
-        
-        if not audience:
-            continue
-        
-        # Find or create view record
-        view = db.query(StatusView).filter(
-            StatusView.post_id == post_uuid,
-            StatusView.viewer_user_id == current_user.account_id
-        ).first()
-        
-        if not view:
-            view = StatusView(
-                post_id=post_uuid,
-                viewer_user_id=current_user.account_id,
-                viewed_at=datetime.utcnow()
-            )
-            db.add(view)
-            viewed_posts.append(post_id_str)
+
+    if not parsed_ids:
+        return {"viewed_post_ids": viewed_posts}
+
+    audience_rows = db.query(StatusAudience.post_id).filter(
+        StatusAudience.post_id.in_(parsed_ids),
+        StatusAudience.viewer_user_id == current_user.account_id
+    ).all()
+    allowed_ids = {row[0] for row in audience_rows}
+    if not allowed_ids:
+        return {"viewed_post_ids": viewed_posts}
+
+    existing_views = db.query(StatusView.post_id).filter(
+        StatusView.post_id.in_(list(allowed_ids)),
+        StatusView.viewer_user_id == current_user.account_id
+    ).all()
+    existing_ids = {row[0] for row in existing_views}
+
+    new_ids = [post_id for post_id in parsed_ids if post_id in allowed_ids and post_id not in existing_ids]
+    if new_ids:
+        now = datetime.utcnow()
+        rows = [
+            {"post_id": post_id, "viewer_user_id": current_user.account_id, "viewed_at": now}
+            for post_id in new_ids
+        ]
+        dialect_name = db.bind.dialect.name if db.bind else ""
+        if dialect_name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            stmt = pg_insert(StatusView).values(rows)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["post_id", "viewer_user_id"])
+            db.execute(stmt)
+        elif dialect_name == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+            stmt = sqlite_insert(StatusView).values(rows).prefix_with("OR IGNORE")
+            db.execute(stmt)
+        else:
+            db.bulk_save_objects([
+                StatusView(
+                    post_id=post_id,
+                    viewer_user_id=current_user.account_id,
+                    viewed_at=now
+                )
+                for post_id in new_ids
+            ])
+        viewed_posts = [str(post_id) for post_id in new_ids]
     
     try:
         db.commit()
@@ -308,18 +328,57 @@ async def get_presence(
         raise HTTPException(status_code=403, detail="Status feature is not enabled")
     
     from models import UserPresence
-    
+
+    query_user_ids = list(dict.fromkeys(user_ids))
+    presences = []
+    if query_user_ids:
+        presences = db.query(UserPresence).filter(UserPresence.user_id.in_(query_user_ids)).all()
+    presence_map = {p.user_id: p for p in presences}
+    contact_ids = set(get_user_contacts(db, current_user.account_id))
+
+    blocked_ids = set()
+    if query_user_ids:
+        blocks = db.query(Block.blocker_id, Block.blocked_id).filter(
+            or_(Block.blocker_id == current_user.account_id, Block.blocked_id == current_user.account_id),
+            or_(Block.blocker_id.in_(query_user_ids), Block.blocked_id.in_(query_user_ids))
+        ).all()
+        for blocker_id, blocked_id in blocks:
+            if blocker_id == current_user.account_id:
+                blocked_ids.add(blocked_id)
+            else:
+                blocked_ids.add(blocker_id)
+
     result = []
     for user_id in user_ids:
-        presence = db.query(UserPresence).filter(UserPresence.user_id == user_id).first()
-        
-        # TODO: Check privacy settings (share_last_seen, share_online)
-        # For now, return basic info
+        if user_id in blocked_ids and user_id != current_user.account_id:
+            result.append({
+                "user_id": user_id,
+                "last_seen_at": None,
+                "device_online": False
+            })
+            continue
+
+        presence = presence_map.get(user_id)
+        if user_id == current_user.account_id:
+            last_seen = presence.last_seen_at.isoformat() if presence and presence.last_seen_at else None
+            device_online = presence.device_online if presence else False
+        else:
+            privacy = presence.privacy_settings if presence and presence.privacy_settings else {}
+            share_online = privacy.get("share_online", True)
+            share_last_seen = privacy.get("share_last_seen", "contacts")
+            if share_last_seen == "all":
+                share_last_seen = "everyone"
+            is_contact = user_id in contact_ids
+            device_online = presence.device_online if presence and share_online else False
+            if presence and presence.last_seen_at and (share_last_seen == "everyone" or (share_last_seen == "contacts" and is_contact)):
+                last_seen = presence.last_seen_at.isoformat()
+            else:
+                last_seen = None
+
         result.append({
             "user_id": user_id,
-            "last_seen_at": presence.last_seen_at.isoformat() if presence and presence.last_seen_at else None,
-            "device_online": presence.device_online if presence else False
+            "last_seen_at": last_seen,
+            "device_online": device_online
         })
     
     return {"presence": result}
-

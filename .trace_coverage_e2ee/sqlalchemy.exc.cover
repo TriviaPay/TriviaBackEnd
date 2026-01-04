@@ -1,0 +1,830 @@
+       # exc.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """Exceptions used with SQLAlchemy.
+       
+       The base exception class is :exc:`.SQLAlchemyError`.  Exceptions which are
+       raised as a result of DBAPI exceptions are all subclasses of
+       :exc:`.DBAPIError`.
+       
+       """
+    1: from __future__ import annotations
+       
+    1: import typing
+    1: from typing import Any
+    1: from typing import List
+    1: from typing import Optional
+    1: from typing import overload
+    1: from typing import Tuple
+    1: from typing import Type
+    1: from typing import Union
+       
+    1: from .util import compat
+    1: from .util import preloaded as _preloaded
+       
+    1: if typing.TYPE_CHECKING:
+>>>>>>     from .engine.interfaces import _AnyExecuteParams
+>>>>>>     from .engine.interfaces import Dialect
+>>>>>>     from .sql.compiler import Compiled
+>>>>>>     from .sql.compiler import TypeCompiler
+>>>>>>     from .sql.elements import ClauseElement
+       
+    1: if typing.TYPE_CHECKING:
+>>>>>>     _version_token: str
+       else:
+           # set by __init__.py
+    1:     _version_token = None
+       
+       
+    2: class HasDescriptionCode:
+    1:     """helper which adds 'code' as an attribute and '_code_str' as a method"""
+       
+    1:     code: Optional[str] = None
+       
+    1:     def __init__(self, *arg: Any, **kw: Any):
+    1:         code = kw.pop("code", None)
+    1:         if code is not None:
+>>>>>>             self.code = code
+    1:         super().__init__(*arg, **kw)
+       
+    1:     _what_are_we = "error"
+       
+    1:     def _code_str(self) -> str:
+>>>>>>         if not self.code:
+>>>>>>             return ""
+               else:
+>>>>>>             return (
+>>>>>>                 f"(Background on this {self._what_are_we} at: "
+>>>>>>                 f"https://sqlalche.me/e/{_version_token}/{self.code})"
+                   )
+       
+    1:     def __str__(self) -> str:
+    2:         message = super().__str__()
+    2:         if self.code:
+>>>>>>             message = "%s %s" % (message, self._code_str())
+    2:         return message
+       
+       
+    2: class SQLAlchemyError(HasDescriptionCode, Exception):
+    1:     """Generic error class."""
+       
+    1:     def _message(self) -> str:
+               # rules:
+               #
+               # 1. single arg string will usually be a unicode
+               # object, but since __str__() must return unicode, check for
+               # bytestring just in case
+               #
+               # 2. for multiple self.args, this is not a case in current
+               # SQLAlchemy though this is happening in at least one known external
+               # library, call str() which does a repr().
+               #
+               text: str
+       
+>>>>>>         if len(self.args) == 1:
+>>>>>>             arg_text = self.args[0]
+       
+>>>>>>             if isinstance(arg_text, bytes):
+>>>>>>                 text = compat.decode_backslashreplace(arg_text, "utf-8")
+                   # This is for when the argument is not a string of any sort.
+                   # Otherwise, converting this exception to string would fail for
+                   # non-string arguments.
+                   else:
+>>>>>>                 text = str(arg_text)
+       
+>>>>>>             return text
+               else:
+                   # this is not a normal case within SQLAlchemy but is here for
+                   # compatibility with Exception.args - the str() comes out as
+                   # a repr() of the tuple
+>>>>>>             return str(self.args)
+       
+    1:     def _sql_message(self) -> str:
+>>>>>>         message = self._message()
+       
+>>>>>>         if self.code:
+>>>>>>             message = "%s %s" % (message, self._code_str())
+       
+>>>>>>         return message
+       
+    1:     def __str__(self) -> str:
+>>>>>>         return self._sql_message()
+       
+       
+    2: class ArgumentError(SQLAlchemyError):
+    1:     """Raised when an invalid or conflicting function argument is supplied.
+       
+           This error generally corresponds to construction time state errors.
+       
+           """
+       
+       
+    2: class DuplicateColumnError(ArgumentError):
+    1:     """a Column is being added to a Table that would replace another
+           Column, without appropriate parameters to allow this in place.
+       
+           .. versionadded:: 2.0.0b4
+       
+           """
+       
+       
+    2: class ObjectNotExecutableError(ArgumentError):
+    1:     """Raised when an object is passed to .execute() that can't be
+           executed as SQL.
+       
+           """
+       
+    1:     def __init__(self, target: Any):
+>>>>>>         super().__init__("Not an executable object: %r" % target)
+>>>>>>         self.target = target
+       
+    1:     def __reduce__(self) -> Union[str, Tuple[Any, ...]]:
+>>>>>>         return self.__class__, (self.target,)
+       
+       
+    2: class NoSuchModuleError(ArgumentError):
+    1:     """Raised when a dynamically-loaded module (usually a database dialect)
+           of a particular name cannot be located."""
+       
+       
+    2: class NoForeignKeysError(ArgumentError):
+    1:     """Raised when no foreign keys can be located between two selectables
+           during a join."""
+       
+       
+    2: class AmbiguousForeignKeysError(ArgumentError):
+    1:     """Raised when more than one foreign key matching can be located
+           between two selectables during a join."""
+       
+       
+    2: class ConstraintColumnNotFoundError(ArgumentError):
+    1:     """raised when a constraint refers to a string column name that
+           is not present in the table being constrained.
+       
+           .. versionadded:: 2.0
+       
+           """
+       
+       
+    2: class CircularDependencyError(SQLAlchemyError):
+    1:     """Raised by topological sorts when a circular dependency is detected.
+       
+           There are two scenarios where this error occurs:
+       
+           * In a Session flush operation, if two objects are mutually dependent
+             on each other, they can not be inserted or deleted via INSERT or
+             DELETE statements alone; an UPDATE will be needed to post-associate
+             or pre-deassociate one of the foreign key constrained values.
+             The ``post_update`` flag described at :ref:`post_update` can resolve
+             this cycle.
+           * In a :attr:`_schema.MetaData.sorted_tables` operation, two
+             :class:`_schema.ForeignKey`
+             or :class:`_schema.ForeignKeyConstraint` objects mutually refer to each
+             other.  Apply the ``use_alter=True`` flag to one or both,
+             see :ref:`use_alter`.
+       
+           """
+       
+    1:     def __init__(
+               self,
+               message: str,
+               cycles: Any,
+               edges: Any,
+               msg: Optional[str] = None,
+               code: Optional[str] = None,
+           ):
+>>>>>>         if msg is None:
+>>>>>>             message += " (%s)" % ", ".join(repr(s) for s in cycles)
+               else:
+>>>>>>             message = msg
+>>>>>>         SQLAlchemyError.__init__(self, message, code=code)
+>>>>>>         self.cycles = cycles
+>>>>>>         self.edges = edges
+       
+    1:     def __reduce__(self) -> Union[str, Tuple[Any, ...]]:
+>>>>>>         return (
+>>>>>>             self.__class__,
+>>>>>>             (None, self.cycles, self.edges, self.args[0]),
+>>>>>>             {"code": self.code} if self.code is not None else {},
+               )
+       
+       
+    2: class CompileError(SQLAlchemyError):
+    1:     """Raised when an error occurs during SQL compilation"""
+       
+       
+    2: class UnsupportedCompilationError(CompileError):
+    1:     """Raised when an operation is not supported by the given compiler.
+       
+           .. seealso::
+       
+               :ref:`faq_sql_expression_string`
+       
+               :ref:`error_l7de`
+           """
+       
+    1:     code = "l7de"
+       
+    1:     def __init__(
+               self,
+               compiler: Union[Compiled, TypeCompiler],
+               element_type: Type[ClauseElement],
+               message: Optional[str] = None,
+           ):
+>>>>>>         super().__init__(
+>>>>>>             "Compiler %r can't render element of type %s%s"
+>>>>>>             % (compiler, element_type, ": %s" % message if message else "")
+               )
+>>>>>>         self.compiler = compiler
+>>>>>>         self.element_type = element_type
+>>>>>>         self.message = message
+       
+    1:     def __reduce__(self) -> Union[str, Tuple[Any, ...]]:
+>>>>>>         return self.__class__, (self.compiler, self.element_type, self.message)
+       
+       
+    2: class IdentifierError(SQLAlchemyError):
+    1:     """Raised when a schema name is beyond the max character limit"""
+       
+       
+    2: class DisconnectionError(SQLAlchemyError):
+    1:     """A disconnect is detected on a raw DB-API connection.
+       
+           This error is raised and consumed internally by a connection pool.  It can
+           be raised by the :meth:`_events.PoolEvents.checkout`
+           event so that the host pool
+           forces a retry; the exception will be caught three times in a row before
+           the pool gives up and raises :class:`~sqlalchemy.exc.InvalidRequestError`
+           regarding the connection attempt.
+       
+           """
+       
+    1:     invalidate_pool: bool = False
+       
+       
+    2: class InvalidatePoolError(DisconnectionError):
+    1:     """Raised when the connection pool should invalidate all stale connections.
+       
+           A subclass of :class:`_exc.DisconnectionError` that indicates that the
+           disconnect situation encountered on the connection probably means the
+           entire pool should be invalidated, as the database has been restarted.
+       
+           This exception will be handled otherwise the same way as
+           :class:`_exc.DisconnectionError`, allowing three attempts to reconnect
+           before giving up.
+       
+           .. versionadded:: 1.2
+       
+           """
+       
+    1:     invalidate_pool: bool = True
+       
+       
+    2: class TimeoutError(SQLAlchemyError):  # noqa
+    1:     """Raised when a connection pool times out on getting a connection."""
+       
+       
+    2: class InvalidRequestError(SQLAlchemyError):
+    1:     """SQLAlchemy was asked to do something it can't do.
+       
+           This error generally corresponds to runtime state errors.
+       
+           """
+       
+       
+    2: class IllegalStateChangeError(InvalidRequestError):
+    1:     """An object that tracks state encountered an illegal state change
+           of some kind.
+       
+           .. versionadded:: 2.0
+       
+           """
+       
+       
+    2: class NoInspectionAvailable(InvalidRequestError):
+    1:     """A subject passed to :func:`sqlalchemy.inspection.inspect` produced
+           no context for inspection."""
+       
+       
+    2: class PendingRollbackError(InvalidRequestError):
+    1:     """A transaction has failed and needs to be rolled back before
+           continuing.
+       
+           .. versionadded:: 1.4
+       
+           """
+       
+       
+    2: class ResourceClosedError(InvalidRequestError):
+    1:     """An operation was requested from a connection, cursor, or other
+           object that's in a closed state."""
+       
+       
+    2: class NoSuchColumnError(InvalidRequestError, KeyError):
+    1:     """A nonexistent column is requested from a ``Row``."""
+       
+       
+    2: class NoResultFound(InvalidRequestError):
+    1:     """A database result was required but none was found.
+       
+       
+           .. versionchanged:: 1.4  This exception is now part of the
+              ``sqlalchemy.exc`` module in Core, moved from the ORM.  The symbol
+              remains importable from ``sqlalchemy.orm.exc``.
+       
+       
+           """
+       
+       
+    2: class MultipleResultsFound(InvalidRequestError):
+    1:     """A single database result was required but more than one were found.
+       
+           .. versionchanged:: 1.4  This exception is now part of the
+              ``sqlalchemy.exc`` module in Core, moved from the ORM.  The symbol
+              remains importable from ``sqlalchemy.orm.exc``.
+       
+       
+           """
+       
+       
+    2: class NoReferenceError(InvalidRequestError):
+    1:     """Raised by ``ForeignKey`` to indicate a reference cannot be resolved."""
+       
+    1:     table_name: str
+       
+       
+    2: class AwaitRequired(InvalidRequestError):
+    1:     """Error raised by the async greenlet spawn if no async operation
+           was awaited when it required one.
+       
+           """
+       
+    1:     code = "xd1r"
+       
+       
+    2: class MissingGreenlet(InvalidRequestError):
+    1:     r"""Error raised by the async greenlet await\_ if called while not inside
+           the greenlet spawn context.
+       
+           """
+       
+    1:     code = "xd2s"
+       
+       
+    2: class NoReferencedTableError(NoReferenceError):
+    1:     """Raised by ``ForeignKey`` when the referred ``Table`` cannot be
+           located.
+       
+           """
+       
+    1:     def __init__(self, message: str, tname: str):
+>>>>>>         NoReferenceError.__init__(self, message)
+>>>>>>         self.table_name = tname
+       
+    1:     def __reduce__(self) -> Union[str, Tuple[Any, ...]]:
+>>>>>>         return self.__class__, (self.args[0], self.table_name)
+       
+       
+    2: class NoReferencedColumnError(NoReferenceError):
+    1:     """Raised by ``ForeignKey`` when the referred ``Column`` cannot be
+           located.
+       
+           """
+       
+    1:     def __init__(self, message: str, tname: str, cname: str):
+>>>>>>         NoReferenceError.__init__(self, message)
+>>>>>>         self.table_name = tname
+>>>>>>         self.column_name = cname
+       
+    1:     def __reduce__(self) -> Union[str, Tuple[Any, ...]]:
+>>>>>>         return (
+>>>>>>             self.__class__,
+>>>>>>             (self.args[0], self.table_name, self.column_name),
+               )
+       
+       
+    2: class NoSuchTableError(InvalidRequestError):
+    1:     """Table does not exist or is not visible to a connection."""
+       
+       
+    2: class UnreflectableTableError(InvalidRequestError):
+    1:     """Table exists but can't be reflected for some reason.
+       
+           .. versionadded:: 1.2
+       
+           """
+       
+       
+    2: class UnboundExecutionError(InvalidRequestError):
+    1:     """SQL was attempted without a database connection to execute it on."""
+       
+       
+    2: class DontWrapMixin:
+    1:     """A mixin class which, when applied to a user-defined Exception class,
+           will not be wrapped inside of :exc:`.StatementError` if the error is
+           emitted within the process of executing a statement.
+       
+           E.g.::
+       
+               from sqlalchemy.exc import DontWrapMixin
+       
+               class MyCustomException(Exception, DontWrapMixin):
+                   pass
+       
+               class MySpecialType(TypeDecorator):
+                   impl = String
+       
+                   def process_bind_param(self, value, dialect):
+                       if value == 'invalid':
+                           raise MyCustomException("invalid!")
+       
+           """
+       
+       
+    2: class StatementError(SQLAlchemyError):
+    1:     """An error occurred during execution of a SQL statement.
+       
+           :class:`StatementError` wraps the exception raised
+           during execution, and features :attr:`.statement`
+           and :attr:`.params` attributes which supply context regarding
+           the specifics of the statement which had an issue.
+       
+           The wrapped exception object is available in
+           the :attr:`.orig` attribute.
+       
+           """
+       
+    1:     statement: Optional[str] = None
+           """The string SQL statement being invoked when this exception occurred."""
+       
+    1:     params: Optional[_AnyExecuteParams] = None
+           """The parameter list being used when this exception occurred."""
+       
+    1:     orig: Optional[BaseException] = None
+           """The original exception that was thrown.
+       
+           """
+       
+    1:     ismulti: Optional[bool] = None
+           """multi parameter passed to repr_params().  None is meaningful."""
+       
+    1:     connection_invalidated: bool = False
+       
+    1:     def __init__(
+               self,
+               message: str,
+               statement: Optional[str],
+               params: Optional[_AnyExecuteParams],
+               orig: Optional[BaseException],
+               hide_parameters: bool = False,
+               code: Optional[str] = None,
+               ismulti: Optional[bool] = None,
+           ):
+>>>>>>         SQLAlchemyError.__init__(self, message, code=code)
+>>>>>>         self.statement = statement
+>>>>>>         self.params = params
+>>>>>>         self.orig = orig
+>>>>>>         self.ismulti = ismulti
+>>>>>>         self.hide_parameters = hide_parameters
+>>>>>>         self.detail: List[str] = []
+       
+    1:     def add_detail(self, msg: str) -> None:
+>>>>>>         self.detail.append(msg)
+       
+    1:     def __reduce__(self) -> Union[str, Tuple[Any, ...]]:
+>>>>>>         return (
+>>>>>>             self.__class__,
+>>>>>>             (
+>>>>>>                 self.args[0],
+>>>>>>                 self.statement,
+>>>>>>                 self.params,
+>>>>>>                 self.orig,
+>>>>>>                 self.hide_parameters,
+>>>>>>                 self.__dict__.get("code"),
+>>>>>>                 self.ismulti,
+                   ),
+>>>>>>             {"detail": self.detail},
+               )
+       
+    1:     @_preloaded.preload_module("sqlalchemy.sql.util")
+    1:     def _sql_message(self) -> str:
+>>>>>>         util = _preloaded.sql_util
+       
+>>>>>>         details = [self._message()]
+>>>>>>         if self.statement:
+>>>>>>             stmt_detail = "[SQL: %s]" % self.statement
+>>>>>>             details.append(stmt_detail)
+>>>>>>             if self.params:
+>>>>>>                 if self.hide_parameters:
+>>>>>>                     details.append(
+>>>>>>                         "[SQL parameters hidden due to hide_parameters=True]"
+                           )
+                       else:
+>>>>>>                     params_repr = util._repr_params(
+>>>>>>                         self.params, 10, ismulti=self.ismulti
+                           )
+>>>>>>                     details.append("[parameters: %r]" % params_repr)
+>>>>>>         code_str = self._code_str()
+>>>>>>         if code_str:
+>>>>>>             details.append(code_str)
+>>>>>>         return "\n".join(["(%s)" % det for det in self.detail] + details)
+       
+       
+    2: class DBAPIError(StatementError):
+    1:     """Raised when the execution of a database operation fails.
+       
+           Wraps exceptions raised by the DB-API underlying the
+           database operation.  Driver-specific implementations of the standard
+           DB-API exception types are wrapped by matching sub-types of SQLAlchemy's
+           :class:`DBAPIError` when possible.  DB-API's ``Error`` type maps to
+           :class:`DBAPIError` in SQLAlchemy, otherwise the names are identical.  Note
+           that there is no guarantee that different DB-API implementations will
+           raise the same exception type for any given error condition.
+       
+           :class:`DBAPIError` features :attr:`~.StatementError.statement`
+           and :attr:`~.StatementError.params` attributes which supply context
+           regarding the specifics of the statement which had an issue, for the
+           typical case when the error was raised within the context of
+           emitting a SQL statement.
+       
+           The wrapped exception object is available in the
+           :attr:`~.StatementError.orig` attribute. Its type and properties are
+           DB-API implementation specific.
+       
+           """
+       
+    1:     code = "dbapi"
+       
+    1:     @overload
+    1:     @classmethod
+    1:     def instance(
+               cls,
+               statement: Optional[str],
+               params: Optional[_AnyExecuteParams],
+               orig: Exception,
+               dbapi_base_err: Type[Exception],
+               hide_parameters: bool = False,
+               connection_invalidated: bool = False,
+               dialect: Optional[Dialect] = None,
+               ismulti: Optional[bool] = None,
+>>>>>>     ) -> StatementError: ...
+       
+    1:     @overload
+    1:     @classmethod
+    1:     def instance(
+               cls,
+               statement: Optional[str],
+               params: Optional[_AnyExecuteParams],
+               orig: DontWrapMixin,
+               dbapi_base_err: Type[Exception],
+               hide_parameters: bool = False,
+               connection_invalidated: bool = False,
+               dialect: Optional[Dialect] = None,
+               ismulti: Optional[bool] = None,
+>>>>>>     ) -> DontWrapMixin: ...
+       
+    1:     @overload
+    1:     @classmethod
+    1:     def instance(
+               cls,
+               statement: Optional[str],
+               params: Optional[_AnyExecuteParams],
+               orig: BaseException,
+               dbapi_base_err: Type[Exception],
+               hide_parameters: bool = False,
+               connection_invalidated: bool = False,
+               dialect: Optional[Dialect] = None,
+               ismulti: Optional[bool] = None,
+>>>>>>     ) -> BaseException: ...
+       
+    1:     @classmethod
+    1:     def instance(
+               cls,
+               statement: Optional[str],
+               params: Optional[_AnyExecuteParams],
+               orig: Union[BaseException, DontWrapMixin],
+               dbapi_base_err: Type[Exception],
+               hide_parameters: bool = False,
+               connection_invalidated: bool = False,
+               dialect: Optional[Dialect] = None,
+               ismulti: Optional[bool] = None,
+           ) -> Union[BaseException, DontWrapMixin]:
+               # Don't ever wrap these, just return them directly as if
+               # DBAPIError didn't exist.
+>>>>>>         if (
+>>>>>>             isinstance(orig, BaseException) and not isinstance(orig, Exception)
+>>>>>>         ) or isinstance(orig, DontWrapMixin):
+>>>>>>             return orig
+       
+>>>>>>         if orig is not None:
+                   # not a DBAPI error, statement is present.
+                   # raise a StatementError
+>>>>>>             if isinstance(orig, SQLAlchemyError) and statement:
+>>>>>>                 return StatementError(
+>>>>>>                     "(%s.%s) %s"
+>>>>>>                     % (
+>>>>>>                         orig.__class__.__module__,
+>>>>>>                         orig.__class__.__name__,
+>>>>>>                         orig.args[0],
+                           ),
+>>>>>>                     statement,
+>>>>>>                     params,
+>>>>>>                     orig,
+>>>>>>                     hide_parameters=hide_parameters,
+>>>>>>                     code=orig.code,
+>>>>>>                     ismulti=ismulti,
+                       )
+>>>>>>             elif not isinstance(orig, dbapi_base_err) and statement:
+>>>>>>                 return StatementError(
+>>>>>>                     "(%s.%s) %s"
+>>>>>>                     % (
+>>>>>>                         orig.__class__.__module__,
+>>>>>>                         orig.__class__.__name__,
+>>>>>>                         orig,
+                           ),
+>>>>>>                     statement,
+>>>>>>                     params,
+>>>>>>                     orig,
+>>>>>>                     hide_parameters=hide_parameters,
+>>>>>>                     ismulti=ismulti,
+                       )
+       
+>>>>>>             glob = globals()
+>>>>>>             for super_ in orig.__class__.__mro__:
+>>>>>>                 name = super_.__name__
+>>>>>>                 if dialect:
+>>>>>>                     name = dialect.dbapi_exception_translation_map.get(
+>>>>>>                         name, name
+                           )
+>>>>>>                 if name in glob and issubclass(glob[name], DBAPIError):
+>>>>>>                     cls = glob[name]
+>>>>>>                     break
+       
+>>>>>>         return cls(
+>>>>>>             statement,
+>>>>>>             params,
+>>>>>>             orig,
+>>>>>>             connection_invalidated=connection_invalidated,
+>>>>>>             hide_parameters=hide_parameters,
+>>>>>>             code=cls.code,
+>>>>>>             ismulti=ismulti,
+               )
+       
+    1:     def __reduce__(self) -> Union[str, Tuple[Any, ...]]:
+>>>>>>         return (
+>>>>>>             self.__class__,
+>>>>>>             (
+>>>>>>                 self.statement,
+>>>>>>                 self.params,
+>>>>>>                 self.orig,
+>>>>>>                 self.hide_parameters,
+>>>>>>                 self.connection_invalidated,
+>>>>>>                 self.__dict__.get("code"),
+>>>>>>                 self.ismulti,
+                   ),
+>>>>>>             {"detail": self.detail},
+               )
+       
+    1:     def __init__(
+               self,
+               statement: Optional[str],
+               params: Optional[_AnyExecuteParams],
+               orig: BaseException,
+               hide_parameters: bool = False,
+               connection_invalidated: bool = False,
+               code: Optional[str] = None,
+               ismulti: Optional[bool] = None,
+           ):
+>>>>>>         try:
+>>>>>>             text = str(orig)
+>>>>>>         except Exception as e:
+>>>>>>             text = "Error in str() of DB-API-generated exception: " + str(e)
+>>>>>>         StatementError.__init__(
+>>>>>>             self,
+>>>>>>             "(%s.%s) %s"
+>>>>>>             % (orig.__class__.__module__, orig.__class__.__name__, text),
+>>>>>>             statement,
+>>>>>>             params,
+>>>>>>             orig,
+>>>>>>             hide_parameters,
+>>>>>>             code=code,
+>>>>>>             ismulti=ismulti,
+               )
+>>>>>>         self.connection_invalidated = connection_invalidated
+       
+       
+    2: class InterfaceError(DBAPIError):
+    1:     """Wraps a DB-API InterfaceError."""
+       
+    1:     code = "rvf5"
+       
+       
+    2: class DatabaseError(DBAPIError):
+    1:     """Wraps a DB-API DatabaseError."""
+       
+    1:     code = "4xp6"
+       
+       
+    2: class DataError(DatabaseError):
+    1:     """Wraps a DB-API DataError."""
+       
+    1:     code = "9h9h"
+       
+       
+    2: class OperationalError(DatabaseError):
+    1:     """Wraps a DB-API OperationalError."""
+       
+    1:     code = "e3q8"
+       
+       
+    2: class IntegrityError(DatabaseError):
+    1:     """Wraps a DB-API IntegrityError."""
+       
+    1:     code = "gkpj"
+       
+       
+    2: class InternalError(DatabaseError):
+    1:     """Wraps a DB-API InternalError."""
+       
+    1:     code = "2j85"
+       
+       
+    2: class ProgrammingError(DatabaseError):
+    1:     """Wraps a DB-API ProgrammingError."""
+       
+    1:     code = "f405"
+       
+       
+    2: class NotSupportedError(DatabaseError):
+    1:     """Wraps a DB-API NotSupportedError."""
+       
+    1:     code = "tw8g"
+       
+       
+       # Warnings
+       
+       
+    2: class SATestSuiteWarning(Warning):
+    1:     """warning for a condition detected during tests that is non-fatal
+       
+           Currently outside of SAWarning so that we can work around tools like
+           Alembic doing the wrong thing with warnings.
+       
+           """
+       
+       
+    2: class SADeprecationWarning(HasDescriptionCode, DeprecationWarning):
+    1:     """Issued for usage of deprecated APIs."""
+       
+    1:     deprecated_since: Optional[str] = None
+    1:     "Indicates the version that started raising this deprecation warning"
+       
+       
+    2: class Base20DeprecationWarning(SADeprecationWarning):
+    1:     """Issued for usage of APIs specifically deprecated or legacy in
+           SQLAlchemy 2.0.
+       
+           .. seealso::
+       
+               :ref:`error_b8d9`.
+       
+               :ref:`deprecation_20_mode`
+       
+           """
+       
+    1:     deprecated_since: Optional[str] = "1.4"
+           "Indicates the version that started raising this deprecation warning"
+       
+    1:     def __str__(self) -> str:
+    2:         return (
+    4:             super().__str__()
+    2:             + " (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)"
+               )
+       
+       
+    2: class LegacyAPIWarning(Base20DeprecationWarning):
+    1:     """indicates an API that is in 'legacy' status, a long term deprecation."""
+       
+       
+    2: class MovedIn20Warning(Base20DeprecationWarning):
+    1:     """Subtype of RemovedIn20Warning to indicate an API that moved only."""
+       
+       
+    2: class SAPendingDeprecationWarning(PendingDeprecationWarning):
+    1:     """A similar warning as :class:`_exc.SADeprecationWarning`, this warning
+           is not used in modern versions of SQLAlchemy.
+       
+           """
+       
+    1:     deprecated_since: Optional[str] = None
+    1:     "Indicates the version that started raising this deprecation warning"
+       
+       
+    2: class SAWarning(HasDescriptionCode, RuntimeWarning):
+    1:     """Issued at runtime."""
+       
+    1:     _what_are_we = "warning"

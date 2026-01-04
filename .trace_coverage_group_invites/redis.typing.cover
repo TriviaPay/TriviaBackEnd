@@ -1,0 +1,57 @@
+       # from __future__ import annotations
+       
+    1: from datetime import datetime, timedelta
+    1: from typing import (
+           TYPE_CHECKING,
+           Any,
+           Awaitable,
+           Iterable,
+           Mapping,
+           Protocol,
+           Type,
+           TypeVar,
+           Union,
+       )
+       
+    1: if TYPE_CHECKING:
+>>>>>>     from redis._parsers import Encoder
+       
+       
+    1: Number = Union[int, float]
+    1: EncodedT = Union[bytes, bytearray, memoryview]
+    1: DecodedT = Union[str, int, float]
+    1: EncodableT = Union[EncodedT, DecodedT]
+    1: AbsExpiryT = Union[int, datetime]
+    1: ExpiryT = Union[int, timedelta]
+    1: ZScoreBoundT = Union[float, str]  # str allows for the [ or ( prefix
+    1: BitfieldOffsetT = Union[int, str]  # str allows for #x syntax
+    1: _StringLikeT = Union[bytes, str, memoryview]
+    1: KeyT = _StringLikeT  # Main redis key space
+    1: PatternT = _StringLikeT  # Patterns matched against keys, fields etc
+    1: FieldT = EncodableT  # Fields within hash tables, streams and geo commands
+    1: KeysT = Union[KeyT, Iterable[KeyT]]
+    1: ResponseT = Union[Awaitable[Any], Any]
+    1: ChannelT = _StringLikeT
+    1: GroupT = _StringLikeT  # Consumer group
+    1: ConsumerT = _StringLikeT  # Consumer name
+    1: StreamIdT = Union[int, _StringLikeT]
+    1: ScriptTextT = _StringLikeT
+    1: TimeoutSecT = Union[int, float, _StringLikeT]
+       # Mapping is not covariant in the key type, which prevents
+       # Mapping[_StringLikeT, X] from accepting arguments of type Dict[str, X]. Using
+       # a TypeVar instead of a Union allows mappings with any of the permitted types
+       # to be passed. Care is needed if there is more than one such mapping in a
+       # type signature because they will all be required to be the same key type.
+    1: AnyKeyT = TypeVar("AnyKeyT", bytes, str, memoryview)
+    1: AnyFieldT = TypeVar("AnyFieldT", bytes, str, memoryview)
+    1: AnyChannelT = TypeVar("AnyChannelT", bytes, str, memoryview)
+       
+    1: ExceptionMappingT = Mapping[str, Union[Type[Exception], Mapping[str, Type[Exception]]]]
+       
+       
+    2: class CommandsProtocol(Protocol):
+    1:     def execute_command(self, *args, **options) -> ResponseT: ...
+       
+       
+    2: class ClusterCommandsProtocol(CommandsProtocol):
+    1:     encoder: "Encoder"

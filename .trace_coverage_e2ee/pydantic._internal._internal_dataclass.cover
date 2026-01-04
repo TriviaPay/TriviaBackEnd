@@ -1,0 +1,10 @@
+    1: import sys
+    1: from typing import Any, Dict
+       
+    1: dataclass_kwargs: Dict[str, Any]
+       
+       # `slots` is available on Python >= 3.10
+    1: if sys.version_info >= (3, 10):
+>>>>>>     slots_true = {'slots': True}
+       else:
+    1:     slots_true = {}

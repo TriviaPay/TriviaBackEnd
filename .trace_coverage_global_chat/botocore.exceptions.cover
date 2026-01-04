@@ -1,0 +1,816 @@
+       # Copyright (c) 2012-2013 Mitch Garnaat http://garnaat.org/
+       # Copyright 2012-2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+       #
+       # Licensed under the Apache License, Version 2.0 (the "License"). You
+       # may not use this file except in compliance with the License. A copy of
+       # the License is located at
+       #
+       # http://aws.amazon.com/apache2.0/
+       #
+       # or in the "license" file accompanying this file. This file is
+       # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF
+       # ANY KIND, either express or implied. See the License for the specific
+       # language governing permissions and limitations under the License.
+       
+    1: from botocore.vendored import requests
+    1: from botocore.vendored.requests.packages import urllib3
+       
+       
+    1: def _exception_from_packed_args(exception_cls, args=None, kwargs=None):
+           # This is helpful for reducing Exceptions that only accept kwargs as
+           # only positional arguments can be provided for __reduce__
+           # Ideally, this would also be a class method on the BotoCoreError
+           # but instance methods cannot be pickled.
+>>>>>>     if args is None:
+>>>>>>         args = ()
+>>>>>>     if kwargs is None:
+>>>>>>         kwargs = {}
+>>>>>>     return exception_cls(*args, **kwargs)
+       
+       
+    2: class BotoCoreError(Exception):
+    1:     """
+           The base exception class for BotoCore exceptions.
+       
+           :ivar msg: The descriptive message associated with the error.
+           """
+       
+    1:     fmt = 'An unspecified error occurred'
+       
+    1:     def __init__(self, **kwargs):
+>>>>>>         msg = self.fmt.format(**kwargs)
+>>>>>>         Exception.__init__(self, msg)
+>>>>>>         self.kwargs = kwargs
+       
+    1:     def __reduce__(self):
+>>>>>>         return _exception_from_packed_args, (self.__class__, None, self.kwargs)
+       
+       
+    2: class DataNotFoundError(BotoCoreError):
+    1:     """
+           The data associated with a particular path could not be loaded.
+       
+           :ivar data_path: The data path that the user attempted to load.
+           """
+       
+    1:     fmt = 'Unable to load data for: {data_path}'
+       
+       
+    2: class UnknownServiceError(DataNotFoundError):
+    1:     """Raised when trying to load data for an unknown service.
+       
+           :ivar service_name: The name of the unknown service.
+       
+           """
+       
+    1:     fmt = (
+    1:         "Unknown service: '{service_name}'. Valid service names are: "
+               "{known_service_names}"
+           )
+       
+       
+    2: class UnknownRegionError(BotoCoreError):
+    1:     """Raised when trying to load data for an unknown region.
+       
+           :ivar region_name: The name of the unknown region.
+       
+           """
+       
+    1:     fmt = "Unknown region: '{region_name}'. {error_msg}"
+       
+       
+    2: class ApiVersionNotFoundError(BotoCoreError):
+    1:     """
+           The data associated with either the API version or a compatible one
+           could not be loaded.
+       
+           :ivar data_path: The data path that the user attempted to load.
+           :ivar api_version: The API version that the user attempted to load.
+           """
+       
+    1:     fmt = 'Unable to load data {data_path} for: {api_version}'
+       
+       
+    2: class HTTPClientError(BotoCoreError):
+    1:     fmt = 'An HTTP Client raised an unhandled exception: {error}'
+       
+    1:     def __init__(self, request=None, response=None, **kwargs):
+>>>>>>         self.request = request
+>>>>>>         self.response = response
+>>>>>>         super().__init__(**kwargs)
+       
+    1:     def __reduce__(self):
+>>>>>>         return _exception_from_packed_args, (
+>>>>>>             self.__class__,
+>>>>>>             (self.request, self.response),
+>>>>>>             self.kwargs,
+               )
+       
+       
+    2: class ConnectionError(BotoCoreError):
+    1:     fmt = 'An HTTP Client failed to establish a connection: {error}'
+       
+       
+    2: class InvalidIMDSEndpointError(BotoCoreError):
+    1:     fmt = 'Invalid endpoint EC2 Instance Metadata endpoint: {endpoint}'
+       
+       
+    2: class InvalidIMDSEndpointModeError(BotoCoreError):
+    1:     fmt = (
+    1:         'Invalid EC2 Instance Metadata endpoint mode: {mode}'
+               ' Valid endpoint modes (case-insensitive): {valid_modes}.'
+           )
+       
+       
+    2: class EndpointConnectionError(ConnectionError):
+    1:     fmt = 'Could not connect to the endpoint URL: "{endpoint_url}"'
+       
+       
+    2: class SSLError(ConnectionError, requests.exceptions.SSLError):
+    1:     fmt = 'SSL validation failed for {endpoint_url} {error}'
+       
+       
+    2: class ConnectionClosedError(HTTPClientError):
+    1:     fmt = (
+    1:         'Connection was closed before we received a valid response '
+               'from endpoint URL: "{endpoint_url}".'
+           )
+       
+       
+    3: class ReadTimeoutError(
+    1:     HTTPClientError,
+    1:     requests.exceptions.ReadTimeout,
+    1:     urllib3.exceptions.ReadTimeoutError,
+       ):
+    1:     fmt = 'Read timeout on endpoint URL: "{endpoint_url}"'
+       
+       
+    2: class ConnectTimeoutError(ConnectionError, requests.exceptions.ConnectTimeout):
+    1:     fmt = 'Connect timeout on endpoint URL: "{endpoint_url}"'
+       
+       
+    2: class ProxyConnectionError(ConnectionError, requests.exceptions.ProxyError):
+    1:     fmt = 'Failed to connect to proxy URL: "{proxy_url}"'
+       
+       
+    2: class ResponseStreamingError(HTTPClientError):
+    1:     fmt = 'An error occurred while reading from response stream: {error}'
+       
+       
+    2: class NoCredentialsError(BotoCoreError):
+    1:     """
+           No credentials could be found.
+           """
+       
+    1:     fmt = 'Unable to locate credentials'
+       
+       
+    2: class NoAuthTokenError(BotoCoreError):
+    1:     """
+           No authorization token could be found.
+           """
+       
+    1:     fmt = 'Unable to locate authorization token'
+       
+       
+    2: class TokenRetrievalError(BotoCoreError):
+    1:     """
+           Error attempting to retrieve a token from a remote source.
+       
+           :ivar provider: The name of the token provider.
+           :ivar error_msg: The msg explaining why the token could not be retrieved.
+       
+           """
+       
+    1:     fmt = 'Error when retrieving token from {provider}: {error_msg}'
+       
+       
+    2: class PartialCredentialsError(BotoCoreError):
+    1:     """
+           Only partial credentials were found.
+       
+           :ivar cred_var: The missing credential variable name.
+       
+           """
+       
+    1:     fmt = 'Partial credentials found in {provider}, missing: {cred_var}'
+       
+       
+    2: class CredentialRetrievalError(BotoCoreError):
+    1:     """
+           Error attempting to retrieve credentials from a remote source.
+       
+           :ivar provider: The name of the credential provider.
+           :ivar error_msg: The msg explaining why credentials could not be
+               retrieved.
+       
+           """
+       
+    1:     fmt = 'Error when retrieving credentials from {provider}: {error_msg}'
+       
+       
+    2: class UnknownSignatureVersionError(BotoCoreError):
+    1:     """
+           Requested Signature Version is not known.
+       
+           :ivar signature_version: The name of the requested signature version.
+           """
+       
+    1:     fmt = 'Unknown Signature Version: {signature_version}.'
+       
+       
+    2: class ServiceNotInRegionError(BotoCoreError):
+    1:     """
+           The service is not available in requested region.
+       
+           :ivar service_name: The name of the service.
+           :ivar region_name: The name of the region.
+           """
+       
+    1:     fmt = 'Service {service_name} not available in region {region_name}'
+       
+       
+    2: class BaseEndpointResolverError(BotoCoreError):
+    1:     """Base error for endpoint resolving errors.
+       
+           Should never be raised directly, but clients can catch
+           this exception if they want to generically handle any errors
+           during the endpoint resolution process.
+       
+           """
+       
+       
+    2: class NoRegionError(BaseEndpointResolverError):
+    1:     """No region was specified."""
+       
+    1:     fmt = 'You must specify a region.'
+       
+       
+    2: class EndpointVariantError(BaseEndpointResolverError):
+    1:     """
+           Could not construct modeled endpoint variant.
+       
+           :ivar error_msg: The message explaining why the modeled endpoint variant
+               is unable to be constructed.
+       
+           """
+       
+    1:     fmt = (
+    1:         'Unable to construct a modeled endpoint with the following '
+               'variant(s) {tags}: '
+           )
+       
+       
+    2: class UnknownEndpointError(BaseEndpointResolverError, ValueError):
+    1:     """
+           Could not construct an endpoint.
+       
+           :ivar service_name: The name of the service.
+           :ivar region_name: The name of the region.
+           """
+       
+    1:     fmt = (
+    1:         'Unable to construct an endpoint for '
+               '{service_name} in region {region_name}'
+           )
+       
+       
+    2: class UnknownFIPSEndpointError(BaseEndpointResolverError):
+    1:     """
+           Could not construct a FIPS endpoint.
+       
+           :ivar service_name: The name of the service.
+           :ivar region_name: The name of the region.
+           """
+       
+    1:     fmt = (
+    1:         'The provided FIPS pseudo-region "{region_name}" is not known for '
+               'the service "{service_name}". A FIPS compliant endpoint cannot be '
+               'constructed.'
+           )
+       
+       
+    2: class ProfileNotFound(BotoCoreError):
+    1:     """
+           The specified configuration profile was not found in the
+           configuration file.
+       
+           :ivar profile: The name of the profile the user attempted to load.
+           """
+       
+    1:     fmt = 'The config profile ({profile}) could not be found'
+       
+       
+    2: class ConfigParseError(BotoCoreError):
+    1:     """
+           The configuration file could not be parsed.
+       
+           :ivar path: The path to the configuration file.
+           """
+       
+    1:     fmt = 'Unable to parse config file: {path}'
+       
+       
+    2: class ConfigNotFound(BotoCoreError):
+    1:     """
+           The specified configuration file could not be found.
+       
+           :ivar path: The path to the configuration file.
+           """
+       
+    1:     fmt = 'The specified config file ({path}) could not be found.'
+       
+       
+    2: class MissingParametersError(BotoCoreError):
+    1:     """
+           One or more required parameters were not supplied.
+       
+           :ivar object: The object that has missing parameters.
+               This can be an operation or a parameter (in the
+               case of inner params).  The str() of this object
+               will be used so it doesn't need to implement anything
+               other than str().
+           :ivar missing: The names of the missing parameters.
+           """
+       
+    1:     fmt = (
+    1:         'The following required parameters are missing for '
+               '{object_name}: {missing}'
+           )
+       
+       
+    2: class ValidationError(BotoCoreError):
+    1:     """
+           An exception occurred validating parameters.
+       
+           Subclasses must accept a ``value`` and ``param``
+           argument in their ``__init__``.
+       
+           :ivar value: The value that was being validated.
+           :ivar param: The parameter that failed validation.
+           :ivar type_name: The name of the underlying type.
+           """
+       
+    1:     fmt = "Invalid value ('{value}') for param {param} " "of type {type_name} "
+       
+       
+    2: class ParamValidationError(BotoCoreError):
+    1:     fmt = 'Parameter validation failed:\n{report}'
+       
+       
+       # These exceptions subclass from ValidationError so that code
+       # can just 'except ValidationError' to catch any possibly validation
+       # error.
+    2: class UnknownKeyError(ValidationError):
+    1:     """
+           Unknown key in a struct parameter.
+       
+           :ivar value: The value that was being checked.
+           :ivar param: The name of the parameter.
+           :ivar choices: The valid choices the value can be.
+           """
+       
+    1:     fmt = (
+    1:         "Unknown key '{value}' for param '{param}'.  Must be one "
+               "of: {choices}"
+           )
+       
+       
+    2: class RangeError(ValidationError):
+    1:     """
+           A parameter value was out of the valid range.
+       
+           :ivar value: The value that was being checked.
+           :ivar param: The parameter that failed validation.
+           :ivar min_value: The specified minimum value.
+           :ivar max_value: The specified maximum value.
+           """
+       
+    1:     fmt = (
+    1:         'Value out of range for param {param}: '
+               '{min_value} <= {value} <= {max_value}'
+           )
+       
+       
+    2: class UnknownParameterError(ValidationError):
+    1:     """
+           Unknown top level parameter.
+       
+           :ivar name: The name of the unknown parameter.
+           :ivar operation: The name of the operation.
+           :ivar choices: The valid choices the parameter name can be.
+           """
+       
+    1:     fmt = (
+    1:         "Unknown parameter '{name}' for operation {operation}.  Must be one "
+               "of: {choices}"
+           )
+       
+       
+    2: class InvalidRegionError(ValidationError, ValueError):
+    1:     """
+           Invalid region_name provided to client or resource.
+       
+           :ivar region_name: region_name that was being validated.
+           """
+       
+    1:     fmt = "Provided region_name '{region_name}' doesn't match a supported format."
+       
+       
+    2: class AliasConflictParameterError(ValidationError):
+    1:     """
+           Error when an alias is provided for a parameter as well as the original.
+       
+           :ivar original: The name of the original parameter.
+           :ivar alias: The name of the alias
+           :ivar operation: The name of the operation.
+           """
+       
+    1:     fmt = (
+    1:         "Parameter '{original}' and its alias '{alias}' were provided "
+               "for operation {operation}.  Only one of them may be used."
+           )
+       
+       
+    2: class UnknownServiceStyle(BotoCoreError):
+    1:     """
+           Unknown style of service invocation.
+       
+           :ivar service_style: The style requested.
+           """
+       
+    1:     fmt = 'The service style ({service_style}) is not understood.'
+       
+       
+    2: class PaginationError(BotoCoreError):
+    1:     fmt = 'Error during pagination: {message}'
+       
+       
+    2: class OperationNotPageableError(BotoCoreError):
+    1:     fmt = 'Operation cannot be paginated: {operation_name}'
+       
+       
+    2: class ChecksumError(BotoCoreError):
+    1:     """The expected checksum did not match the calculated checksum."""
+       
+    1:     fmt = (
+    1:         'Checksum {checksum_type} failed, expected checksum '
+               '{expected_checksum} did not match calculated checksum '
+               '{actual_checksum}.'
+           )
+       
+       
+    2: class UnseekableStreamError(BotoCoreError):
+    1:     """Need to seek a stream, but stream does not support seeking."""
+       
+    1:     fmt = (
+    1:         'Need to rewind the stream {stream_object}, but stream '
+               'is not seekable.'
+           )
+       
+       
+    2: class WaiterError(BotoCoreError):
+    1:     """Waiter failed to reach desired state."""
+       
+    1:     fmt = 'Waiter {name} failed: {reason}'
+       
+    1:     def __init__(self, name, reason, last_response):
+>>>>>>         super().__init__(name=name, reason=reason)
+>>>>>>         self.last_response = last_response
+       
+       
+    2: class IncompleteReadError(BotoCoreError):
+    1:     """HTTP response did not return expected number of bytes."""
+       
+    1:     fmt = (
+    1:         '{actual_bytes} read, but total bytes ' 'expected is {expected_bytes}.'
+           )
+       
+       
+    2: class InvalidExpressionError(BotoCoreError):
+    1:     """Expression is either invalid or too complex."""
+       
+    1:     fmt = 'Invalid expression {expression}: Only dotted lookups are supported.'
+       
+       
+    2: class UnknownCredentialError(BotoCoreError):
+    1:     """Tried to insert before/after an unregistered credential type."""
+       
+    1:     fmt = 'Credential named {name} not found.'
+       
+       
+    2: class WaiterConfigError(BotoCoreError):
+    1:     """Error when processing waiter configuration."""
+       
+    1:     fmt = 'Error processing waiter config: {error_msg}'
+       
+       
+    2: class UnknownClientMethodError(BotoCoreError):
+    1:     """Error when trying to access a method on a client that does not exist."""
+       
+    1:     fmt = 'Client does not have method: {method_name}'
+       
+       
+    2: class UnsupportedSignatureVersionError(BotoCoreError):
+    1:     """Error when trying to use an unsupported Signature Version."""
+       
+    1:     fmt = 'Signature version is not supported: {signature_version}'
+       
+       
+    2: class ClientError(Exception):
+    1:     MSG_TEMPLATE = (
+    1:         'An error occurred ({error_code}) when calling the {operation_name} '
+               'operation{retry_info}: {error_message}'
+           )
+       
+    1:     def __init__(self, error_response, operation_name):
+>>>>>>         retry_info = self._get_retry_info(error_response)
+>>>>>>         error = error_response.get('Error', {})
+>>>>>>         msg = self.MSG_TEMPLATE.format(
+>>>>>>             error_code=error.get('Code', 'Unknown'),
+>>>>>>             error_message=error.get('Message', 'Unknown'),
+>>>>>>             operation_name=operation_name,
+>>>>>>             retry_info=retry_info,
+               )
+>>>>>>         super().__init__(msg)
+>>>>>>         self.response = error_response
+>>>>>>         self.operation_name = operation_name
+       
+    1:     def _get_retry_info(self, response):
+>>>>>>         retry_info = ''
+>>>>>>         if 'ResponseMetadata' in response:
+>>>>>>             metadata = response['ResponseMetadata']
+>>>>>>             if metadata.get('MaxAttemptsReached', False):
+>>>>>>                 if 'RetryAttempts' in metadata:
+>>>>>>                     retry_info = (
+>>>>>>                         f" (reached max retries: {metadata['RetryAttempts']})"
+                           )
+>>>>>>         return retry_info
+       
+    1:     def __reduce__(self):
+               # Subclasses of ClientError's are dynamically generated and
+               # cannot be pickled unless they are attributes of a
+               # module. So at the very least return a ClientError back.
+>>>>>>         return ClientError, (self.response, self.operation_name)
+       
+       
+    2: class EventStreamError(ClientError):
+    1:     pass
+       
+       
+    2: class UnsupportedTLSVersionWarning(Warning):
+    1:     """Warn when an openssl version that uses TLS 1.2 is required"""
+       
+    1:     pass
+       
+       
+    2: class ImminentRemovalWarning(Warning):
+    1:     pass
+       
+       
+    2: class InvalidDNSNameError(BotoCoreError):
+    1:     """Error when virtual host path is forced on a non-DNS compatible bucket"""
+       
+    1:     fmt = (
+    1:         'Bucket named {bucket_name} is not DNS compatible. Virtual '
+               'hosted-style addressing cannot be used. The addressing style '
+               'can be configured by removing the addressing_style value '
+               'or setting that value to \'path\' or \'auto\' in the AWS Config '
+               'file or in the botocore.client.Config object.'
+           )
+       
+       
+    2: class InvalidS3AddressingStyleError(BotoCoreError):
+    1:     """Error when an invalid path style is specified"""
+       
+    1:     fmt = (
+    1:         'S3 addressing style {s3_addressing_style} is invalid. Valid options '
+               'are: \'auto\', \'virtual\', and \'path\''
+           )
+       
+       
+    2: class UnsupportedS3ArnError(BotoCoreError):
+    1:     """Error when S3 ARN provided to Bucket parameter is not supported"""
+       
+    1:     fmt = (
+    1:         'S3 ARN {arn} provided to "Bucket" parameter is invalid. Only '
+               'ARNs for S3 access-points are supported.'
+           )
+       
+       
+    2: class UnsupportedS3ControlArnError(BotoCoreError):
+    1:     """Error when S3 ARN provided to S3 control parameter is not supported"""
+       
+    1:     fmt = 'S3 ARN "{arn}" provided is invalid for this operation. {msg}'
+       
+       
+    2: class InvalidHostLabelError(BotoCoreError):
+    1:     """Error when an invalid host label would be bound to an endpoint"""
+       
+    1:     fmt = (
+    1:         'Invalid host label to be bound to the hostname of the endpoint: '
+               '"{label}".'
+           )
+       
+       
+    2: class UnsupportedOutpostResourceError(BotoCoreError):
+    1:     """Error when S3 Outpost ARN provided to Bucket parameter is incomplete"""
+       
+    1:     fmt = (
+    1:         'S3 Outpost ARN resource "{resource_name}" provided to "Bucket" '
+               'parameter is invalid. Only ARNs for S3 Outpost arns with an '
+               'access-point sub-resource are supported.'
+           )
+       
+       
+    2: class UnsupportedS3ConfigurationError(BotoCoreError):
+    1:     """Error when an unsupported configuration is used with access-points"""
+       
+    1:     fmt = 'Unsupported configuration when using S3: {msg}'
+       
+       
+    2: class UnsupportedS3AccesspointConfigurationError(BotoCoreError):
+    1:     """Error when an unsupported configuration is used with access-points"""
+       
+    1:     fmt = 'Unsupported configuration when using S3 access-points: {msg}'
+       
+       
+    2: class InvalidEndpointDiscoveryConfigurationError(BotoCoreError):
+    1:     """Error when invalid value supplied for endpoint_discovery_enabled"""
+       
+    1:     fmt = (
+    1:         'Unsupported configuration value for endpoint_discovery_enabled. '
+               'Expected one of ("true", "false", "auto") but got {config_value}.'
+           )
+       
+       
+    2: class UnsupportedS3ControlConfigurationError(BotoCoreError):
+    1:     """Error when an unsupported configuration is used with S3 Control"""
+       
+    1:     fmt = 'Unsupported configuration when using S3 Control: {msg}'
+       
+       
+    2: class InvalidRetryConfigurationError(BotoCoreError):
+    1:     """Error when invalid retry configuration is specified"""
+       
+    1:     fmt = (
+    1:         'Cannot provide retry configuration for "{retry_config_option}". '
+               'Valid retry configuration options are: {valid_options}'
+           )
+       
+       
+    2: class InvalidMaxRetryAttemptsError(InvalidRetryConfigurationError):
+    1:     """Error when invalid retry configuration is specified"""
+       
+    1:     fmt = (
+    1:         'Value provided to "max_attempts": {provided_max_attempts} must '
+               'be an integer greater than or equal to {min_value}.'
+           )
+       
+       
+    2: class InvalidRetryModeError(InvalidRetryConfigurationError):
+    1:     """Error when invalid retry mode configuration is specified"""
+       
+    1:     fmt = (
+    1:         'Invalid value provided to "mode": "{provided_retry_mode}" must '
+               'be one of: {valid_modes}'
+           )
+       
+       
+    2: class InvalidS3UsEast1RegionalEndpointConfigError(BotoCoreError):
+    1:     """Error for invalid s3 us-east-1 regional endpoints configuration"""
+       
+    1:     fmt = (
+    1:         'S3 us-east-1 regional endpoint option '
+               '{s3_us_east_1_regional_endpoint_config} is '
+               'invalid. Valid options are: "legacy", "regional"'
+           )
+       
+       
+    2: class InvalidSTSRegionalEndpointsConfigError(BotoCoreError):
+    1:     """Error when invalid sts regional endpoints configuration is specified"""
+       
+    1:     fmt = (
+    1:         'STS regional endpoints option {sts_regional_endpoints_config} is '
+               'invalid. Valid options are: "legacy", "regional"'
+           )
+       
+       
+    2: class StubResponseError(BotoCoreError):
+    1:     fmt = (
+    1:         'Error getting response stub for operation {operation_name}: {reason}'
+           )
+       
+       
+    2: class StubAssertionError(StubResponseError, AssertionError):
+    1:     pass
+       
+       
+    2: class UnStubbedResponseError(StubResponseError):
+    1:     pass
+       
+       
+    2: class InvalidConfigError(BotoCoreError):
+    1:     fmt = '{error_msg}'
+       
+       
+    2: class InfiniteLoopConfigError(InvalidConfigError):
+    1:     fmt = (
+    1:         'Infinite loop in credential configuration detected. Attempting to '
+               'load from profile {source_profile} which has already been visited. '
+               'Visited profiles: {visited_profiles}'
+           )
+       
+       
+    2: class RefreshWithMFAUnsupportedError(BotoCoreError):
+    1:     fmt = 'Cannot refresh credentials: MFA token required.'
+       
+       
+    2: class MD5UnavailableError(BotoCoreError):
+    1:     fmt = "This system does not support MD5 generation."
+       
+       
+    2: class MissingDependencyException(BotoCoreError):
+    1:     fmt = "Missing Dependency: {msg}"
+       
+       
+    2: class MetadataRetrievalError(BotoCoreError):
+    1:     fmt = "Error retrieving metadata: {error_msg}"
+       
+       
+    2: class UndefinedModelAttributeError(Exception):
+    1:     pass
+       
+       
+    2: class MissingServiceIdError(UndefinedModelAttributeError):
+    1:     fmt = (
+    1:         "The model being used for the service {service_name} is missing the "
+               "serviceId metadata property, which is required."
+           )
+       
+    1:     def __init__(self, **kwargs):
+>>>>>>         msg = self.fmt.format(**kwargs)
+>>>>>>         Exception.__init__(self, msg)
+>>>>>>         self.kwargs = kwargs
+       
+       
+    2: class SSOError(BotoCoreError):
+    1:     fmt = (
+    1:         "An unspecified error happened when resolving AWS credentials or an "
+               "access token from SSO."
+           )
+       
+       
+    2: class SSOTokenLoadError(SSOError):
+    1:     fmt = "Error loading SSO Token: {error_msg}"
+       
+       
+    2: class UnauthorizedSSOTokenError(SSOError):
+    1:     fmt = (
+    1:         "The SSO session associated with this profile has expired or is "
+               "otherwise invalid. To refresh this SSO session run aws sso login "
+               "with the corresponding profile."
+           )
+       
+       
+    2: class CapacityNotAvailableError(BotoCoreError):
+    1:     fmt = 'Insufficient request capacity available.'
+       
+       
+    2: class InvalidProxiesConfigError(BotoCoreError):
+    1:     fmt = 'Invalid configuration value(s) provided for proxies_config.'
+       
+       
+    2: class InvalidDefaultsMode(BotoCoreError):
+    1:     fmt = (
+    1:         'Client configured with invalid defaults mode: {mode}. '
+               'Valid defaults modes include: {valid_modes}.'
+           )
+       
+       
+    2: class AwsChunkedWrapperError(BotoCoreError):
+    1:     fmt = '{error_msg}'
+       
+       
+    2: class FlexibleChecksumError(BotoCoreError):
+    1:     fmt = '{error_msg}'
+       
+       
+    2: class InvalidEndpointConfigurationError(BotoCoreError):
+    1:     fmt = 'Invalid endpoint configuration: {msg}'
+       
+       
+    2: class EndpointProviderError(BotoCoreError):
+    1:     """Base error for the EndpointProvider class"""
+       
+    1:     fmt = '{msg}'
+       
+       
+    2: class EndpointResolutionError(EndpointProviderError):
+    1:     """Error when input parameters resolve to an error rule"""
+       
+    1:     fmt = '{msg}'
+       
+       
+    2: class UnknownEndpointResolutionBuiltInName(EndpointProviderError):
+    1:     fmt = 'Unknown builtin variable name: {name}'

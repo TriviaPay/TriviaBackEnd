@@ -1,0 +1,388 @@
+    1: import typing
+       
+    1: from ._migration import getattr_migration
+    1: from .version import VERSION
+       
+    1: if typing.TYPE_CHECKING:
+           # import of virtually everything is supported via `__getattr__` below,
+           # but we need them here for type checking and IDE support
+>>>>>>     import pydantic_core
+>>>>>>     from pydantic_core.core_schema import (
+               FieldSerializationInfo,
+               SerializationInfo,
+               SerializerFunctionWrapHandler,
+               ValidationInfo,
+               ValidatorFunctionWrapHandler,
+           )
+       
+>>>>>>     from . import dataclasses
+>>>>>>     from ._internal._generate_schema import GenerateSchema as GenerateSchema
+>>>>>>     from .aliases import AliasChoices, AliasGenerator, AliasPath
+>>>>>>     from .annotated_handlers import GetCoreSchemaHandler, GetJsonSchemaHandler
+>>>>>>     from .config import ConfigDict
+>>>>>>     from .errors import *
+>>>>>>     from .fields import Field, PrivateAttr, computed_field
+>>>>>>     from .functional_serializers import (
+               PlainSerializer,
+               SerializeAsAny,
+               WrapSerializer,
+               field_serializer,
+               model_serializer,
+           )
+>>>>>>     from .functional_validators import (
+               AfterValidator,
+               BeforeValidator,
+               InstanceOf,
+               PlainValidator,
+               SkipValidation,
+               WrapValidator,
+               field_validator,
+               model_validator,
+           )
+>>>>>>     from .json_schema import WithJsonSchema
+>>>>>>     from .main import *
+>>>>>>     from .networks import *
+>>>>>>     from .type_adapter import TypeAdapter
+>>>>>>     from .types import *
+>>>>>>     from .validate_call_decorator import validate_call
+>>>>>>     from .warnings import PydanticDeprecatedSince20, PydanticDeprecatedSince26, PydanticDeprecationWarning
+       
+           # this encourages pycharm to import `ValidationError` from here, not pydantic_core
+>>>>>>     ValidationError = pydantic_core.ValidationError
+>>>>>>     from .deprecated.class_validators import root_validator, validator
+>>>>>>     from .deprecated.config import BaseConfig, Extra
+>>>>>>     from .deprecated.tools import *
+>>>>>>     from .root_model import RootModel
+       
+    1: __version__ = VERSION
+    1: __all__ = (
+           # dataclasses
+           'dataclasses',
+           # functional validators
+           'field_validator',
+           'model_validator',
+           'AfterValidator',
+           'BeforeValidator',
+           'PlainValidator',
+           'WrapValidator',
+           'SkipValidation',
+           'InstanceOf',
+           # JSON Schema
+           'WithJsonSchema',
+           # deprecated V1 functional validators, these are imported via `__getattr__` below
+           'root_validator',
+           'validator',
+           # functional serializers
+           'field_serializer',
+           'model_serializer',
+           'PlainSerializer',
+           'SerializeAsAny',
+           'WrapSerializer',
+           # config
+           'ConfigDict',
+           # deprecated V1 config, these are imported via `__getattr__` below
+           'BaseConfig',
+           'Extra',
+           # validate_call
+           'validate_call',
+           # errors
+           'PydanticErrorCodes',
+           'PydanticUserError',
+           'PydanticSchemaGenerationError',
+           'PydanticImportError',
+           'PydanticUndefinedAnnotation',
+           'PydanticInvalidForJsonSchema',
+           # fields
+           'Field',
+           'computed_field',
+           'PrivateAttr',
+           # alias
+           'AliasChoices',
+           'AliasGenerator',
+           'AliasPath',
+           # main
+           'BaseModel',
+           'create_model',
+           # network
+           'AnyUrl',
+           'AnyHttpUrl',
+           'FileUrl',
+           'HttpUrl',
+           'UrlConstraints',
+           'EmailStr',
+           'NameEmail',
+           'IPvAnyAddress',
+           'IPvAnyInterface',
+           'IPvAnyNetwork',
+           'PostgresDsn',
+           'CockroachDsn',
+           'AmqpDsn',
+           'RedisDsn',
+           'MongoDsn',
+           'KafkaDsn',
+           'NatsDsn',
+           'MySQLDsn',
+           'MariaDBDsn',
+           'validate_email',
+           # root_model
+           'RootModel',
+           # deprecated tools, these are imported via `__getattr__` below
+           'parse_obj_as',
+           'schema_of',
+           'schema_json_of',
+           # types
+           'Strict',
+           'StrictStr',
+           'conbytes',
+           'conlist',
+           'conset',
+           'confrozenset',
+           'constr',
+           'StringConstraints',
+           'ImportString',
+           'conint',
+           'PositiveInt',
+           'NegativeInt',
+           'NonNegativeInt',
+           'NonPositiveInt',
+           'confloat',
+           'PositiveFloat',
+           'NegativeFloat',
+           'NonNegativeFloat',
+           'NonPositiveFloat',
+           'FiniteFloat',
+           'condecimal',
+           'condate',
+           'UUID1',
+           'UUID3',
+           'UUID4',
+           'UUID5',
+           'FilePath',
+           'DirectoryPath',
+           'NewPath',
+           'Json',
+           'SecretStr',
+           'SecretBytes',
+           'StrictBool',
+           'StrictBytes',
+           'StrictInt',
+           'StrictFloat',
+           'PaymentCardNumber',
+           'ByteSize',
+           'PastDate',
+           'FutureDate',
+           'PastDatetime',
+           'FutureDatetime',
+           'AwareDatetime',
+           'NaiveDatetime',
+           'AllowInfNan',
+           'EncoderProtocol',
+           'EncodedBytes',
+           'EncodedStr',
+           'Base64Encoder',
+           'Base64Bytes',
+           'Base64Str',
+           'Base64UrlBytes',
+           'Base64UrlStr',
+           'GetPydanticSchema',
+           'Tag',
+           'Discriminator',
+           'JsonValue',
+           # type_adapter
+           'TypeAdapter',
+           # version
+           '__version__',
+           'VERSION',
+           # warnings
+           'PydanticDeprecatedSince20',
+           'PydanticDeprecatedSince26',
+           'PydanticDeprecationWarning',
+           # annotated handlers
+           'GetCoreSchemaHandler',
+           'GetJsonSchemaHandler',
+           # generate schema from ._internal
+           'GenerateSchema',
+           # pydantic_core
+           'ValidationError',
+           'ValidationInfo',
+           'SerializationInfo',
+           'ValidatorFunctionWrapHandler',
+           'FieldSerializationInfo',
+           'SerializerFunctionWrapHandler',
+           'OnErrorOmit',
+       )
+       
+       # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
+    1: _dynamic_imports: 'dict[str, tuple[str, str]]' = {
+    1:     'dataclasses': (__package__, '__module__'),
+           # functional validators
+    1:     'field_validator': (__package__, '.functional_validators'),
+    1:     'model_validator': (__package__, '.functional_validators'),
+    1:     'AfterValidator': (__package__, '.functional_validators'),
+    1:     'BeforeValidator': (__package__, '.functional_validators'),
+    1:     'PlainValidator': (__package__, '.functional_validators'),
+    1:     'WrapValidator': (__package__, '.functional_validators'),
+    1:     'SkipValidation': (__package__, '.functional_validators'),
+    1:     'InstanceOf': (__package__, '.functional_validators'),
+           # JSON Schema
+    1:     'WithJsonSchema': (__package__, '.json_schema'),
+           # functional serializers
+    1:     'field_serializer': (__package__, '.functional_serializers'),
+    1:     'model_serializer': (__package__, '.functional_serializers'),
+    1:     'PlainSerializer': (__package__, '.functional_serializers'),
+    1:     'SerializeAsAny': (__package__, '.functional_serializers'),
+    1:     'WrapSerializer': (__package__, '.functional_serializers'),
+           # config
+    1:     'ConfigDict': (__package__, '.config'),
+           # validate call
+    1:     'validate_call': (__package__, '.validate_call_decorator'),
+           # errors
+    1:     'PydanticErrorCodes': (__package__, '.errors'),
+    1:     'PydanticUserError': (__package__, '.errors'),
+    1:     'PydanticSchemaGenerationError': (__package__, '.errors'),
+    1:     'PydanticImportError': (__package__, '.errors'),
+    1:     'PydanticUndefinedAnnotation': (__package__, '.errors'),
+    1:     'PydanticInvalidForJsonSchema': (__package__, '.errors'),
+           # fields
+    1:     'Field': (__package__, '.fields'),
+    1:     'computed_field': (__package__, '.fields'),
+    1:     'PrivateAttr': (__package__, '.fields'),
+           # alias
+    1:     'AliasChoices': (__package__, '.aliases'),
+    1:     'AliasGenerator': (__package__, '.aliases'),
+    1:     'AliasPath': (__package__, '.aliases'),
+           # main
+    1:     'BaseModel': (__package__, '.main'),
+    1:     'create_model': (__package__, '.main'),
+           # network
+    1:     'AnyUrl': (__package__, '.networks'),
+    1:     'AnyHttpUrl': (__package__, '.networks'),
+    1:     'FileUrl': (__package__, '.networks'),
+    1:     'HttpUrl': (__package__, '.networks'),
+    1:     'UrlConstraints': (__package__, '.networks'),
+    1:     'EmailStr': (__package__, '.networks'),
+    1:     'NameEmail': (__package__, '.networks'),
+    1:     'IPvAnyAddress': (__package__, '.networks'),
+    1:     'IPvAnyInterface': (__package__, '.networks'),
+    1:     'IPvAnyNetwork': (__package__, '.networks'),
+    1:     'PostgresDsn': (__package__, '.networks'),
+    1:     'CockroachDsn': (__package__, '.networks'),
+    1:     'AmqpDsn': (__package__, '.networks'),
+    1:     'RedisDsn': (__package__, '.networks'),
+    1:     'MongoDsn': (__package__, '.networks'),
+    1:     'KafkaDsn': (__package__, '.networks'),
+    1:     'NatsDsn': (__package__, '.networks'),
+    1:     'MySQLDsn': (__package__, '.networks'),
+    1:     'MariaDBDsn': (__package__, '.networks'),
+    1:     'validate_email': (__package__, '.networks'),
+           # root_model
+    1:     'RootModel': (__package__, '.root_model'),
+           # types
+    1:     'Strict': (__package__, '.types'),
+    1:     'StrictStr': (__package__, '.types'),
+    1:     'conbytes': (__package__, '.types'),
+    1:     'conlist': (__package__, '.types'),
+    1:     'conset': (__package__, '.types'),
+    1:     'confrozenset': (__package__, '.types'),
+    1:     'constr': (__package__, '.types'),
+    1:     'StringConstraints': (__package__, '.types'),
+    1:     'ImportString': (__package__, '.types'),
+    1:     'conint': (__package__, '.types'),
+    1:     'PositiveInt': (__package__, '.types'),
+    1:     'NegativeInt': (__package__, '.types'),
+    1:     'NonNegativeInt': (__package__, '.types'),
+    1:     'NonPositiveInt': (__package__, '.types'),
+    1:     'confloat': (__package__, '.types'),
+    1:     'PositiveFloat': (__package__, '.types'),
+    1:     'NegativeFloat': (__package__, '.types'),
+    1:     'NonNegativeFloat': (__package__, '.types'),
+    1:     'NonPositiveFloat': (__package__, '.types'),
+    1:     'FiniteFloat': (__package__, '.types'),
+    1:     'condecimal': (__package__, '.types'),
+    1:     'condate': (__package__, '.types'),
+    1:     'UUID1': (__package__, '.types'),
+    1:     'UUID3': (__package__, '.types'),
+    1:     'UUID4': (__package__, '.types'),
+    1:     'UUID5': (__package__, '.types'),
+    1:     'FilePath': (__package__, '.types'),
+    1:     'DirectoryPath': (__package__, '.types'),
+    1:     'NewPath': (__package__, '.types'),
+    1:     'Json': (__package__, '.types'),
+    1:     'SecretStr': (__package__, '.types'),
+    1:     'SecretBytes': (__package__, '.types'),
+    1:     'StrictBool': (__package__, '.types'),
+    1:     'StrictBytes': (__package__, '.types'),
+    1:     'StrictInt': (__package__, '.types'),
+    1:     'StrictFloat': (__package__, '.types'),
+    1:     'PaymentCardNumber': (__package__, '.types'),
+    1:     'ByteSize': (__package__, '.types'),
+    1:     'PastDate': (__package__, '.types'),
+    1:     'FutureDate': (__package__, '.types'),
+    1:     'PastDatetime': (__package__, '.types'),
+    1:     'FutureDatetime': (__package__, '.types'),
+    1:     'AwareDatetime': (__package__, '.types'),
+    1:     'NaiveDatetime': (__package__, '.types'),
+    1:     'AllowInfNan': (__package__, '.types'),
+    1:     'EncoderProtocol': (__package__, '.types'),
+    1:     'EncodedBytes': (__package__, '.types'),
+    1:     'EncodedStr': (__package__, '.types'),
+    1:     'Base64Encoder': (__package__, '.types'),
+    1:     'Base64Bytes': (__package__, '.types'),
+    1:     'Base64Str': (__package__, '.types'),
+    1:     'Base64UrlBytes': (__package__, '.types'),
+    1:     'Base64UrlStr': (__package__, '.types'),
+    1:     'GetPydanticSchema': (__package__, '.types'),
+    1:     'Tag': (__package__, '.types'),
+    1:     'Discriminator': (__package__, '.types'),
+    1:     'JsonValue': (__package__, '.types'),
+    1:     'OnErrorOmit': (__package__, '.types'),
+           # type_adapter
+    1:     'TypeAdapter': (__package__, '.type_adapter'),
+           # warnings
+    1:     'PydanticDeprecatedSince20': (__package__, '.warnings'),
+    1:     'PydanticDeprecatedSince26': (__package__, '.warnings'),
+    1:     'PydanticDeprecationWarning': (__package__, '.warnings'),
+           # annotated handlers
+    1:     'GetCoreSchemaHandler': (__package__, '.annotated_handlers'),
+    1:     'GetJsonSchemaHandler': (__package__, '.annotated_handlers'),
+           # generate schema from ._internal
+    1:     'GenerateSchema': (__package__, '._internal._generate_schema'),
+           # pydantic_core stuff
+    1:     'ValidationError': ('pydantic_core', '.'),
+    1:     'ValidationInfo': ('pydantic_core', '.core_schema'),
+    1:     'SerializationInfo': ('pydantic_core', '.core_schema'),
+    1:     'ValidatorFunctionWrapHandler': ('pydantic_core', '.core_schema'),
+    1:     'FieldSerializationInfo': ('pydantic_core', '.core_schema'),
+    1:     'SerializerFunctionWrapHandler': ('pydantic_core', '.core_schema'),
+           # deprecated, mostly not included in __all__
+    1:     'root_validator': (__package__, '.deprecated.class_validators'),
+    1:     'validator': (__package__, '.deprecated.class_validators'),
+    1:     'BaseConfig': (__package__, '.deprecated.config'),
+    1:     'Extra': (__package__, '.deprecated.config'),
+    1:     'parse_obj_as': (__package__, '.deprecated.tools'),
+    1:     'schema_of': (__package__, '.deprecated.tools'),
+    1:     'schema_json_of': (__package__, '.deprecated.tools'),
+    1:     'FieldValidationInfo': ('pydantic_core', '.core_schema'),
+       }
+       
+    1: _getattr_migration = getattr_migration(__name__)
+       
+       
+    1: def __getattr__(attr_name: str) -> object:
+ 3595:     dynamic_attr = _dynamic_imports.get(attr_name)
+ 3595:     if dynamic_attr is None:
+    1:         return _getattr_migration(attr_name)
+       
+ 3594:     package, module_name = dynamic_attr
+       
+ 3594:     from importlib import import_module
+       
+ 3594:     if module_name == '__module__':
+>>>>>>         return import_module(f'.{attr_name}', package=package)
+           else:
+ 3594:         module = import_module(module_name, package=package)
+ 3594:         return getattr(module, attr_name)
+       
+       
+    1: def __dir__() -> 'list[str]':
+>>>>>>     return list(__all__)

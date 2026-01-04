@@ -7,7 +7,7 @@ import json
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 from models import TriviaQuestionsFreeMode, TriviaQuestionsBronzeMode, TriviaQuestionsSilverMode
-from utils.question_hash_utils import generate_question_hash, check_duplicate_in_mode
+from utils.question_hash_utils import generate_question_hash, get_existing_hashes_in_mode
 
 
 def parse_csv_questions(file_content: bytes, mode_id: str) -> List[Dict[str, Any]]:
@@ -123,8 +123,28 @@ def save_questions_to_mode(db: Session, questions: List[Dict[str, Any]], mode_id
     duplicate_count = 0
     error_count = 0
     errors = []
-    
+    question_model = None
+    if mode_id == 'free_mode':
+        question_model = TriviaQuestionsFreeMode
+    elif mode_id == 'bronze':
+        question_model = TriviaQuestionsBronzeMode
+    elif mode_id == 'silver':
+        question_model = TriviaQuestionsSilverMode
+    else:
+        raise ValueError(f"Unknown mode_id '{mode_id}'")
+
+    question_hashes = []
     for idx, question_data in enumerate(questions, start=1):
+        question_hashes.append((idx, question_data, generate_question_hash(question_data['question'])))
+
+    existing_hashes = get_existing_hashes_in_mode(
+        db,
+        {qh for _, _, qh in question_hashes},
+        mode_id
+    )
+    seen_hashes = set()
+
+    for idx, question_data, question_hash in question_hashes:
         try:
             # Validate question
             is_valid, error_msg = validate_question(question_data)
@@ -132,28 +152,13 @@ def save_questions_to_mode(db: Session, questions: List[Dict[str, Any]], mode_id
                 error_count += 1
                 errors.append(f"Question {idx}: {error_msg}")
                 continue
-            
-            # Generate hash
-            question_hash = generate_question_hash(question_data['question'])
-            
-            # Check for duplicate
-            if check_duplicate_in_mode(db, question_hash, mode_id):
+
+            # Check for duplicate (batch prefetch + in-file dedupe)
+            if question_hash in existing_hashes or question_hash in seen_hashes:
                 duplicate_count += 1
                 errors.append(f"Question {idx}: Duplicate question found (hash: {question_hash[:8]}...)")
                 continue
-            
-            # Save to appropriate table
-            question_model = None
-            if mode_id == 'free_mode':
-                question_model = TriviaQuestionsFreeMode
-            elif mode_id == 'bronze':
-                question_model = TriviaQuestionsBronzeMode
-            elif mode_id == 'silver':
-                question_model = TriviaQuestionsSilverMode
-            else:
-                error_count += 1
-                errors.append(f"Question {idx}: Unknown mode_id '{mode_id}'")
-                continue
+            seen_hashes.add(question_hash)
             
             question = question_model(
                 question=question_data['question'],
@@ -191,4 +196,3 @@ def save_questions_to_mode(db: Session, questions: List[Dict[str, Any]], mode_id
         'error_count': error_count,
         'errors': errors
     }
-

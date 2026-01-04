@@ -1,0 +1,590 @@
+    1: from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
+    1: from pydantic import BaseModel, Field
+    1: from sqlalchemy.orm import Session, joinedload
+    1: from sqlalchemy import and_, exc
+    1: from datetime import datetime, timedelta
+    1: from typing import Optional, Union
+       
+    1: from db import get_db
+    1: from models import User, GlobalChatMessage, GlobalChatViewer
+    1: from routers.dependencies import get_current_user
+    1: from config import (
+           GLOBAL_CHAT_ENABLED,
+           GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE,
+           GLOBAL_CHAT_MAX_MESSAGE_LENGTH,
+           GLOBAL_CHAT_RETENTION_DAYS,
+           GLOBAL_CHAT_MAX_MESSAGES_PER_BURST,
+           GLOBAL_CHAT_BURST_WINDOW_SECONDS
+       )
+    1: from utils.pusher_client import publish_chat_message_sync
+    1: from utils.message_sanitizer import sanitize_message
+    1: from utils.chat_helpers import get_user_chat_profile_data, get_user_chat_profile_data_bulk
+    1: from utils.onesignal_client import send_push_notification_async, ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS
+    1: from utils.chat_mute import get_muted_user_ids
+    1: from utils.chat_redis import check_burst_limit, check_rate_limit, enqueue_chat_event, get_chat_redis
+    1: from models import OneSignalPlayer
+    1: import logging
+       
+    1: logger = logging.getLogger(__name__)
+       
+    1: router = APIRouter(prefix="/global-chat", tags=["Global Chat"])
+       
+       
+    2: class SendMessageRequest(BaseModel):
+    1:     message: str = Field(..., min_length=1, max_length=GLOBAL_CHAT_MAX_MESSAGE_LENGTH)
+    1:     client_message_id: Optional[str] = Field(None, description="Client-provided ID for idempotency")
+    1:     reply_to_message_id: Optional[int] = Field(None, description="ID of message being replied to")
+       
+       
+    1: def get_display_username(user: User) -> str:
+           """Get display username with fallback logic"""
+    8:     if user.username and user.username.strip():
+    6:         return user.username
+    2:     if user.email:
+    1:         return user.email.split('@')[0]
+    1:     return f"User{user.account_id}"
+       
+       
+    1: def _ensure_datetime(value: Union[datetime, str]) -> datetime:
+    6:     if isinstance(value, datetime):
+    3:         return value
+    3:     try:
+    3:         return datetime.fromisoformat(value)
+    1:     except Exception:
+    1:         return datetime.utcnow()
+       
+       
+    2: def publish_to_pusher_global(message_id: int, user_id: int, username: str, profile_pic: Optional[str],
+    1:                              avatar_url: Optional[str], frame_url: Optional[str], badge: Optional[dict],
+    1:                              message: str, created_at: Union[datetime, str], reply_to: Optional[dict] = None):
+           """Background task to publish to Pusher"""
+    2:     try:
+    2:         created_at_dt = _ensure_datetime(created_at)
+    2:         event_data = {
+    2:             "id": message_id,
+    2:             "user_id": user_id,
+    2:             "username": username,
+    2:             "profile_pic": profile_pic,
+    2:             "avatar_url": avatar_url,
+    2:             "frame_url": frame_url,
+    2:             "badge": badge,
+    2:             "message": message,
+    2:             "created_at": created_at_dt.isoformat()
+               }
+    2:         if reply_to:
+    2:             event_data["reply_to"] = reply_to
+    2:         publish_chat_message_sync("global-chat", "new-message", event_data)
+>>>>>>     except Exception as e:
+>>>>>>         logger.error(f"Failed to publish global chat message to Pusher: {e}")
+       
+       
+    2: def send_push_for_global_chat_sync(message_id: int, sender_id: int, sender_username: str, message: str,
+    1:                                    created_at: Union[datetime, str]):
+           """Background task to send push notifications for global chat to all users (except sender)"""
+    2:     import asyncio
+    2:     from db import get_db
+    2:     from utils.notification_storage import create_notifications_batch
+           
+    2:     db = next(get_db())
+    2:     try:
+    2:         created_at_dt = _ensure_datetime(created_at)
+               # Get all users with OneSignal players (except sender)
+    4:         all_players = db.query(OneSignalPlayer).filter(
+    2:             OneSignalPlayer.user_id != sender_id,
+    2:             OneSignalPlayer.is_valid == True
+               ).all()
+               
+    2:         if not all_players:
+    1:             logger.debug("No OneSignal players found for global chat push")
+    2:             return
+               
+               # Precompute muted users and active users to avoid per-user queries
+    5:         player_user_ids = {player.user_id for player in all_players}
+    1:         muted_user_ids = get_muted_user_ids(list(player_user_ids), 'global', db)
+    1:         threshold_time = datetime.utcnow() - timedelta(seconds=ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS)
+    6:         active_user_ids = {
+    2:             player.user_id
+    4:             for player in all_players
+    3:             if player.last_active and player.last_active >= threshold_time
+               }
+       
+               # Batch player IDs separately for active (in-app) and inactive (system) users
+    1:         BATCH_SIZE = 2000
+    1:         active_player_batches = []  # In-app notifications
+    1:         inactive_player_batches = []  # System push notifications
+    1:         active_current_batch = []
+    1:         inactive_current_batch = []
+               
+    4:         for player in all_players:
+    3:             user_id = player.user_id
+                   
+                   # Check if user has muted global chat
+    3:             if user_id in muted_user_ids:
+    1:                 continue
+                   
+    2:             if user_id in active_user_ids:
+                       # Active user: in-app notification
+    1:                 active_current_batch.append(player.player_id)
+    1:                 if len(active_current_batch) >= BATCH_SIZE:
+>>>>>>                     active_player_batches.append(active_current_batch)
+>>>>>>                     active_current_batch = []
+                   else:
+                       # Inactive user: system push notification
+    1:                 inactive_current_batch.append(player.player_id)
+    1:                 if len(inactive_current_batch) >= BATCH_SIZE:
+>>>>>>                     inactive_player_batches.append(inactive_current_batch)
+>>>>>>                     inactive_current_batch = []
+               
+               # Add remaining batches
+    1:         if active_current_batch:
+    1:             active_player_batches.append(active_current_batch)
+    1:         if inactive_current_batch:
+    1:             inactive_player_batches.append(inactive_current_batch)
+               
+               # Prepare notification data
+    1:         heading = "Global Chat"
+    1:         content = f"{sender_username}: {message[:100]}"  # Truncate for notification
+    1:         data = {
+    1:             "type": "global_chat",
+    1:             "message_id": message_id,
+    1:             "sender_id": sender_id,
+    1:             "sender_username": sender_username,
+    1:             "message": message,
+    1:             "created_at": created_at_dt.isoformat()
+               }
+               
+               # Run async function in event loop
+    1:         try:
+    1:             loop = asyncio.get_event_loop()
+>>>>>>         except RuntimeError:
+>>>>>>             loop = asyncio.new_event_loop()
+>>>>>>             asyncio.set_event_loop(loop)
+               
+               # Send in-app notifications to active users
+    2:         for batch in active_player_batches:
+    1:             logger.debug(f"Sending in-app notification batch: {len(batch)} players")
+    2:             loop.run_until_complete(
+    2:                 send_push_notification_async(
+    1:                     player_ids=batch,
+    1:                     heading=heading,
+    1:                     content=content,
+    1:                     data=data,
+    1:                     is_in_app_notification=True
+                       )
+                   )
+               
+               # Send system push notifications to inactive users
+    2:         for batch in inactive_player_batches:
+    1:             logger.debug(f"Sending system push notification batch: {len(batch)} players")
+    2:             loop.run_until_complete(
+    2:                 send_push_notification_async(
+    1:                     player_ids=batch,
+    1:                     heading=heading,
+    1:                     content=content,
+    1:                     data=data,
+    1:                     is_in_app_notification=False
+                       )
+                   )
+               
+    3:         total_active = sum(len(b) for b in active_player_batches)
+    3:         total_inactive = sum(len(b) for b in inactive_player_batches)
+               
+               # Store notifications in database for all recipients
+    1:         all_recipient_ids = list(player_user_ids - muted_user_ids)
+    1:         if all_recipient_ids:
+    2:             create_notifications_batch(
+    1:                 db=db,
+    1:                 user_ids=all_recipient_ids,
+    1:                 title=heading,
+    1:                 body=content,
+    1:                 notification_type="chat_global",
+    1:                 data=data
+                   )
+               
+    2:         logger.info(
+    3:             f"Sent global chat push notifications | in-app={total_active} | system={total_inactive} | "
+    2:             f"sender_id={sender_id} | message_id={message_id}"
+               )
+>>>>>>     except Exception as e:
+>>>>>>         logger.error(f"Failed to send push notifications for global chat: {e}")
+           finally:
+    2:         db.close()
+       
+       
+    1: @router.post("/send")
+    2: async def send_global_message(
+    1:     request: SendMessageRequest,
+    1:     background_tasks: BackgroundTasks,
+    2:     db: Session = Depends(get_db),
+    2:     current_user: User = Depends(get_current_user)
+       ):
+           """Send message to global chat"""
+    6:     if not GLOBAL_CHAT_ENABLED:
+    1:         raise HTTPException(status_code=403, detail="Global chat is disabled")
+           
+           # Sanitize message to prevent XSS
+    5:     message_text = sanitize_message(request.message)
+    5:     if not message_text:
+>>>>>>         raise HTTPException(status_code=400, detail="Message cannot be empty")
+           
+           # Check for duplicate message (idempotency)
+    5:     if request.client_message_id:
+    2:         existing_message = db.query(GlobalChatMessage).filter(
+    1:             GlobalChatMessage.user_id == current_user.account_id,
+    1:             GlobalChatMessage.client_message_id == request.client_message_id
+               ).first()
+               
+    1:         if existing_message:
+    1:             logger.debug(f"Duplicate global chat message detected: {request.client_message_id}")
+    1:             return {
+    1:                 "message_id": existing_message.id,
+    1:                 "created_at": existing_message.created_at.isoformat(),
+    1:                 "duplicate": True
+                   }
+           
+           # Burst rate limiting via Redis (fallback to DB if unavailable)
+    8:     burst_allowed = await check_burst_limit(
+    4:         "global",
+    4:         current_user.account_id,
+    4:         GLOBAL_CHAT_MAX_MESSAGES_PER_BURST,
+    4:         GLOBAL_CHAT_BURST_WINDOW_SECONDS
+           )
+    4:     if burst_allowed is False:
+>>>>>>         raise HTTPException(
+>>>>>>             status_code=429,
+>>>>>>             detail=f"Burst rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_BURST} messages per {GLOBAL_CHAT_BURST_WINDOW_SECONDS} seconds."
+               )
+    4:     if burst_allowed is None:
+    1:         burst_window_ago = datetime.utcnow() - timedelta(seconds=GLOBAL_CHAT_BURST_WINDOW_SECONDS)
+    4:         recent_burst = db.query(GlobalChatMessage.id).filter(
+    1:             GlobalChatMessage.user_id == current_user.account_id,
+    1:             GlobalChatMessage.created_at >= burst_window_ago
+    1:         ).order_by(GlobalChatMessage.created_at.desc()).limit(
+    1:             GLOBAL_CHAT_MAX_MESSAGES_PER_BURST
+               ).all()
+               
+    1:         if len(recent_burst) >= GLOBAL_CHAT_MAX_MESSAGES_PER_BURST:
+    2:             raise HTTPException(
+    1:                 status_code=429,
+    1:                 detail=f"Burst rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_BURST} messages per {GLOBAL_CHAT_BURST_WINDOW_SECONDS} seconds."
+                   )
+           
+           # Per-minute rate limiting
+    6:     minute_allowed = await check_rate_limit(
+    3:         "global",
+    3:         current_user.account_id,
+    3:         GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE,
+    3:         60
+           )
+    3:     if minute_allowed is False:
+>>>>>>         raise HTTPException(
+>>>>>>             status_code=429,
+>>>>>>             detail=f"Rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
+               )
+    3:     if minute_allowed is None:
+    1:         one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
+    4:         recent_messages = db.query(GlobalChatMessage.id).filter(
+    1:             GlobalChatMessage.user_id == current_user.account_id,
+    1:             GlobalChatMessage.created_at >= one_minute_ago
+    1:         ).order_by(GlobalChatMessage.created_at.desc()).limit(
+    1:             GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE
+               ).all()
+               
+    1:         if len(recent_messages) >= GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE:
+    2:             raise HTTPException(
+    1:                 status_code=429,
+    1:                 detail=f"Rate limit exceeded. Maximum {GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
+                   )
+           
+           # Validate reply_to_message_id if provided
+    2:     reply_to_message = None
+    2:     if request.reply_to_message_id:
+    4:         reply_to_message = db.query(GlobalChatMessage).filter(
+    2:             GlobalChatMessage.id == request.reply_to_message_id
+               ).first()
+    2:         if not reply_to_message:
+    2:             raise HTTPException(
+    1:                 status_code=404,
+    1:                 detail=f"Message {request.reply_to_message_id} not found"
+                   )
+           
+           # Create message
+    2:     new_message = GlobalChatMessage(
+    1:         user_id=current_user.account_id,
+    1:         message=message_text,
+    1:         client_message_id=request.client_message_id,
+    1:         reply_to_message_id=request.reply_to_message_id  # Use directly since validation ensures it exists if provided
+           )
+           
+    1:     db.add(new_message)
+           
+           # Update or create viewer tracking (user is active in global chat)
+    2:     existing_viewer = db.query(GlobalChatViewer).filter(
+    1:         GlobalChatViewer.user_id == current_user.account_id
+           ).first()
+           
+    1:     if existing_viewer:
+>>>>>>         existing_viewer.last_seen = datetime.utcnow()
+           else:
+    2:         viewer = GlobalChatViewer(
+    1:             user_id=current_user.account_id,
+    1:             last_seen=datetime.utcnow()
+               )
+    1:         db.add(viewer)
+           
+    1:     db.commit()
+    1:     db.refresh(new_message)
+           
+           # Get user profile data (avatar, frame)
+    1:     profile_data = get_user_chat_profile_data(current_user, db)
+           
+           # Get reply information if this is a reply
+    1:     reply_info = None
+    1:     if reply_to_message:
+    1:         replied_sender_profile = get_user_chat_profile_data(reply_to_message.user, db)
+    1:         reply_info = {
+    1:             "message_id": reply_to_message.id,
+    1:             "sender_id": reply_to_message.user_id,
+    1:             "sender_username": get_display_username(reply_to_message.user),
+    1:             "message": reply_to_message.message,
+    1:             "sender_profile_pic": replied_sender_profile["profile_pic_url"],
+    1:             "sender_avatar_url": replied_sender_profile["avatar_url"],
+    1:             "sender_frame_url": replied_sender_profile["frame_url"],
+    1:             "sender_badge": replied_sender_profile["badge"],
+    1:             "created_at": reply_to_message.created_at.isoformat()
+               }
+           
+           # Publish to Pusher via Redis queue (fallback to inline background tasks)
+    1:     username = get_display_username(current_user)
+    2:     event_enqueued = await enqueue_chat_event(
+    1:         "global_message",
+    1:         {
+    1:             "pusher_args": {
+    1:                 "message_id": new_message.id,
+    1:                 "user_id": current_user.account_id,
+    1:                 "username": username,
+    1:                 "profile_pic": profile_data["profile_pic_url"],
+    1:                 "avatar_url": profile_data["avatar_url"],
+    1:                 "frame_url": profile_data["frame_url"],
+    1:                 "badge": profile_data["badge"],
+    1:                 "message": new_message.message,
+    1:                 "created_at": new_message.created_at.isoformat(),
+    1:                 "reply_to": reply_info
+                   },
+    1:             "push_args": {
+    1:                 "message_id": new_message.id,
+    1:                 "sender_id": current_user.account_id,
+    1:                 "sender_username": username,
+    1:                 "message": new_message.message,
+    1:                 "created_at": new_message.created_at.isoformat()
+                   }
+               }
+           )
+           
+    1:     if not event_enqueued:
+    2:         background_tasks.add_task(
+    1:             publish_to_pusher_global,
+    1:             new_message.id,
+    1:             current_user.account_id,
+    1:             username,
+    1:             profile_data["profile_pic_url"],
+    1:             profile_data["avatar_url"],
+    1:             profile_data["frame_url"],
+    1:             profile_data["badge"],
+    1:             new_message.message,
+    1:             new_message.created_at,
+    1:             reply_info
+               )
+    2:         background_tasks.add_task(
+    1:             send_push_for_global_chat_sync,
+    1:             new_message.id,
+    1:             current_user.account_id,
+    1:             username,
+    1:             new_message.message,
+    1:             new_message.created_at
+               )
+           
+    1:     return {
+    1:         "message_id": new_message.id,
+    1:         "created_at": new_message.created_at.isoformat(),
+    1:         "duplicate": False
+           }
+       
+       
+    1: def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, dict]:
+           """Delegate to shared bulk helper to avoid N+1 queries."""
+    5:     return get_user_chat_profile_data_bulk(users, db)
+       
+       
+    1: @router.get("/messages")
+    2: async def get_global_messages(
+    2:     limit: int = Query(50, ge=1, le=100),
+    2:     before: Optional[int] = Query(None, description="Message ID to fetch messages before"),
+    2:     db: Session = Depends(get_db),
+    2:     current_user: User = Depends(get_current_user)
+       ):
+           """Get global chat messages with pagination"""
+    6:     if not GLOBAL_CHAT_ENABLED:
+    1:         raise HTTPException(status_code=403, detail="Global chat is disabled")
+           
+           # Eagerly load users to avoid N+1 queries
+    5:     query = db.query(GlobalChatMessage).options(joinedload(GlobalChatMessage.user)).order_by(GlobalChatMessage.created_at.desc())
+           
+    5:     if before:
+    1:         before_msg = db.query(GlobalChatMessage).filter(GlobalChatMessage.id == before).first()
+    1:         if before_msg:
+    1:             query = query.filter(GlobalChatMessage.created_at < before_msg.created_at)
+           
+    5:     messages = query.limit(limit).all()
+           
+           # Update viewer tracking (user is viewing global chat)
+    5:     try:
+   10:         existing_viewer = db.query(GlobalChatViewer).filter(
+    5:             GlobalChatViewer.user_id == current_user.account_id
+               ).first()
+               
+    5:         if existing_viewer:
+    2:             existing_viewer.last_seen = datetime.utcnow()
+               else:
+    6:             viewer = GlobalChatViewer(
+    3:                 user_id=current_user.account_id,
+    3:                 last_seen=datetime.utcnow()
+                   )
+    3:             db.add(viewer)
+    3:             db.flush()
+>>>>>>     except exc.IntegrityError:
+>>>>>>         db.rollback()
+>>>>>>         existing_viewer = db.query(GlobalChatViewer).filter(
+>>>>>>             GlobalChatViewer.user_id == current_user.account_id
+               ).first()
+>>>>>>         if existing_viewer:
+>>>>>>             existing_viewer.last_seen = datetime.utcnow()
+    5:     db.commit()
+           
+           # Get active online count (users active within last 5 minutes)
+    5:     cutoff_time = datetime.utcnow() - timedelta(minutes=5)
+    5:     online_count = None
+    5:     redis_client = await get_chat_redis()
+    5:     cache_key = "global_chat:online_count"
+    5:     if redis_client:
+    2:         try:
+    2:             cached_value = await redis_client.get(cache_key)
+    2:             if cached_value is not None:
+    1:                 online_count = int(cached_value)
+>>>>>>         except Exception:
+>>>>>>             online_count = None
+           
+    5:     if online_count is None:
+    8:         online_count = db.query(GlobalChatViewer).filter(
+    4:             GlobalChatViewer.last_seen >= cutoff_time
+               ).count()
+    4:         if redis_client:
+    1:             try:
+    1:                 await redis_client.set(cache_key, str(online_count), ex=5)
+>>>>>>             except Exception:
+>>>>>>                 pass
+           
+           # Collect all unique users and reply message IDs
+   13:     unique_users = {msg.user for msg in messages if msg.user}
+   13:     reply_message_ids = {msg.reply_to_message_id for msg in messages if msg.reply_to_message_id}
+           
+           # Batch load all replied messages with their users
+    5:     replied_messages = {}
+    5:     if reply_message_ids:
+    2:         replied_msgs = db.query(GlobalChatMessage).options(joinedload(GlobalChatMessage.user)).filter(
+    1:             GlobalChatMessage.id.in_(list(reply_message_ids))
+               ).all()
+    3:         replied_messages = {msg.id: msg for msg in replied_msgs}
+               # Add replied message users to unique_users set
+    3:         unique_users.update({msg.user for msg in replied_msgs if msg.user})
+           
+           # Batch load profile data for all unique users
+    5:     profile_cache = _batch_get_user_profile_data(list(unique_users), db)
+           
+           # Build response
+    5:     result_messages = []
+    8:     for msg in reversed(messages):
+    6:         profile_data = profile_cache.get(msg.user_id, {
+    3:             "profile_pic_url": None,
+    3:             "avatar_url": None,
+    3:             "frame_url": None,
+    3:             "badge": None,
+    3:             "subscription_badges": [],
+    3:             "level": 1,
+    3:             "level_progress": "0/100"
+               })
+               
+               # Get reply information if this message is a reply
+    3:         reply_info = None
+    3:         if msg.reply_to_message_id and msg.reply_to_message_id in replied_messages:
+    1:             replied_msg = replied_messages[msg.reply_to_message_id]
+    2:             replied_profile = profile_cache.get(replied_msg.user_id, {
+    1:                 "profile_pic_url": None,
+    1:                 "avatar_url": None,
+    1:                 "frame_url": None,
+    1:                 "badge": None,
+    1:                 "subscription_badges": [],
+    1:                 "level": 1,
+    1:                 "level_progress": "0/100"
+                   })
+    1:             reply_info = {
+    1:                 "message_id": replied_msg.id,
+    1:                 "sender_id": replied_msg.user_id,
+    1:                 "sender_username": get_display_username(replied_msg.user),
+    1:                 "message": replied_msg.message,
+    1:                 "sender_profile_pic": replied_profile["profile_pic_url"],
+    1:                 "sender_avatar_url": replied_profile["avatar_url"],
+    1:                 "sender_frame_url": replied_profile["frame_url"],
+    1:                 "sender_badge": replied_profile["badge"],
+    1:                 "created_at": replied_msg.created_at.isoformat(),
+    1:                 "sender_level": replied_profile.get("level", 1),
+    1:                 "sender_level_progress": replied_profile.get("level_progress", "0/100")
+                   }
+               
+    6:         result_messages.append({
+    3:             "id": msg.id,
+    3:             "user_id": msg.user_id,
+    3:             "username": get_display_username(msg.user),
+    3:             "profile_pic": profile_data["profile_pic_url"],
+    3:             "avatar_url": profile_data["avatar_url"],
+    3:             "frame_url": profile_data["frame_url"],
+    3:             "badge": profile_data["badge"],
+    3:             "message": msg.message,
+    3:             "created_at": msg.created_at.isoformat(),
+    3:             "reply_to": reply_info,
+    3:             "level": profile_data.get("level", 1),
+    3:             "level_progress": profile_data.get("level_progress", "0/100")
+               })
+           
+    5:     return {
+    5:         "messages": result_messages,
+    5:         "online_count": online_count
+           }
+       
+       
+    1: @router.post("/cleanup")
+    2: async def cleanup_old_messages(
+    2:     db: Session = Depends(get_db),
+    2:     current_user: User = Depends(get_current_user)
+       ):
+           """Cleanup old messages based on retention policy (admin only)"""
+    3:     if not current_user.is_admin:
+    2:         raise HTTPException(status_code=403, detail="Admin access required")
+           
+    1:     if not GLOBAL_CHAT_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="Global chat is disabled")
+           
+    1:     cutoff_date = datetime.utcnow() - timedelta(days=GLOBAL_CHAT_RETENTION_DAYS)
+           
+    2:     deleted_count = db.query(GlobalChatMessage).filter(
+    1:         GlobalChatMessage.created_at < cutoff_date
+           ).delete()
+           
+    1:     db.commit()
+           
+    1:     logger.info(f"Cleaned up {deleted_count} old global chat messages (older than {GLOBAL_CHAT_RETENTION_DAYS} days)")
+           
+    1:     return {
+    1:         "deleted_count": deleted_count,
+    1:         "cutoff_date": cutoff_date.isoformat()
+           }

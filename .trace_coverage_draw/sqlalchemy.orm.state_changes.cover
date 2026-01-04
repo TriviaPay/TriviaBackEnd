@@ -1,0 +1,198 @@
+       # orm/state_changes.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """State tracking utilities used by :class:`_orm.Session`.
+       
+       """
+       
+    1: from __future__ import annotations
+       
+    1: import contextlib
+    1: from enum import Enum
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import cast
+    1: from typing import Iterator
+    1: from typing import NoReturn
+    1: from typing import Optional
+    1: from typing import Tuple
+    1: from typing import TypeVar
+    1: from typing import Union
+       
+    1: from .. import exc as sa_exc
+    1: from .. import util
+    1: from ..util.typing import Literal
+       
+    1: _F = TypeVar("_F", bound=Callable[..., Any])
+       
+       
+    2: class _StateChangeState(Enum):
+    1:     pass
+       
+       
+    2: class _StateChangeStates(_StateChangeState):
+    1:     ANY = 1
+    1:     NO_CHANGE = 2
+    1:     CHANGE_IN_PROGRESS = 3
+       
+       
+    2: class _StateChange:
+    1:     """Supplies state assertion decorators.
+       
+           The current use case is for the :class:`_orm.SessionTransaction` class. The
+           :class:`_StateChange` class itself is agnostic of the
+           :class:`_orm.SessionTransaction` class so could in theory be generalized
+           for other systems as well.
+       
+           """
+       
+    1:     _next_state: _StateChangeState = _StateChangeStates.ANY
+    1:     _state: _StateChangeState = _StateChangeStates.NO_CHANGE
+    1:     _current_fn: Optional[Callable[..., Any]] = None
+       
+    1:     def _raise_for_prerequisite_state(
+               self, operation_name: str, state: _StateChangeState
+           ) -> NoReturn:
+>>>>>>         raise sa_exc.IllegalStateChangeError(
+>>>>>>             f"Can't run operation '{operation_name}()' when Session "
+>>>>>>             f"is in state {state!r}",
+>>>>>>             code="isce",
+               )
+       
+    1:     @classmethod
+    1:     def declare_states(
+               cls,
+               prerequisite_states: Union[
+                   Literal[_StateChangeStates.ANY], Tuple[_StateChangeState, ...]
+               ],
+               moves_to: _StateChangeState,
+           ) -> Callable[[_F], _F]:
+               """Method decorator declaring valid states.
+       
+               :param prerequisite_states: sequence of acceptable prerequisite
+                states.   Can be the single constant _State.ANY to indicate no
+                prerequisite state
+       
+               :param moves_to: the expected state at the end of the method, assuming
+                no exceptions raised.   Can be the constant _State.NO_CHANGE to
+                indicate state should not change at the end of the method.
+       
+               """
+    7:         assert prerequisite_states, "no prequisite states sent"
+    7:         has_prerequisite_states = (
+    7:             prerequisite_states is not _StateChangeStates.ANY
+               )
+       
+   14:         prerequisite_state_collection = cast(
+    7:             "Tuple[_StateChangeState, ...]", prerequisite_states
+               )
+    7:         expect_state_change = moves_to is not _StateChangeStates.NO_CHANGE
+       
+    7:         @util.decorator
+    7:         def _go(fn: _F, self: Any, *arg: Any, **kw: Any) -> Any:
+   15:             current_state = self._state
+       
+   27:             if (
+   15:                 has_prerequisite_states
+   12:                 and current_state not in prerequisite_state_collection
+                   ):
+>>>>>>                 self._raise_for_prerequisite_state(fn.__name__, current_state)
+       
+   15:             next_state = self._next_state
+   15:             existing_fn = self._current_fn
+   15:             expect_state = moves_to if expect_state_change else current_state
+       
+   28:             if (
+                       # destination states are restricted
+   15:                 next_state is not _StateChangeStates.ANY
+                       # method seeks to change state
+    9:                 and expect_state_change
+                       # destination state incorrect
+    4:                 and next_state is not expect_state
+                   ):
+>>>>>>                 if existing_fn and next_state in (
+>>>>>>                     _StateChangeStates.NO_CHANGE,
+>>>>>>                     _StateChangeStates.CHANGE_IN_PROGRESS,
+                       ):
+>>>>>>                     raise sa_exc.IllegalStateChangeError(
+>>>>>>                         f"Method '{fn.__name__}()' can't be called here; "
+>>>>>>                         f"method '{existing_fn.__name__}()' is already "
+                               f"in progress and this would cause an unexpected "
+>>>>>>                         f"state change to {moves_to!r}",
+>>>>>>                         code="isce",
+                           )
+                       else:
+>>>>>>                     raise sa_exc.IllegalStateChangeError(
+>>>>>>                         f"Cant run operation '{fn.__name__}()' here; "
+>>>>>>                         f"will move to state {moves_to!r} where we are "
+>>>>>>                         f"expecting {next_state!r}",
+>>>>>>                         code="isce",
+                           )
+       
+   15:             self._current_fn = fn
+   15:             self._next_state = _StateChangeStates.CHANGE_IN_PROGRESS
+   15:             try:
+   15:                 ret_value = fn(self, *arg, **kw)
+>>>>>>             except:
+>>>>>>                 raise
+                   else:
+   15:                 if self._state is expect_state:
+   30:                     return ret_value
+       
+>>>>>>                 if self._state is current_state:
+>>>>>>                     raise sa_exc.IllegalStateChangeError(
+>>>>>>                         f"Method '{fn.__name__}()' failed to "
+                               "change state "
+>>>>>>                         f"to {moves_to!r} as expected",
+>>>>>>                         code="isce",
+                           )
+>>>>>>                 elif existing_fn:
+>>>>>>                     raise sa_exc.IllegalStateChangeError(
+>>>>>>                         f"While method '{existing_fn.__name__}()' was "
+                               "running, "
+>>>>>>                         f"method '{fn.__name__}()' caused an "
+                               "unexpected "
+>>>>>>                         f"state change to {self._state!r}",
+>>>>>>                         code="isce",
+                           )
+                       else:
+>>>>>>                     raise sa_exc.IllegalStateChangeError(
+>>>>>>                         f"Method '{fn.__name__}()' caused an unexpected "
+>>>>>>                         f"state change to {self._state!r}",
+>>>>>>                         code="isce",
+                           )
+       
+                   finally:
+   15:                 self._next_state = next_state
+   15:                 self._current_fn = existing_fn
+       
+    7:         return _go
+       
+    1:     @contextlib.contextmanager
+    1:     def _expect_state(self, expected: _StateChangeState) -> Iterator[Any]:
+               """called within a method that changes states.
+       
+               method must also use the ``@declare_states()`` decorator.
+       
+               """
+    4:         assert self._next_state is _StateChangeStates.CHANGE_IN_PROGRESS, (
+>>>>>>             "Unexpected call to _expect_state outside of "
+                   "state-changing method"
+               )
+       
+    4:         self._next_state = expected
+    4:         try:
+    4:             yield
+>>>>>>         except:
+>>>>>>             raise
+               else:
+    4:             if self._state is not expected:
+>>>>>>                 raise sa_exc.IllegalStateChangeError(
+>>>>>>                     f"Unexpected state change to {self._state!r}", code="isce"
+                       )
+               finally:
+    4:             self._next_state = _StateChangeStates.CHANGE_IN_PROGRESS

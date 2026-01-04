@@ -1,0 +1,52 @@
+    1: import typing
+    1: from typing import Optional
+       
+    1: import sniffio
+       
+    1: from .base import SOCKET_OPTION, AsyncNetworkBackend, AsyncNetworkStream
+       
+       
+    2: class AutoBackend(AsyncNetworkBackend):
+    1:     async def _init_backend(self) -> None:
+>>>>>>         if not (hasattr(self, "_backend")):
+>>>>>>             backend = sniffio.current_async_library()
+>>>>>>             if backend == "trio":
+>>>>>>                 from .trio import TrioBackend
+       
+>>>>>>                 self._backend: AsyncNetworkBackend = TrioBackend()
+                   else:
+>>>>>>                 from .anyio import AnyIOBackend
+       
+>>>>>>                 self._backend = AnyIOBackend()
+       
+    2:     async def connect_tcp(
+               self,
+    1:         host: str,
+    1:         port: int,
+    1:         timeout: Optional[float] = None,
+    1:         local_address: Optional[str] = None,
+    1:         socket_options: typing.Optional[typing.Iterable[SOCKET_OPTION]] = None,
+    1:     ) -> AsyncNetworkStream:
+>>>>>>         await self._init_backend()
+>>>>>>         return await self._backend.connect_tcp(
+>>>>>>             host,
+>>>>>>             port,
+>>>>>>             timeout=timeout,
+>>>>>>             local_address=local_address,
+>>>>>>             socket_options=socket_options,
+               )
+       
+    2:     async def connect_unix_socket(
+               self,
+    1:         path: str,
+    1:         timeout: Optional[float] = None,
+    1:         socket_options: typing.Optional[typing.Iterable[SOCKET_OPTION]] = None,
+    1:     ) -> AsyncNetworkStream:  # pragma: nocover
+>>>>>>         await self._init_backend()
+>>>>>>         return await self._backend.connect_unix_socket(
+>>>>>>             path, timeout=timeout, socket_options=socket_options
+               )
+       
+    1:     async def sleep(self, seconds: float) -> None:  # pragma: nocover
+>>>>>>         await self._init_backend()
+>>>>>>         return await self._backend.sleep(seconds)

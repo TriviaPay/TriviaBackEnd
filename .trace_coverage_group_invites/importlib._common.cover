@@ -1,0 +1,62 @@
+    1: import os
+    1: import pathlib
+    1: import zipfile
+    1: import tempfile
+    1: import functools
+    1: import contextlib
+       
+       
+    1: def from_package(package):
+           """
+           Return a Traversable object for the given package.
+       
+           """
+>>>>>>     return fallback_resources(package.__spec__)
+       
+       
+    1: def fallback_resources(spec):
+>>>>>>     package_directory = pathlib.Path(spec.origin).parent
+>>>>>>     try:
+>>>>>>         archive_path = spec.loader.archive
+>>>>>>         rel_path = package_directory.relative_to(archive_path)
+>>>>>>         return zipfile.Path(archive_path, str(rel_path) + '/')
+>>>>>>     except Exception:
+>>>>>>         pass
+>>>>>>     return package_directory
+       
+       
+    1: @contextlib.contextmanager
+    1: def _tempfile(reader, suffix=''):
+           # Not using tempfile.NamedTemporaryFile as it leads to deeper 'try'
+           # blocks due to the need to close the temporary file to work on Windows
+           # properly.
+>>>>>>     fd, raw_path = tempfile.mkstemp(suffix=suffix)
+>>>>>>     try:
+>>>>>>         os.write(fd, reader())
+>>>>>>         os.close(fd)
+>>>>>>         yield pathlib.Path(raw_path)
+           finally:
+>>>>>>         try:
+>>>>>>             os.remove(raw_path)
+>>>>>>         except FileNotFoundError:
+>>>>>>             pass
+       
+       
+    1: @functools.singledispatch
+    1: @contextlib.contextmanager
+    1: def as_file(path):
+           """
+           Given a Traversable object, return that object as a
+           path on the local file system in a context manager.
+           """
+>>>>>>     with _tempfile(path.read_bytes, suffix=path.name) as local:
+>>>>>>         yield local
+       
+       
+    1: @as_file.register(pathlib.Path)
+    1: @contextlib.contextmanager
+    1: def _(path):
+           """
+           Degenerate behavior for pathlib.Path objects.
+           """
+>>>>>>     yield path

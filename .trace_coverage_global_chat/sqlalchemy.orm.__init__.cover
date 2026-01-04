@@ -1,0 +1,170 @@
+       # orm/__init__.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """
+       Functional constructs for ORM configuration.
+       
+       See the SQLAlchemy object relational tutorial and mapper configuration
+       documentation for an overview of how this module is used.
+       
+       """
+       
+    1: from __future__ import annotations
+       
+    1: from typing import Any
+       
+    1: from . import exc as exc
+    1: from . import mapper as mapperlib
+    1: from . import strategy_options as strategy_options
+    1: from ._orm_constructors import _mapper_fn as mapper
+    1: from ._orm_constructors import aliased as aliased
+    1: from ._orm_constructors import backref as backref
+    1: from ._orm_constructors import clear_mappers as clear_mappers
+    1: from ._orm_constructors import column_property as column_property
+    1: from ._orm_constructors import composite as composite
+    1: from ._orm_constructors import contains_alias as contains_alias
+    1: from ._orm_constructors import create_session as create_session
+    1: from ._orm_constructors import deferred as deferred
+    1: from ._orm_constructors import dynamic_loader as dynamic_loader
+    1: from ._orm_constructors import join as join
+    1: from ._orm_constructors import mapped_column as mapped_column
+    1: from ._orm_constructors import orm_insert_sentinel as orm_insert_sentinel
+    1: from ._orm_constructors import outerjoin as outerjoin
+    1: from ._orm_constructors import query_expression as query_expression
+    1: from ._orm_constructors import relationship as relationship
+    1: from ._orm_constructors import synonym as synonym
+    1: from ._orm_constructors import with_loader_criteria as with_loader_criteria
+    1: from ._orm_constructors import with_polymorphic as with_polymorphic
+    1: from .attributes import AttributeEventToken as AttributeEventToken
+    1: from .attributes import InstrumentedAttribute as InstrumentedAttribute
+    1: from .attributes import QueryableAttribute as QueryableAttribute
+    1: from .base import class_mapper as class_mapper
+    1: from .base import DynamicMapped as DynamicMapped
+    1: from .base import InspectionAttrExtensionType as InspectionAttrExtensionType
+    1: from .base import LoaderCallableStatus as LoaderCallableStatus
+    1: from .base import Mapped as Mapped
+    1: from .base import NotExtension as NotExtension
+    1: from .base import ORMDescriptor as ORMDescriptor
+    1: from .base import PassiveFlag as PassiveFlag
+    1: from .base import SQLORMExpression as SQLORMExpression
+    1: from .base import WriteOnlyMapped as WriteOnlyMapped
+    1: from .context import FromStatement as FromStatement
+    1: from .context import QueryContext as QueryContext
+    1: from .decl_api import add_mapped_attribute as add_mapped_attribute
+    1: from .decl_api import as_declarative as as_declarative
+    1: from .decl_api import declarative_base as declarative_base
+    1: from .decl_api import declarative_mixin as declarative_mixin
+    1: from .decl_api import DeclarativeBase as DeclarativeBase
+    1: from .decl_api import DeclarativeBaseNoMeta as DeclarativeBaseNoMeta
+    1: from .decl_api import DeclarativeMeta as DeclarativeMeta
+    1: from .decl_api import declared_attr as declared_attr
+    1: from .decl_api import has_inherited_table as has_inherited_table
+    1: from .decl_api import MappedAsDataclass as MappedAsDataclass
+    1: from .decl_api import registry as registry
+    1: from .decl_api import synonym_for as synonym_for
+    1: from .decl_base import MappedClassProtocol as MappedClassProtocol
+    1: from .descriptor_props import Composite as Composite
+    1: from .descriptor_props import CompositeProperty as CompositeProperty
+    1: from .descriptor_props import Synonym as Synonym
+    1: from .descriptor_props import SynonymProperty as SynonymProperty
+    1: from .dynamic import AppenderQuery as AppenderQuery
+    1: from .events import AttributeEvents as AttributeEvents
+    1: from .events import InstanceEvents as InstanceEvents
+    1: from .events import InstrumentationEvents as InstrumentationEvents
+    1: from .events import MapperEvents as MapperEvents
+    1: from .events import QueryEvents as QueryEvents
+    1: from .events import SessionEvents as SessionEvents
+    1: from .identity import IdentityMap as IdentityMap
+    1: from .instrumentation import ClassManager as ClassManager
+    1: from .interfaces import EXT_CONTINUE as EXT_CONTINUE
+    1: from .interfaces import EXT_SKIP as EXT_SKIP
+    1: from .interfaces import EXT_STOP as EXT_STOP
+    1: from .interfaces import InspectionAttr as InspectionAttr
+    1: from .interfaces import InspectionAttrInfo as InspectionAttrInfo
+    1: from .interfaces import MANYTOMANY as MANYTOMANY
+    1: from .interfaces import MANYTOONE as MANYTOONE
+    1: from .interfaces import MapperProperty as MapperProperty
+    1: from .interfaces import NO_KEY as NO_KEY
+    1: from .interfaces import NO_VALUE as NO_VALUE
+    1: from .interfaces import ONETOMANY as ONETOMANY
+    1: from .interfaces import PropComparator as PropComparator
+    1: from .interfaces import RelationshipDirection as RelationshipDirection
+    1: from .interfaces import UserDefinedOption as UserDefinedOption
+    1: from .loading import merge_frozen_result as merge_frozen_result
+    1: from .loading import merge_result as merge_result
+    1: from .mapped_collection import attribute_keyed_dict as attribute_keyed_dict
+    1: from .mapped_collection import (
+           attribute_mapped_collection as attribute_mapped_collection,
+       )
+    1: from .mapped_collection import column_keyed_dict as column_keyed_dict
+    1: from .mapped_collection import (
+           column_mapped_collection as column_mapped_collection,
+       )
+    1: from .mapped_collection import keyfunc_mapping as keyfunc_mapping
+    1: from .mapped_collection import KeyFuncDict as KeyFuncDict
+    1: from .mapped_collection import mapped_collection as mapped_collection
+    1: from .mapped_collection import MappedCollection as MappedCollection
+    1: from .mapper import configure_mappers as configure_mappers
+    1: from .mapper import Mapper as Mapper
+    1: from .mapper import reconstructor as reconstructor
+    1: from .mapper import validates as validates
+    1: from .properties import ColumnProperty as ColumnProperty
+    1: from .properties import MappedColumn as MappedColumn
+    1: from .properties import MappedSQLExpression as MappedSQLExpression
+    1: from .query import AliasOption as AliasOption
+    1: from .query import Query as Query
+    1: from .relationships import foreign as foreign
+    1: from .relationships import Relationship as Relationship
+    1: from .relationships import RelationshipProperty as RelationshipProperty
+    1: from .relationships import remote as remote
+    1: from .scoping import QueryPropertyDescriptor as QueryPropertyDescriptor
+    1: from .scoping import scoped_session as scoped_session
+    1: from .session import close_all_sessions as close_all_sessions
+    1: from .session import make_transient as make_transient
+    1: from .session import make_transient_to_detached as make_transient_to_detached
+    1: from .session import object_session as object_session
+    1: from .session import ORMExecuteState as ORMExecuteState
+    1: from .session import Session as Session
+    1: from .session import sessionmaker as sessionmaker
+    1: from .session import SessionTransaction as SessionTransaction
+    1: from .session import SessionTransactionOrigin as SessionTransactionOrigin
+    1: from .state import AttributeState as AttributeState
+    1: from .state import InstanceState as InstanceState
+    1: from .strategy_options import contains_eager as contains_eager
+    1: from .strategy_options import defaultload as defaultload
+    1: from .strategy_options import defer as defer
+    1: from .strategy_options import immediateload as immediateload
+    1: from .strategy_options import joinedload as joinedload
+    1: from .strategy_options import lazyload as lazyload
+    1: from .strategy_options import Load as Load
+    1: from .strategy_options import load_only as load_only
+    1: from .strategy_options import noload as noload
+    1: from .strategy_options import raiseload as raiseload
+    1: from .strategy_options import selectin_polymorphic as selectin_polymorphic
+    1: from .strategy_options import selectinload as selectinload
+    1: from .strategy_options import subqueryload as subqueryload
+    1: from .strategy_options import undefer as undefer
+    1: from .strategy_options import undefer_group as undefer_group
+    1: from .strategy_options import with_expression as with_expression
+    1: from .unitofwork import UOWTransaction as UOWTransaction
+    1: from .util import Bundle as Bundle
+    1: from .util import CascadeOptions as CascadeOptions
+    1: from .util import LoaderCriteriaOption as LoaderCriteriaOption
+    1: from .util import object_mapper as object_mapper
+    1: from .util import polymorphic_union as polymorphic_union
+    1: from .util import was_deleted as was_deleted
+    1: from .util import with_parent as with_parent
+    1: from .writeonly import WriteOnlyCollection as WriteOnlyCollection
+    1: from .. import util as _sa_util
+       
+       
+    1: def __go(lcls: Any) -> None:
+    1:     _sa_util.preloaded.import_prefix("sqlalchemy.orm")
+    1:     _sa_util.preloaded.import_prefix("sqlalchemy.ext")
+       
+       
+    1: __go(locals())

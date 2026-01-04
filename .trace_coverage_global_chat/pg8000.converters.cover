@@ -1,0 +1,821 @@
+    1: from datetime import (
+           date as Date,
+           datetime as Datetime,
+           time as Time,
+           timedelta as Timedelta,
+           timezone as Timezone,
+       )
+    1: from decimal import Decimal
+    1: from enum import Enum
+    1: from ipaddress import (
+           IPv4Address,
+           IPv4Network,
+           IPv6Address,
+           IPv6Network,
+           ip_address,
+           ip_network,
+       )
+    1: from json import dumps, loads
+    1: from uuid import UUID
+       
+    1: from dateutil.parser import ParserError, parse
+       
+    1: from pg8000.exceptions import InterfaceError
+    1: from pg8000.types import PGInterval, Range
+       
+       
+    1: ANY_ARRAY = 2277
+    1: BIGINT = 20
+    1: BIGINT_ARRAY = 1016
+    1: BOOLEAN = 16
+    1: BOOLEAN_ARRAY = 1000
+    1: BYTES = 17
+    1: BYTES_ARRAY = 1001
+    1: CHAR = 1042
+    1: CHAR_ARRAY = 1014
+    1: CIDR = 650
+    1: CIDR_ARRAY = 651
+    1: CSTRING = 2275
+    1: CSTRING_ARRAY = 1263
+    1: DATE = 1082
+    1: DATE_ARRAY = 1182
+    1: DATEMULTIRANGE = 4535
+    1: DATEMULTIRANGE_ARRAY = 6155
+    1: DATERANGE = 3912
+    1: DATERANGE_ARRAY = 3913
+    1: FLOAT = 701
+    1: FLOAT_ARRAY = 1022
+    1: INET = 869
+    1: INET_ARRAY = 1041
+    1: INT2VECTOR = 22
+    1: INT4MULTIRANGE = 4451
+    1: INT4MULTIRANGE_ARRAY = 6150
+    1: INT4RANGE = 3904
+    1: INT4RANGE_ARRAY = 3905
+    1: INT8MULTIRANGE = 4536
+    1: INT8MULTIRANGE_ARRAY = 6157
+    1: INT8RANGE = 3926
+    1: INT8RANGE_ARRAY = 3927
+    1: INTEGER = 23
+    1: INTEGER_ARRAY = 1007
+    1: INTERVAL = 1186
+    1: INTERVAL_ARRAY = 1187
+    1: OID = 26
+    1: JSON = 114
+    1: JSON_ARRAY = 199
+    1: JSONB = 3802
+    1: JSONB_ARRAY = 3807
+    1: MACADDR = 829
+    1: MONEY = 790
+    1: MONEY_ARRAY = 791
+    1: NAME = 19
+    1: NAME_ARRAY = 1003
+    1: NUMERIC = 1700
+    1: NUMERIC_ARRAY = 1231
+    1: NUMRANGE = 3906
+    1: NUMRANGE_ARRAY = 3907
+    1: NUMMULTIRANGE = 4532
+    1: NUMMULTIRANGE_ARRAY = 6151
+    1: NULLTYPE = -1
+    1: OID = 26
+    1: POINT = 600
+    1: REAL = 700
+    1: REAL_ARRAY = 1021
+    1: RECORD = 2249
+    1: SMALLINT = 21
+    1: SMALLINT_ARRAY = 1005
+    1: SMALLINT_VECTOR = 22
+    1: STRING = 1043
+    1: TEXT = 25
+    1: TEXT_ARRAY = 1009
+    1: TIME = 1083
+    1: TIME_ARRAY = 1183
+    1: TIMESTAMP = 1114
+    1: TIMESTAMP_ARRAY = 1115
+    1: TIMESTAMPTZ = 1184
+    1: TIMESTAMPTZ_ARRAY = 1185
+    1: TSMULTIRANGE = 4533
+    1: TSMULTIRANGE_ARRAY = 6152
+    1: TSRANGE = 3908
+    1: TSRANGE_ARRAY = 3909
+    1: TSTZMULTIRANGE = 4534
+    1: TSTZMULTIRANGE_ARRAY = 6153
+    1: TSTZRANGE = 3910
+    1: TSTZRANGE_ARRAY = 3911
+    1: UNKNOWN = 705
+    1: UUID_TYPE = 2950
+    1: UUID_ARRAY = 2951
+    1: VARCHAR = 1043
+    1: VARCHAR_ARRAY = 1015
+    1: XID = 28
+       
+       
+    1: MIN_INT2, MAX_INT2 = -(2**15), 2**15
+    1: MIN_INT4, MAX_INT4 = -(2**31), 2**31
+    1: MIN_INT8, MAX_INT8 = -(2**63), 2**63
+       
+       
+    1: def bool_in(data):
+>>>>>>     return data == "t"
+       
+       
+    1: def bool_out(v):
+>>>>>>     return "true" if v else "false"
+       
+       
+    1: def bytes_in(data):
+>>>>>>     return bytes.fromhex(data[2:])
+       
+       
+    1: def bytes_out(v):
+>>>>>>     return "\\x" + v.hex()
+       
+       
+    1: def cidr_out(v):
+>>>>>>     return str(v)
+       
+       
+    1: def cidr_in(data):
+>>>>>>     return ip_network(data, False) if "/" in data else ip_address(data)
+       
+       
+    1: def date_in(data):
+>>>>>>     if data in ("infinity", "-infinity"):
+>>>>>>         return data
+           else:
+>>>>>>         try:
+>>>>>>             return Datetime.strptime(data, "%Y-%m-%d").date()
+>>>>>>         except ValueError:
+                   # pg date can overflow Python Datetime
+>>>>>>             return data
+       
+       
+    1: def date_out(v):
+>>>>>>     return v.isoformat()
+       
+       
+    1: def datetime_out(v):
+>>>>>>     if v.tzinfo is None:
+>>>>>>         return v.isoformat()
+           else:
+>>>>>>         return v.astimezone(Timezone.utc).isoformat()
+       
+       
+    1: def enum_out(v):
+>>>>>>     return str(v.value)
+       
+       
+    1: def float_out(v):
+>>>>>>     return str(v)
+       
+       
+    1: def inet_in(data):
+>>>>>>     return ip_network(data, False) if "/" in data else ip_address(data)
+       
+       
+    1: def inet_out(v):
+>>>>>>     return str(v)
+       
+       
+    1: def int_in(data):
+>>>>>>     return int(data)
+       
+       
+    1: def int_out(v):
+    1:     return str(v)
+       
+       
+    1: def interval_in(data):
+>>>>>>     pg_interval = PGInterval.from_str(data)
+>>>>>>     try:
+>>>>>>         return pg_interval.to_timedelta()
+>>>>>>     except ValueError:
+>>>>>>         return pg_interval
+       
+       
+    1: def interval_out(v):
+>>>>>>     return f"{v.days} days {v.seconds} seconds {v.microseconds} microseconds"
+       
+       
+    1: def json_in(data):
+>>>>>>     return loads(data)
+       
+       
+    1: def json_out(v):
+>>>>>>     return dumps(v)
+       
+       
+    1: def null_out(v):
+>>>>>>     return None
+       
+       
+    1: def numeric_in(data):
+>>>>>>     return Decimal(data)
+       
+       
+    1: def numeric_out(d):
+>>>>>>     return str(d)
+       
+       
+    1: def point_in(data):
+>>>>>>     return tuple(map(float, data[1:-1].split(",")))
+       
+       
+    1: def pg_interval_in(data):
+>>>>>>     return PGInterval.from_str(data)
+       
+       
+    1: def pg_interval_out(v):
+>>>>>>     return str(v)
+       
+       
+    1: def range_out(v):
+>>>>>>     if v.is_empty:
+>>>>>>         return "empty"
+           else:
+>>>>>>         le = v.lower
+>>>>>>         val_lower = "" if le is None else make_param(PY_TYPES, le)
+>>>>>>         ue = v.upper
+>>>>>>         val_upper = "" if ue is None else make_param(PY_TYPES, ue)
+>>>>>>         return f"{v.bounds[0]}{val_lower},{val_upper}{v.bounds[1]}"
+       
+       
+    1: def string_in(data):
+    4:     return data
+       
+       
+    1: def string_out(v):
+>>>>>>     return v
+       
+       
+    1: def time_in(data):
+>>>>>>     pattern = "%H:%M:%S.%f" if "." in data else "%H:%M:%S"
+>>>>>>     return Datetime.strptime(data, pattern).time()
+       
+       
+    1: def time_out(v):
+>>>>>>     return v.isoformat()
+       
+       
+    1: def timestamp_in(data):
+>>>>>>     if data in ("infinity", "-infinity"):
+>>>>>>         return data
+       
+>>>>>>     try:
+>>>>>>         pattern = "%Y-%m-%d %H:%M:%S.%f" if "." in data else "%Y-%m-%d %H:%M:%S"
+>>>>>>         return Datetime.strptime(data, pattern)
+>>>>>>     except ValueError:
+>>>>>>         try:
+>>>>>>             return parse(data)
+>>>>>>         except ParserError:
+                   # pg timestamp can overflow Python Datetime
+>>>>>>             return data
+       
+       
+    1: def timestamptz_in(data):
+>>>>>>     if data in ("infinity", "-infinity"):
+>>>>>>         return data
+       
+>>>>>>     try:
+>>>>>>         patt = "%Y-%m-%d %H:%M:%S.%f%z" if "." in data else "%Y-%m-%d %H:%M:%S%z"
+>>>>>>         return Datetime.strptime(f"{data}00", patt)
+>>>>>>     except ValueError:
+>>>>>>         try:
+>>>>>>             return parse(data)
+>>>>>>         except ParserError:
+                   # pg timestamptz can overflow Python Datetime
+>>>>>>             return data
+       
+       
+    1: def unknown_out(v):
+>>>>>>     return str(v)
+       
+       
+    1: def vector_in(data):
+>>>>>>     return [int(v) for v in data.split()]
+       
+       
+    1: def uuid_out(v):
+>>>>>>     return str(v)
+       
+       
+    1: def uuid_in(data):
+>>>>>>     return UUID(data)
+       
+       
+    1: def _range_in(elem_func):
+    6:     def range_in(data):
+>>>>>>         if data == "empty":
+>>>>>>             return Range(is_empty=True)
+               else:
+>>>>>>             le, ue = [None if v == "" else elem_func(v) for v in data[1:-1].split(",")]
+>>>>>>             return Range(le, ue, bounds=f"{data[0]}{data[-1]}")
+       
+    6:     return range_in
+       
+       
+    1: daterange_in = _range_in(date_in)
+    1: int4range_in = _range_in(int)
+    1: int8range_in = _range_in(int)
+    1: numrange_in = _range_in(Decimal)
+       
+       
+    1: def ts_in(data):
+>>>>>>     return timestamp_in(data[1:-1])
+       
+       
+    1: def tstz_in(data):
+>>>>>>     return timestamptz_in(data[1:-1])
+       
+       
+    1: tsrange_in = _range_in(ts_in)
+    1: tstzrange_in = _range_in(tstz_in)
+       
+       
+    1: def _multirange_in(adapter):
+    6:     def f(data):
+>>>>>>         in_range = False
+>>>>>>         result = []
+>>>>>>         val = []
+>>>>>>         for c in data:
+>>>>>>             if in_range:
+>>>>>>                 val.append(c)
+>>>>>>                 if c in "])":
+>>>>>>                     value = "".join(val)
+>>>>>>                     val.clear()
+>>>>>>                     result.append(adapter(value))
+>>>>>>                     in_range = False
+>>>>>>             elif c in "[(":
+>>>>>>                 val.append(c)
+>>>>>>                 in_range = True
+       
+>>>>>>         return result
+       
+    6:     return f
+       
+       
+    1: datemultirange_in = _multirange_in(daterange_in)
+    1: int4multirange_in = _multirange_in(int4range_in)
+    1: int8multirange_in = _multirange_in(int8range_in)
+    1: nummultirange_in = _multirange_in(numrange_in)
+    1: tsmultirange_in = _multirange_in(tsrange_in)
+    1: tstzmultirange_in = _multirange_in(tstzrange_in)
+       
+       
+    2: class ParserState(Enum):
+    1:     InString = 1
+    1:     InEscape = 2
+    1:     InValue = 3
+    1:     Out = 4
+       
+       
+    1: def _parse_array(data, adapter):
+>>>>>>     state = ParserState.Out
+>>>>>>     stack = [[]]
+>>>>>>     val = []
+>>>>>>     for c in data:
+>>>>>>         if state == ParserState.InValue:
+>>>>>>             if c in ("}", ","):
+>>>>>>                 value = "".join(val)
+>>>>>>                 stack[-1].append(None if value == "NULL" else adapter(value))
+>>>>>>                 state = ParserState.Out
+                   else:
+>>>>>>                 val.append(c)
+       
+>>>>>>         if state == ParserState.Out:
+>>>>>>             if c == "{":
+>>>>>>                 a = []
+>>>>>>                 stack[-1].append(a)
+>>>>>>                 stack.append(a)
+>>>>>>             elif c == "}":
+>>>>>>                 stack.pop()
+>>>>>>             elif c == ",":
+>>>>>>                 pass
+>>>>>>             elif c == '"':
+>>>>>>                 val = []
+>>>>>>                 state = ParserState.InString
+                   else:
+>>>>>>                 val = [c]
+>>>>>>                 state = ParserState.InValue
+       
+>>>>>>         elif state == ParserState.InString:
+>>>>>>             if c == '"':
+>>>>>>                 stack[-1].append(adapter("".join(val)))
+>>>>>>                 state = ParserState.Out
+>>>>>>             elif c == "\\":
+>>>>>>                 state = ParserState.InEscape
+                   else:
+>>>>>>                 val.append(c)
+>>>>>>         elif state == ParserState.InEscape:
+>>>>>>             val.append(c)
+>>>>>>             state = ParserState.InString
+       
+>>>>>>     return stack[0][0]
+       
+       
+    1: def _array_in(adapter):
+   27:     def f(data):
+>>>>>>         return _parse_array(data, adapter)
+       
+   27:     return f
+       
+       
+    1: bool_array_in = _array_in(bool_in)
+    1: bytes_array_in = _array_in(bytes_in)
+    1: cidr_array_in = _array_in(cidr_in)
+    1: date_array_in = _array_in(date_in)
+    1: datemultirange_array_in = _array_in(datemultirange_in)
+    1: daterange_array_in = _array_in(daterange_in)
+    1: inet_array_in = _array_in(inet_in)
+    1: int_array_in = _array_in(int)
+    1: int4multirange_array_in = _array_in(int4multirange_in)
+    1: int4range_array_in = _array_in(int4range_in)
+    1: int8multirange_array_in = _array_in(int8multirange_in)
+    1: int8range_array_in = _array_in(int8range_in)
+    1: interval_array_in = _array_in(interval_in)
+    1: json_array_in = _array_in(json_in)
+    1: float_array_in = _array_in(float)
+    1: numeric_array_in = _array_in(numeric_in)
+    1: nummultirange_array_in = _array_in(nummultirange_in)
+    1: numrange_array_in = _array_in(numrange_in)
+    1: string_array_in = _array_in(string_in)
+    1: time_array_in = _array_in(time_in)
+    1: timestamp_array_in = _array_in(timestamp_in)
+    1: timestamptz_array_in = _array_in(timestamptz_in)
+    1: tsrange_array_in = _array_in(tsrange_in)
+    1: tsmultirange_array_in = _array_in(tsmultirange_in)
+    1: tstzmultirange_array_in = _array_in(tstzmultirange_in)
+    1: tstzrange_array_in = _array_in(tstzrange_in)
+    1: uuid_array_in = _array_in(uuid_in)
+       
+       
+    1: def array_string_escape(v):
+>>>>>>     cs = []
+>>>>>>     for c in v:
+>>>>>>         if c == "\\":
+>>>>>>             cs.append("\\")
+>>>>>>         elif c == '"':
+>>>>>>             cs.append("\\")
+>>>>>>         cs.append(c)
+>>>>>>     val = "".join(cs)
+>>>>>>     if (
+>>>>>>         len(val) == 0
+>>>>>>         or val == "NULL"
+>>>>>>         or any(c.isspace() for c in val)
+>>>>>>         or any(c in val for c in ("{", "}", ",", "\\"))
+           ):
+>>>>>>         val = f'"{val}"'
+>>>>>>     return val
+       
+       
+    1: def array_out(ar):
+>>>>>>     result = []
+>>>>>>     for v in ar:
+>>>>>>         if isinstance(v, list):
+>>>>>>             val = array_out(v)
+       
+>>>>>>         elif isinstance(v, tuple):
+>>>>>>             val = f'"{composite_out(v)}"'
+       
+>>>>>>         elif v is None:
+>>>>>>             val = "NULL"
+       
+>>>>>>         elif isinstance(v, dict):
+>>>>>>             val = array_string_escape(json_out(v))
+       
+>>>>>>         elif isinstance(v, (bytes, bytearray)):
+>>>>>>             val = f'"\\{bytes_out(v)}"'
+       
+>>>>>>         elif isinstance(v, str):
+>>>>>>             val = array_string_escape(v)
+       
+               else:
+>>>>>>             val = make_param(PY_TYPES, v)
+       
+>>>>>>         result.append(val)
+       
+>>>>>>     return f'{{{",".join(result)}}}'
+       
+       
+    1: def composite_out(ar):
+>>>>>>     result = []
+>>>>>>     for v in ar:
+>>>>>>         if isinstance(v, list):
+>>>>>>             val = array_out(v)
+       
+>>>>>>         elif isinstance(v, tuple):
+>>>>>>             val = composite_out(v)
+       
+>>>>>>         elif v is None:
+>>>>>>             val = ""
+       
+>>>>>>         elif isinstance(v, dict):
+>>>>>>             val = array_string_escape(json_out(v))
+       
+>>>>>>         elif isinstance(v, (bytes, bytearray)):
+>>>>>>             val = f'"\\{bytes_out(v)}"'
+       
+>>>>>>         elif isinstance(v, str):
+>>>>>>             val = array_string_escape(v)
+       
+               else:
+>>>>>>             val = make_param(PY_TYPES, v)
+       
+>>>>>>         result.append(val)
+       
+>>>>>>     return f'({",".join(result)})'
+       
+       
+    1: def record_in(data):
+>>>>>>     state = ParserState.Out
+>>>>>>     results = []
+>>>>>>     val = []
+>>>>>>     for c in data:
+>>>>>>         if state == ParserState.InValue:
+>>>>>>             if c in (")", ","):
+>>>>>>                 value = "".join(val)
+>>>>>>                 val.clear()
+>>>>>>                 results.append(None if value == "" else value)
+>>>>>>                 state = ParserState.Out
+                   else:
+>>>>>>                 val.append(c)
+       
+>>>>>>         if state == ParserState.Out:
+>>>>>>             if c in "(),":
+>>>>>>                 pass
+>>>>>>             elif c == '"':
+>>>>>>                 state = ParserState.InString
+                   else:
+>>>>>>                 val.append(c)
+>>>>>>                 state = ParserState.InValue
+       
+>>>>>>         elif state == ParserState.InString:
+>>>>>>             if c == '"':
+>>>>>>                 results.append("".join(val))
+>>>>>>                 val.clear()
+>>>>>>                 state = ParserState.Out
+>>>>>>             elif c == "\\":
+>>>>>>                 state = ParserState.InEscape
+                   else:
+>>>>>>                 val.append(c)
+       
+>>>>>>         elif state == ParserState.InEscape:
+>>>>>>             val.append(c)
+>>>>>>             state = ParserState.InString
+       
+>>>>>>     return tuple(results)
+       
+       
+    1: PY_PG = {
+    1:     Date: DATE,
+    1:     Decimal: NUMERIC,
+    1:     IPv4Address: INET,
+    1:     IPv6Address: INET,
+    1:     IPv4Network: INET,
+    1:     IPv6Network: INET,
+    1:     PGInterval: INTERVAL,
+    1:     Time: TIME,
+    1:     Timedelta: INTERVAL,
+    1:     UUID: UUID_TYPE,
+    1:     bool: BOOLEAN,
+    1:     bytearray: BYTES,
+    1:     dict: JSONB,
+    1:     float: FLOAT,
+    1:     type(None): NULLTYPE,
+    1:     bytes: BYTES,
+    1:     str: TEXT,
+       }
+       
+       
+    1: PY_TYPES = {
+    1:     Date: date_out,  # date
+    1:     Datetime: datetime_out,
+    1:     Decimal: numeric_out,  # numeric
+    1:     Enum: enum_out,  # enum
+    1:     IPv4Address: inet_out,  # inet
+    1:     IPv6Address: inet_out,  # inet
+    1:     IPv4Network: inet_out,  # inet
+    1:     IPv6Network: inet_out,  # inet
+    1:     PGInterval: interval_out,  # interval
+    1:     Range: range_out,  # range types
+    1:     Time: time_out,  # time
+    1:     Timedelta: interval_out,  # interval
+    1:     UUID: uuid_out,  # uuid
+    1:     bool: bool_out,  # bool
+    1:     bytearray: bytes_out,  # bytea
+    1:     dict: json_out,  # jsonb
+    1:     float: float_out,  # float8
+    1:     type(None): null_out,  # null
+    1:     bytes: bytes_out,  # bytea
+    1:     str: string_out,  # unknown
+    1:     int: int_out,
+    1:     list: array_out,
+    1:     tuple: composite_out,
+       }
+       
+       
+    1: PG_TYPES = {
+    1:     BIGINT: int,  # int8
+    1:     BIGINT_ARRAY: int_array_in,  # int8[]
+    1:     BOOLEAN: bool_in,  # bool
+    1:     BOOLEAN_ARRAY: bool_array_in,  # bool[]
+    1:     BYTES: bytes_in,  # bytea
+    1:     BYTES_ARRAY: bytes_array_in,  # bytea[]
+    1:     CHAR: string_in,  # char
+    1:     CHAR_ARRAY: string_array_in,  # char[]
+    1:     CIDR_ARRAY: cidr_array_in,  # cidr[]
+    1:     CSTRING: string_in,  # cstring
+    1:     CSTRING_ARRAY: string_array_in,  # cstring[]
+    1:     DATE: date_in,  # date
+    1:     DATE_ARRAY: date_array_in,  # date[]
+    1:     DATEMULTIRANGE: datemultirange_in,  # datemultirange
+    1:     DATEMULTIRANGE_ARRAY: datemultirange_array_in,  # datemultirange[]
+    1:     DATERANGE: daterange_in,  # daterange
+    1:     DATERANGE_ARRAY: daterange_array_in,  # daterange[]
+    1:     FLOAT: float,  # float8
+    1:     FLOAT_ARRAY: float_array_in,  # float8[]
+    1:     INET: inet_in,  # inet
+    1:     INET_ARRAY: inet_array_in,  # inet[]
+    1:     INT4MULTIRANGE: int4multirange_in,  # int4multirange
+    1:     INT4MULTIRANGE_ARRAY: int4multirange_array_in,  # int4multirange[]
+    1:     INT4RANGE: int4range_in,  # int4range
+    1:     INT4RANGE_ARRAY: int4range_array_in,  # int4range[]
+    1:     INT8MULTIRANGE: int8multirange_in,  # int8multirange
+    1:     INT8MULTIRANGE_ARRAY: int8multirange_array_in,  # int8multirange[]
+    1:     INT8RANGE: int8range_in,  # int8range
+    1:     INT8RANGE_ARRAY: int8range_array_in,  # int8range[]
+    1:     INTEGER: int,  # int4
+    1:     INTEGER_ARRAY: int_array_in,  # int4[]
+    1:     JSON: json_in,  # json
+    1:     JSON_ARRAY: json_array_in,  # json[]
+    1:     JSONB: json_in,  # jsonb
+    1:     JSONB_ARRAY: json_array_in,  # jsonb[]
+    1:     MACADDR: string_in,  # MACADDR type
+    1:     MONEY: string_in,  # money
+    1:     MONEY_ARRAY: string_array_in,  # money[]
+    1:     NAME: string_in,  # name
+    1:     NAME_ARRAY: string_array_in,  # name[]
+    1:     NUMERIC: numeric_in,  # numeric
+    1:     NUMERIC_ARRAY: numeric_array_in,  # numeric[]
+    1:     NUMRANGE: numrange_in,  # numrange
+    1:     NUMRANGE_ARRAY: numrange_array_in,  # numrange[]
+    1:     NUMMULTIRANGE: nummultirange_in,  # nummultirange
+    1:     NUMMULTIRANGE_ARRAY: nummultirange_array_in,  # nummultirange[]
+    1:     OID: int,  # oid
+    1:     POINT: point_in,  # point
+    1:     INTERVAL: interval_in,  # interval
+    1:     INTERVAL_ARRAY: interval_array_in,  # interval[]
+    1:     REAL: float,  # float4
+    1:     REAL_ARRAY: float_array_in,  # float4[]
+    1:     RECORD: record_in,  # record
+    1:     SMALLINT: int,  # int2
+    1:     SMALLINT_ARRAY: int_array_in,  # int2[]
+    1:     SMALLINT_VECTOR: vector_in,  # int2vector
+    1:     TEXT: string_in,  # text
+    1:     TEXT_ARRAY: string_array_in,  # text[]
+    1:     TIME: time_in,  # time
+    1:     TIME_ARRAY: time_array_in,  # time[]
+    1:     INTERVAL: interval_in,  # interval
+    1:     TIMESTAMP: timestamp_in,  # timestamp
+    1:     TIMESTAMP_ARRAY: timestamp_array_in,  # timestamp
+    1:     TIMESTAMPTZ: timestamptz_in,  # timestamptz
+    1:     TIMESTAMPTZ_ARRAY: timestamptz_array_in,  # timestamptz
+    1:     TSMULTIRANGE: tsmultirange_in,  # tsmultirange
+    1:     TSMULTIRANGE_ARRAY: tsmultirange_array_in,  # tsmultirange[]
+    1:     TSRANGE: tsrange_in,  # tsrange
+    1:     TSRANGE_ARRAY: tsrange_array_in,  # tsrange[]
+    1:     TSTZMULTIRANGE: tstzmultirange_in,  # tstzmultirange
+    1:     TSTZMULTIRANGE_ARRAY: tstzmultirange_array_in,  # tstzmultirange[]
+    1:     TSTZRANGE: tstzrange_in,  # tstzrange
+    1:     TSTZRANGE_ARRAY: tstzrange_array_in,  # tstzrange[]
+    1:     UNKNOWN: string_in,  # unknown
+    1:     UUID_ARRAY: uuid_array_in,  # uuid[]
+    1:     UUID_TYPE: uuid_in,  # uuid
+    1:     VARCHAR: string_in,  # varchar
+    1:     VARCHAR_ARRAY: string_array_in,  # varchar[]
+    1:     XID: int,  # xid
+       }
+       
+       
+       # PostgreSQL encodings:
+       # https://www.postgresql.org/docs/current/multibyte.html
+       #
+       # Python encodings:
+       # https://docs.python.org/3/library/codecs.html
+       #
+       # Commented out encodings don't require a name change between PostgreSQL and
+       # Python.  If the py side is None, then the encoding isn't supported.
+    1: PG_PY_ENCODINGS = {
+           # Not supported:
+    1:     "mule_internal": None,
+    1:     "euc_tw": None,
+           # Name fine as-is:
+           # "euc_jp",
+           # "euc_jis_2004",
+           # "euc_kr",
+           # "gb18030",
+           # "gbk",
+           # "johab",
+           # "sjis",
+           # "shift_jis_2004",
+           # "uhc",
+           # "utf8",
+           # Different name:
+    1:     "euc_cn": "gb2312",
+    1:     "iso_8859_5": "is8859_5",
+    1:     "iso_8859_6": "is8859_6",
+    1:     "iso_8859_7": "is8859_7",
+    1:     "iso_8859_8": "is8859_8",
+    1:     "koi8": "koi8_r",
+    1:     "latin1": "iso8859-1",
+    1:     "latin2": "iso8859_2",
+    1:     "latin3": "iso8859_3",
+    1:     "latin4": "iso8859_4",
+    1:     "latin5": "iso8859_9",
+    1:     "latin6": "iso8859_10",
+    1:     "latin7": "iso8859_13",
+    1:     "latin8": "iso8859_14",
+    1:     "latin9": "iso8859_15",
+    1:     "sql_ascii": "ascii",
+    1:     "win866": "cp886",
+    1:     "win874": "cp874",
+    1:     "win1250": "cp1250",
+    1:     "win1251": "cp1251",
+    1:     "win1252": "cp1252",
+    1:     "win1253": "cp1253",
+    1:     "win1254": "cp1254",
+    1:     "win1255": "cp1255",
+    1:     "win1256": "cp1256",
+    1:     "win1257": "cp1257",
+    1:     "win1258": "cp1258",
+    1:     "unicode": "utf-8",  # Needed for Amazon Redshift
+       }
+       
+       
+    1: def make_param(py_types, value):
+    1:     try:
+    1:         func = py_types[type(value)]
+>>>>>>     except KeyError:
+>>>>>>         func = str
+>>>>>>         for k, v in py_types.items():
+>>>>>>             try:
+>>>>>>                 if isinstance(value, k):
+>>>>>>                     func = v
+>>>>>>                     break
+>>>>>>             except TypeError:
+>>>>>>                 pass
+       
+    1:     return func(value)
+       
+       
+    1: def make_params(py_types, values):
+    7:     return tuple([make_param(py_types, v) for v in values])
+       
+       
+    1: def identifier(sql):
+>>>>>>     if not isinstance(sql, str):
+>>>>>>         raise InterfaceError("identifier must be a str")
+       
+>>>>>>     if len(sql) == 0:
+>>>>>>         raise InterfaceError("identifier must be > 0 characters in length")
+       
+>>>>>>     quote = not sql[0].isalpha()
+       
+>>>>>>     for c in sql[1:]:
+>>>>>>         if not (c.isalpha() or c.isdecimal() or c in "_$"):
+>>>>>>             if c == "\u0000":
+>>>>>>                 raise InterfaceError(
+>>>>>>                     "identifier cannot contain the code zero character"
+                       )
+>>>>>>             quote = True
+>>>>>>             break
+       
+>>>>>>     if quote:
+>>>>>>         sql = sql.replace('"', '""')
+>>>>>>         return f'"{sql}"'
+           else:
+>>>>>>         return sql
+       
+       
+    1: def literal(value):
+>>>>>>     if value is None:
+>>>>>>         return "NULL"
+>>>>>>     elif isinstance(value, bool):
+>>>>>>         return "TRUE" if value else "FALSE"
+>>>>>>     elif isinstance(value, (int, float, Decimal)):
+>>>>>>         return str(value)
+>>>>>>     elif isinstance(value, (bytes, bytearray)):
+>>>>>>         return f"X'{value.hex()}'"
+>>>>>>     elif isinstance(value, Datetime):
+>>>>>>         return f"'{datetime_out(value)}'"
+>>>>>>     elif isinstance(value, Date):
+>>>>>>         return f"'{date_out(value)}'"
+>>>>>>     elif isinstance(value, Time):
+>>>>>>         return f"'{time_out(value)}'"
+>>>>>>     elif isinstance(value, Timedelta):
+>>>>>>         return f"'{interval_out(value)}'"
+>>>>>>     elif isinstance(value, list):
+>>>>>>         return f"'{array_out(value)}'"
+           else:
+>>>>>>         val = str(value).replace("'", "''")
+>>>>>>         return f"'{val}'"

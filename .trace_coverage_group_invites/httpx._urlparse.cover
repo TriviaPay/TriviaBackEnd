@@ -1,0 +1,464 @@
+    1: """
+       An implementation of `urlparse` that provides URL validation and normalization
+       as described by RFC3986.
+       
+       We rely on this implementation rather than the one in Python's stdlib, because:
+       
+       * It provides more complete URL validation.
+       * It properly differentiates between an empty querystring and an absent querystring,
+         to distinguish URLs with a trailing '?'.
+       * It handles scheme, hostname, port, and path normalization.
+       * It supports IDNA hostnames, normalizing them to their encoded form.
+       * The API supports passing individual components, as well as the complete URL string.
+       
+       Previously we relied on the excellent `rfc3986` package to handle URL parsing and
+       validation, but this module provides a simpler alternative, with less indirection
+       required.
+       """
+    1: import ipaddress
+    1: import re
+    1: import typing
+       
+    1: import idna
+       
+    1: from ._exceptions import InvalidURL
+       
+    1: MAX_URL_LENGTH = 65536
+       
+       # https://datatracker.ietf.org/doc/html/rfc3986.html#section-2.3
+    1: UNRESERVED_CHARACTERS = (
+    1:     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+       )
+    1: SUB_DELIMS = "!$&'()*+,;="
+       
+    1: PERCENT_ENCODED_REGEX = re.compile("%[A-Fa-f0-9]{2}")
+       
+       
+       # {scheme}:      (optional)
+       # //{authority}  (optional)
+       # {path}
+       # ?{query}       (optional)
+       # #{fragment}    (optional)
+    2: URL_REGEX = re.compile(
+    2:     (
+    1:         r"(?:(?P<scheme>{scheme}):)?"
+               r"(?://(?P<authority>{authority}))?"
+               r"(?P<path>{path})"
+               r"(?:\?(?P<query>{query}))?"
+               r"(?:#(?P<fragment>{fragment}))?"
+           ).format(
+    1:         scheme="([a-zA-Z][a-zA-Z0-9+.-]*)?",
+    1:         authority="[^/?#]*",
+    1:         path="[^?#]*",
+    1:         query="[^#]*",
+    1:         fragment=".*",
+           )
+       )
+       
+       # {userinfo}@    (optional)
+       # {host}
+       # :{port}        (optional)
+    2: AUTHORITY_REGEX = re.compile(
+    2:     (
+    1:         r"(?:(?P<userinfo>{userinfo})@)?" r"(?P<host>{host})" r":?(?P<port>{port})?"
+           ).format(
+    1:         userinfo="[^@]*",  # Any character sequence not including '@'.
+    1:         host="(\\[.*\\]|[^:]*)",  # Either any character sequence not including ':',
+               # or an IPv6 address enclosed within square brackets.
+    1:         port=".*",  # Any character sequence.
+           )
+       )
+       
+       
+       # If we call urlparse with an individual component, then we need to regex
+       # validate that component individually.
+       # Note that we're duplicating the same strings as above. Shock! Horror!!
+    1: COMPONENT_REGEX = {
+    1:     "scheme": re.compile("([a-zA-Z][a-zA-Z0-9+.-]*)?"),
+    1:     "authority": re.compile("[^/?#]*"),
+    1:     "path": re.compile("[^?#]*"),
+    1:     "query": re.compile("[^#]*"),
+    1:     "fragment": re.compile(".*"),
+    1:     "userinfo": re.compile("[^@]*"),
+    1:     "host": re.compile("(\\[.*\\]|[^:]*)"),
+    1:     "port": re.compile(".*"),
+       }
+       
+       
+       # We use these simple regexs as a first pass before handing off to
+       # the stdlib 'ipaddress' module for IP address validation.
+    1: IPv4_STYLE_HOSTNAME = re.compile(r"^[0-9]+.[0-9]+.[0-9]+.[0-9]+$")
+    1: IPv6_STYLE_HOSTNAME = re.compile(r"^\[.*\]$")
+       
+       
+    2: class ParseResult(typing.NamedTuple):
+    1:     scheme: str
+    1:     userinfo: str
+    1:     host: str
+    1:     port: typing.Optional[int]
+    1:     path: str
+    1:     query: typing.Optional[str]
+    1:     fragment: typing.Optional[str]
+       
+    1:     @property
+    1:     def authority(self) -> str:
+   48:         return "".join(
+   24:             [
+   24:                 f"{self.userinfo}@" if self.userinfo else "",
+   24:                 f"[{self.host}]" if ":" in self.host else self.host,
+   24:                 f":{self.port}" if self.port is not None else "",
+                   ]
+               )
+       
+    1:     @property
+    1:     def netloc(self) -> str:
+   48:         return "".join(
+   24:             [
+   24:                 f"[{self.host}]" if ":" in self.host else self.host,
+   24:                 f":{self.port}" if self.port is not None else "",
+                   ]
+               )
+       
+    1:     def copy_with(self, **kwargs: typing.Optional[str]) -> "ParseResult":
+   36:         if not kwargs:
+   24:             return self
+       
+   12:         defaults = {
+   12:             "scheme": self.scheme,
+   12:             "authority": self.authority,
+   12:             "path": self.path,
+   12:             "query": self.query,
+   12:             "fragment": self.fragment,
+               }
+   12:         defaults.update(kwargs)
+   12:         return urlparse("", **defaults)
+       
+    1:     def __str__(self) -> str:
+   12:         authority = self.authority
+   24:         return "".join(
+   12:             [
+   12:                 f"{self.scheme}:" if self.scheme else "",
+   12:                 f"//{authority}" if authority else "",
+   12:                 self.path,
+   12:                 f"?{self.query}" if self.query is not None else "",
+   12:                 f"#{self.fragment}" if self.fragment is not None else "",
+                   ]
+               )
+       
+       
+    1: def urlparse(url: str = "", **kwargs: typing.Optional[str]) -> ParseResult:
+           # Initial basic checks on allowable URLs.
+           # ---------------------------------------
+       
+           # Hard limit the maximum allowable URL length.
+   36:     if len(url) > MAX_URL_LENGTH:
+>>>>>>         raise InvalidURL("URL too long")
+       
+           # If a URL includes any ASCII control characters including \t, \r, \n,
+           # then treat it as invalid.
+  580:     if any(char.isascii() and not char.isprintable() for char in url):
+>>>>>>         raise InvalidURL("Invalid non-printable ASCII character in URL")
+       
+           # Some keyword arguments require special handling.
+           # ------------------------------------------------
+       
+           # Coerce "port" to a string, if it is provided as an integer.
+   36:     if "port" in kwargs:
+>>>>>>         port = kwargs["port"]
+>>>>>>         kwargs["port"] = str(port) if isinstance(port, int) else port
+       
+           # Replace "netloc" with "host and "port".
+   36:     if "netloc" in kwargs:
+>>>>>>         netloc = kwargs.pop("netloc") or ""
+>>>>>>         kwargs["host"], _, kwargs["port"] = netloc.partition(":")
+       
+           # Replace "username" and/or "password" with "userinfo".
+   36:     if "username" in kwargs or "password" in kwargs:
+>>>>>>         username = quote(kwargs.pop("username", "") or "")
+>>>>>>         password = quote(kwargs.pop("password", "") or "")
+>>>>>>         kwargs["userinfo"] = f"{username}:{password}" if password else username
+       
+           # Replace "raw_path" with "path" and "query".
+   36:     if "raw_path" in kwargs:
+   12:         raw_path = kwargs.pop("raw_path") or ""
+   12:         kwargs["path"], seperator, kwargs["query"] = raw_path.partition("?")
+   12:         if not seperator:
+   12:             kwargs["query"] = None
+       
+           # Ensure that IPv6 "host" addresses are always escaped with "[...]".
+   36:     if "host" in kwargs:
+>>>>>>         host = kwargs.get("host") or ""
+>>>>>>         if ":" in host and not (host.startswith("[") and host.endswith("]")):
+>>>>>>             kwargs["host"] = f"[{host}]"
+       
+           # If any keyword arguments are provided, ensure they are valid.
+           # -------------------------------------------------------------
+       
+   96:     for key, value in kwargs.items():
+   60:         if value is not None:
+   36:             if len(value) > MAX_URL_LENGTH:
+>>>>>>                 raise InvalidURL(f"URL component '{key}' too long")
+       
+                   # If a component includes any ASCII control characters including \t, \r, \n,
+                   # then treat it as invalid.
+  544:             if any(char.isascii() and not char.isprintable() for char in value):
+>>>>>>                 raise InvalidURL(
+>>>>>>                     f"Invalid non-printable ASCII character in URL component '{key}'"
+                       )
+       
+                   # Ensure that keyword arguments match as a valid regex.
+   36:             if not COMPONENT_REGEX[key].fullmatch(value):
+>>>>>>                 raise InvalidURL(f"Invalid URL component '{key}'")
+       
+           # The URL_REGEX will always match, but may have empty components.
+   36:     url_match = URL_REGEX.match(url)
+   36:     assert url_match is not None
+   36:     url_dict = url_match.groupdict()
+       
+           # * 'scheme', 'authority', and 'path' may be empty strings.
+           # * 'query' may be 'None', indicating no trailing "?" portion.
+           #   Any string including the empty string, indicates a trailing "?".
+           # * 'fragment' may be 'None', indicating no trailing "#" portion.
+           #   Any string including the empty string, indicates a trailing "#".
+   36:     scheme = kwargs.get("scheme", url_dict["scheme"]) or ""
+   36:     authority = kwargs.get("authority", url_dict["authority"]) or ""
+   36:     path = kwargs.get("path", url_dict["path"]) or ""
+   36:     query = kwargs.get("query", url_dict["query"])
+   36:     fragment = kwargs.get("fragment", url_dict["fragment"])
+       
+           # The AUTHORITY_REGEX will always match, but may have empty components.
+   36:     authority_match = AUTHORITY_REGEX.match(authority)
+   36:     assert authority_match is not None
+   36:     authority_dict = authority_match.groupdict()
+       
+           # * 'userinfo' and 'host' may be empty strings.
+           # * 'port' may be 'None'.
+   36:     userinfo = kwargs.get("userinfo", authority_dict["userinfo"]) or ""
+   36:     host = kwargs.get("host", authority_dict["host"]) or ""
+   36:     port = kwargs.get("port", authority_dict["port"])
+       
+           # Normalize and validate each component.
+           # We end up with a parsed representation of the URL,
+           # with components that are plain ASCII bytestrings.
+   36:     parsed_scheme: str = scheme.lower()
+   36:     parsed_userinfo: str = quote(userinfo, safe=SUB_DELIMS + ":")
+   36:     parsed_host: str = encode_host(host)
+   36:     parsed_port: typing.Optional[int] = normalize_port(port, scheme)
+       
+   36:     has_scheme = parsed_scheme != ""
+   36:     has_authority = (
+   36:         parsed_userinfo != "" or parsed_host != "" or parsed_port is not None
+           )
+   36:     validate_path(path, has_scheme=has_scheme, has_authority=has_authority)
+   36:     if has_authority:
+   24:         path = normalize_path(path)
+       
+           # The GEN_DELIMS set is... : / ? # [ ] @
+           # These do not need to be percent-quoted unless they serve as delimiters for the
+           # specific component.
+       
+           # For 'path' we need to drop ? and # from the GEN_DELIMS set.
+   36:     parsed_path: str = quote(path, safe=SUB_DELIMS + ":/[]@")
+           # For 'query' we need to drop '#' from the GEN_DELIMS set.
+           # We also exclude '/' because it is more robust to replace it with a percent
+           # encoding despite it not being a requirement of the spec.
+   36:     parsed_query: typing.Optional[str] = (
+   36:         None if query is None else quote(query, safe=SUB_DELIMS + ":?[]@")
+           )
+           # For 'fragment' we can include all of the GEN_DELIMS set.
+   36:     parsed_fragment: typing.Optional[str] = (
+   36:         None if fragment is None else quote(fragment, safe=SUB_DELIMS + ":/?#[]@")
+           )
+       
+           # The parsed ASCII bytestrings are our canonical form.
+           # All properties of the URL are derived from these.
+   72:     return ParseResult(
+   36:         parsed_scheme,
+   36:         parsed_userinfo,
+   36:         parsed_host,
+   36:         parsed_port,
+   36:         parsed_path,
+   36:         parsed_query,
+   36:         parsed_fragment,
+           )
+       
+       
+    1: def encode_host(host: str) -> str:
+   36:     if not host:
+   12:         return ""
+       
+   24:     elif IPv4_STYLE_HOSTNAME.match(host):
+               # Validate IPv4 hostnames like #.#.#.#
+               #
+               # From https://datatracker.ietf.org/doc/html/rfc3986/#section-3.2.2
+               #
+               # IPv4address = dec-octet "." dec-octet "." dec-octet "." dec-octet
+>>>>>>         try:
+>>>>>>             ipaddress.IPv4Address(host)
+>>>>>>         except ipaddress.AddressValueError:
+>>>>>>             raise InvalidURL(f"Invalid IPv4 address: {host!r}")
+>>>>>>         return host
+       
+   24:     elif IPv6_STYLE_HOSTNAME.match(host):
+               # Validate IPv6 hostnames like [...]
+               #
+               # From https://datatracker.ietf.org/doc/html/rfc3986/#section-3.2.2
+               #
+               # "A host identified by an Internet Protocol literal address, version 6
+               # [RFC3513] or later, is distinguished by enclosing the IP literal
+               # within square brackets ("[" and "]").  This is the only place where
+               # square bracket characters are allowed in the URI syntax."
+>>>>>>         try:
+>>>>>>             ipaddress.IPv6Address(host[1:-1])
+>>>>>>         except ipaddress.AddressValueError:
+>>>>>>             raise InvalidURL(f"Invalid IPv6 address: {host!r}")
+>>>>>>         return host[1:-1]
+       
+   24:     elif host.isascii():
+               # Regular ASCII hostnames
+               #
+               # From https://datatracker.ietf.org/doc/html/rfc3986/#section-3.2.2
+               #
+               # reg-name    = *( unreserved / pct-encoded / sub-delims )
+   24:         return quote(host.lower(), safe=SUB_DELIMS)
+       
+           # IDNA hostnames
+>>>>>>     try:
+>>>>>>         return idna.encode(host.lower()).decode("ascii")
+>>>>>>     except idna.IDNAError:
+>>>>>>         raise InvalidURL(f"Invalid IDNA hostname: {host!r}")
+       
+       
+    1: def normalize_port(
+    1:     port: typing.Optional[typing.Union[str, int]], scheme: str
+    1: ) -> typing.Optional[int]:
+           # From https://tools.ietf.org/html/rfc3986#section-3.2.3
+           #
+           # "A scheme may define a default port.  For example, the "http" scheme
+           # defines a default port of "80", corresponding to its reserved TCP
+           # port number.  The type of port designated by the port number (e.g.,
+           # TCP, UDP, SCTP) is defined by the URI scheme.  URI producers and
+           # normalizers should omit the port component and its ":" delimiter if
+           # port is empty or if its value would be the same as that of the
+           # scheme's default."
+   36:     if port is None or port == "":
+   36:         return None
+       
+>>>>>>     try:
+>>>>>>         port_as_int = int(port)
+>>>>>>     except ValueError:
+>>>>>>         raise InvalidURL(f"Invalid port: {port!r}")
+       
+           # See https://url.spec.whatwg.org/#url-miscellaneous
+>>>>>>     default_port = {"ftp": 21, "http": 80, "https": 443, "ws": 80, "wss": 443}.get(
+>>>>>>         scheme
+           )
+>>>>>>     if port_as_int == default_port:
+>>>>>>         return None
+>>>>>>     return port_as_int
+       
+       
+    1: def validate_path(path: str, has_scheme: bool, has_authority: bool) -> None:
+           """
+           Path validation rules that depend on if the URL contains a scheme or authority component.
+       
+           See https://datatracker.ietf.org/doc/html/rfc3986.html#section-3.3
+           """
+   36:     if has_authority:
+               # > If a URI contains an authority component, then the path component
+               # > must either be empty or begin with a slash ("/") character."
+   24:         if path and not path.startswith("/"):
+>>>>>>             raise InvalidURL("For absolute URLs, path must be empty or begin with '/'")
+           else:
+               # > If a URI does not contain an authority component, then the path cannot begin
+               # > with two slash characters ("//").
+   12:         if path.startswith("//"):
+>>>>>>             raise InvalidURL(
+>>>>>>                 "URLs with no authority component cannot have a path starting with '//'"
+                   )
+               # > In addition, a URI reference (Section 4.1) may be a relative-path reference, in which
+               # > case the first path segment cannot contain a colon (":") character.
+   12:         if path.startswith(":") and not has_scheme:
+>>>>>>             raise InvalidURL(
+>>>>>>                 "URLs with no scheme component cannot have a path starting with ':'"
+                   )
+       
+       
+    1: def normalize_path(path: str) -> str:
+           """
+           Drop "." and ".." segments from a URL path.
+       
+           For example:
+       
+               normalize_path("/path/./to/somewhere/..") == "/path/to"
+           """
+           # https://datatracker.ietf.org/doc/html/rfc3986#section-5.2.4
+   24:     components = path.split("/")
+   24:     output: typing.List[str] = []
+   76:     for component in components:
+   52:         if component == ".":
+>>>>>>             pass
+   52:         elif component == "..":
+>>>>>>             if output and output != [""]:
+>>>>>>                 output.pop()
+               else:
+   52:             output.append(component)
+   24:     return "/".join(output)
+       
+       
+    1: def percent_encode(char: str) -> str:
+           """
+           Replace a single character with the percent-encoded representation.
+       
+           Characters outside the ASCII range are represented with their a percent-encoded
+           representation of their UTF-8 byte sequence.
+       
+           For example:
+       
+               percent_encode(" ") == "%20"
+           """
+>>>>>>     return "".join([f"%{byte:02x}" for byte in char.encode("utf-8")]).upper()
+       
+       
+    1: def is_safe(string: str, safe: str = "/") -> bool:
+           """
+           Determine if a given string is already quote-safe.
+           """
+   96:     NON_ESCAPED_CHARS = UNRESERVED_CHARACTERS + safe + "%"
+       
+           # All characters must already be non-escaping or '%'
+  944:     for char in string:
+  848:         if char not in NON_ESCAPED_CHARS:
+>>>>>>             return False
+       
+           # Any '%' characters must be valid '%xx' escape sequences.
+   96:     return string.count("%") == len(PERCENT_ENCODED_REGEX.findall(string))
+       
+       
+    1: def quote(string: str, safe: str = "/") -> str:
+           """
+           Use percent-encoding to quote a string if required.
+           """
+   96:     if is_safe(string, safe=safe):
+   96:         return string
+       
+>>>>>>     NON_ESCAPED_CHARS = UNRESERVED_CHARACTERS + safe
+>>>>>>     return "".join(
+>>>>>>         [char if char in NON_ESCAPED_CHARS else percent_encode(char) for char in string]
+           )
+       
+       
+    1: def urlencode(items: typing.List[typing.Tuple[str, str]]) -> str:
+           # We can use a much simpler version of the stdlib urlencode here because
+           # we don't need to handle a bunch of different typing cases, such as bytes vs str.
+           #
+           # https://github.com/python/cpython/blob/b2f7b2ef0b5421e01efb8c7bee2ef95d3bab77eb/Lib/urllib/parse.py#L926
+           #
+           # Note that we use '%20' encoding for spaces. and '%2F  for '/'.
+           # This is slightly different than `requests`, but is the behaviour that browsers use.
+           #
+           # See
+           # - https://github.com/encode/httpx/issues/2536
+           # - https://github.com/encode/httpx/issues/2721
+           # - https://docs.python.org/3/library/urllib.parse.html#urllib.parse.urlencode
+>>>>>>     return "&".join([quote(k, safe="") + "=" + quote(v, safe="") for k, v in items])

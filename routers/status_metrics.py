@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 from datetime import datetime, timedelta
 import logging
 
@@ -28,34 +28,29 @@ async def get_status_metrics(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    # Posts today
+    # Posts today / active / expired in a single pass
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    posts_today = db.query(StatusPost).filter(
-        StatusPost.created_at >= today_start
-    ).count()
-    
-    # Total active posts (not expired)
     now = datetime.utcnow()
-    active_posts = db.query(StatusPost).filter(
-        StatusPost.expires_at > now
-    ).count()
-    
+    post_counts = db.query(
+        func.sum(case((StatusPost.created_at >= today_start, 1), else_=0)),
+        func.sum(case((StatusPost.expires_at > now, 1), else_=0)),
+        func.sum(case((StatusPost.expires_at <= now, 1), else_=0))
+    ).first()
+    posts_today = post_counts[0] if post_counts and post_counts[0] is not None else 0
+    active_posts = post_counts[1] if post_counts and post_counts[1] is not None else 0
+    expired_posts = post_counts[2] if post_counts and post_counts[2] is not None else 0
+
     # Views today
-    views_today = db.query(StatusView).filter(
+    views_today = db.query(func.count(StatusView.post_id)).filter(
         StatusView.viewed_at >= today_start
-    ).count()
-    
-    # Average audience size
-    avg_audience = db.query(func.avg(
-        func.count(StatusAudience.viewer_user_id)
-    )).select_from(StatusAudience).group_by(
-        StatusAudience.post_id
     ).scalar() or 0
-    
-    # Expired posts (for cleanup)
-    expired_posts = db.query(StatusPost).filter(
-        StatusPost.expires_at <= now
-    ).count()
+
+    # Average audience size
+    audience_counts = db.query(
+        StatusAudience.post_id.label("post_id"),
+        func.count(StatusAudience.viewer_user_id).label("viewer_count")
+    ).group_by(StatusAudience.post_id).subquery()
+    avg_audience = db.query(func.avg(audience_counts.c.viewer_count)).scalar() or 0
     
     return {
         "status": "success",
@@ -74,4 +69,3 @@ async def get_status_metrics(
             }
         }
     }
-

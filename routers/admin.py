@@ -4,6 +4,8 @@ from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Body, status, Path, Query
 from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 import pytz
 import logging
 
@@ -26,8 +28,34 @@ from datetime import datetime
 import json
 import uuid
 import logging
+import random
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+MAX_QUESTION_UPLOAD_BYTES = int(os.getenv("MAX_QUESTION_UPLOAD_BYTES", str(5 * 1024 * 1024)))
+
+
+def _select_random_rows(base_query, count: int, order_col):
+    total = base_query.count()
+    if total <= 0:
+        return []
+    if total <= count:
+        return base_query.order_by(order_col).all()
+
+    offsets = random.sample(range(total), count)
+    results = []
+    seen_ids = set()
+    for offset in offsets:
+        row = base_query.order_by(order_col).offset(offset).limit(1).first()
+        if row and row.id not in seen_ids:
+            results.append(row)
+            seen_ids.add(row.id)
+    while len(results) < count:
+        offset = random.randrange(total)
+        row = base_query.order_by(order_col).offset(offset).limit(1).first()
+        if row and row.id not in seen_ids:
+            results.append(row)
+            seen_ids.add(row.id)
+    return results
 
 # Request models
 class DrawConfigUpdateRequest(BaseModel):
@@ -165,7 +193,9 @@ class BulkImportResponse(BaseModel):
 @router.get("/users", response_model=List[UserAdminStatus])
 async def get_admin_users(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=500, description="Max records to return")
 ):
     """
     Get all users with their admin status (admin-only endpoint)
@@ -174,7 +204,7 @@ async def get_admin_users(
     verify_admin(current_user)
     
     # Get all users with their admin status
-    users = db.query(User).all()
+    users = db.query(User).order_by(User.account_id).offset(skip).limit(limit).all()
     return users
 
 @router.put("/users/{account_id}", response_model=AdminStatusResponse)
@@ -215,8 +245,11 @@ async def update_user_admin_status(
 async def search_users(
     email: Optional[str] = Query(None, description="Email to search for"),
     username: Optional[str] = Query(None, description="Username to search for"),
+    contains: bool = Query(False, description="Use substring search (slower)"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=500, description="Max records to return")
 ):
     """
     Search for users by email or username (admin-only endpoint)
@@ -224,17 +257,22 @@ async def search_users(
     # Verify admin access
     verify_admin(current_user)
     
+    if not email and not username:
+        raise HTTPException(status_code=400, detail="Provide email or username to search")
+
     # Create base query
     query = db.query(User)
     
     # Apply filters if provided
     if email:
-        query = query.filter(User.email.ilike(f"%{email}%"))
+        pattern = f"%{email}%" if contains else f"{email}%"
+        query = query.filter(User.email.ilike(pattern))
     if username:
-        query = query.filter(User.username.ilike(f"%{username}%"))
+        pattern = f"%{username}%" if contains else f"{username}%"
+        query = query.filter(User.username.ilike(pattern))
     
     # Get results
-    users = query.all()
+    users = query.order_by(User.account_id).offset(skip).limit(limit).all()
     return users 
 
 
@@ -257,8 +295,13 @@ async def upload_questions_csv(
     if not mode_config:
         raise HTTPException(status_code=404, detail=f"Mode '{mode_id}' not found")
     
-    # Read file content
-    file_content = await file.read()
+    # Read file content with size cap to avoid large uploads exhausting memory
+    file_content = await file.read(MAX_QUESTION_UPLOAD_BYTES + 1)
+    if len(file_content) > MAX_QUESTION_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"CSV file too large (max {MAX_QUESTION_UPLOAD_BYTES} bytes)"
+        )
     
     try:
         # Parse CSV
@@ -515,21 +558,26 @@ async def allocate_free_mode_questions_manual(
         }
     
     # Get available questions (prefer unused)
-    unused_questions = db.query(TriviaQuestionsFreeMode).filter(
+    unused_query = db.query(TriviaQuestionsFreeMode).filter(
         TriviaQuestionsFreeMode.is_used == False
-    ).all()
+    )
+    unused_count = unused_query.count()
     
     # If not enough unused questions, get any questions
-    if len(unused_questions) < questions_count:
-        all_questions = db.query(TriviaQuestionsFreeMode).all()
-        if len(all_questions) < questions_count:
+    if unused_count < questions_count:
+        all_query = db.query(TriviaQuestionsFreeMode)
+        all_count = all_query.count()
+        if all_count < questions_count:
             raise HTTPException(
                 status_code=400,
-                detail=f"Not enough questions available. Need {questions_count}, have {len(all_questions)}"
+                detail=f"Not enough questions available. Need {questions_count}, have {all_count}"
             )
-        available_questions = random.sample(all_questions, questions_count)
+        available_questions = _select_random_rows(all_query, questions_count, TriviaQuestionsFreeMode.id)
     else:
-        available_questions = random.sample(unused_questions, questions_count)
+        available_questions = _select_random_rows(unused_query, questions_count, TriviaQuestionsFreeMode.id)
+    
+    if not available_questions:
+        raise HTTPException(status_code=400, detail="No questions available to allocate")
     
     # Allocate questions to daily pool
     allocated_count = 0
@@ -545,7 +593,16 @@ async def allocate_free_mode_questions_manual(
         question.is_used = True
         allocated_count += 1
     
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return {
+            'status': 'already_allocated',
+            'target_date': target.isoformat(),
+            'existing_count': existing_questions,
+            'message': f'Questions already allocated for {target}'
+        }
     
     return {
         'status': 'success',
@@ -686,21 +743,27 @@ async def allocate_bronze_mode_questions_manual(
         }
     
     # Get available questions (prefer unused)
-    unused_questions = db.query(TriviaQuestionsBronzeMode).filter(
+    unused_query = db.query(TriviaQuestionsBronzeMode).filter(
         TriviaQuestionsBronzeMode.is_used == False
-    ).all()
+    )
+    unused_count = unused_query.count()
     
     # If not enough unused questions, get any questions
-    if len(unused_questions) < 1:
-        all_questions = db.query(TriviaQuestionsBronzeMode).all()
-        if len(all_questions) < 1:
+    if unused_count < 1:
+        all_query = db.query(TriviaQuestionsBronzeMode)
+        all_count = all_query.count()
+        if all_count < 1:
             raise HTTPException(
                 status_code=400,
                 detail="No questions available for bronze mode"
             )
-        selected_question = random.choice(all_questions)
+        selected_questions = _select_random_rows(all_query, 1, TriviaQuestionsBronzeMode.id)
     else:
-        selected_question = random.choice(unused_questions)
+        selected_questions = _select_random_rows(unused_query, 1, TriviaQuestionsBronzeMode.id)
+    
+    if not selected_questions:
+        raise HTTPException(status_code=400, detail="No questions available for bronze mode")
+    selected_question = selected_questions[0]
     
     # Allocate question to daily pool
     daily_question = TriviaQuestionsBronzeModeDaily(
@@ -713,7 +776,16 @@ async def allocate_bronze_mode_questions_manual(
     # Mark question as used
     selected_question.is_used = True
     
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return {
+            'status': 'already_allocated',
+            'target_date': target.isoformat(),
+            'existing_count': existing_question,
+            'message': f'Question already allocated for {target}'
+        }
     
     return {
         'status': 'success',
@@ -729,6 +801,10 @@ async def check_subscription_status(
     plan_id: Optional[int] = Query(None, description="Subscription plan ID to check. If not provided, checks all plans."),
     price_usd: Optional[float] = Query(None, description="Filter by price in USD (e.g., 5.0 for $5 plans)"),
     user_id: Optional[int] = Query(None, description="User account ID to check. If not provided, checks all users."),
+    plan_skip: int = Query(0, ge=0, description="Plans to skip"),
+    plan_limit: int = Query(100, ge=1, le=500, description="Max plans to return"),
+    sub_skip: int = Query(0, ge=0, description="Subscriptions to skip"),
+    sub_limit: int = Query(100, ge=1, le=1000, description="Max subscriptions to return"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -749,7 +825,7 @@ async def check_subscription_status(
             (SubscriptionPlan.unit_amount_minor == int(price_usd * 100))
         )
     
-    plans = plan_query.all()
+    plans = plan_query.order_by(SubscriptionPlan.id).offset(plan_skip).limit(plan_limit).all()
     
     result = {
         'plans_found': len(plans),
@@ -770,28 +846,27 @@ async def check_subscription_status(
             'stripe_price_id': plan.stripe_price_id
         })
     
-    # Check subscriptions
+    # Check subscriptions with joins to avoid N+1 queries
+    sub_query = db.query(UserSubscription, User, SubscriptionPlan).join(
+        User, User.account_id == UserSubscription.user_id
+    ).join(
+        SubscriptionPlan, SubscriptionPlan.id == UserSubscription.plan_id
+    )
+    
     if plan_id:
-        # Filter by specific plan
-        query = db.query(UserSubscription).filter(UserSubscription.plan_id == plan_id)
+        sub_query = sub_query.filter(UserSubscription.plan_id == plan_id)
     elif price_usd:
-        # Filter by price
-        query = db.query(UserSubscription).join(SubscriptionPlan).filter(
+        sub_query = sub_query.filter(
             (SubscriptionPlan.price_usd == price_usd) |
             (SubscriptionPlan.unit_amount_minor == int(price_usd * 100))
         )
-    else:
-        # Get all subscriptions
-        query = db.query(UserSubscription)
     
     if user_id:
-        query = query.filter(UserSubscription.user_id == user_id)
+        sub_query = sub_query.filter(UserSubscription.user_id == user_id)
     
-    subscriptions = query.all()
+    subscriptions = sub_query.order_by(UserSubscription.id).offset(sub_skip).limit(sub_limit).all()
     
-    for sub in subscriptions:
-        user = db.query(User).filter(User.account_id == sub.user_id).first()
-        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == sub.plan_id).first()
+    for sub, user, plan in subscriptions:
         result['subscriptions'].append({
             'user_id': sub.user_id,
             'username': user.username if user else None,
@@ -1224,18 +1299,21 @@ async def get_badge_assignments(
     """Admin endpoint to get badge assignment statistics"""
     # Get counts of users per badge (badges are now in TriviaModeConfig)
     result = {}
-    # Get all mode configs that have badge_image_url (i.e., are badges)
+    counts = dict(
+        db.query(User.badge_id, func.count(User.account_id))
+        .group_by(User.badge_id)
+        .all()
+    )
     badges = db.query(TriviaModeConfig).filter(TriviaModeConfig.badge_image_url.isnot(None)).all()
     
     for mode_config in badges:
-        count = db.query(User).filter(User.badge_id == mode_config.mode_id).count()
         result[mode_config.mode_id] = {
             "badge_name": mode_config.mode_name,
-            "user_count": count
+            "user_count": counts.get(mode_config.mode_id, 0)
         }
     
     # Also get count of users with no badge
-    no_badge_count = db.query(User).filter(User.badge_id == None).count()
+    no_badge_count = counts.get(None, 0)
     result["no_badge"] = {
         "badge_name": "No Badge",
         "user_count": no_badge_count
@@ -1243,7 +1321,7 @@ async def get_badge_assignments(
     
     return {
         "assignments": result,
-        "total_users": db.query(User).count()
+        "total_users": sum(counts.values())
     }
 
 # ======== Cosmetics Admin Endpoints ========
@@ -1328,14 +1406,13 @@ async def delete_avatar(
         raise HTTPException(status_code=404, detail=f"Avatar with ID {avatar_id} not found")
     
     # Remove any references in user_avatars table
-    user_avatars = db.query(UserAvatar).filter(UserAvatar.avatar_id == avatar_id).all()
-    for user_avatar in user_avatars:
-        db.delete(user_avatar)
+    db.query(UserAvatar).filter(UserAvatar.avatar_id == avatar_id).delete(synchronize_session=False)
     
     # Remove any users who have this as selected avatar
-    users_with_selected = db.query(User).filter(User.selected_avatar_id == avatar_id).all()
-    for user in users_with_selected:
-        user.selected_avatar_id = None
+    db.query(User).filter(User.selected_avatar_id == avatar_id).update(
+        {User.selected_avatar_id: None},
+        synchronize_session=False
+    )
     
     # Delete the avatar
     db.delete(avatar)
@@ -1423,14 +1500,13 @@ async def delete_frame(
         raise HTTPException(status_code=404, detail=f"Frame with ID {frame_id} not found")
     
     # Remove any references in user_frames table
-    user_frames = db.query(UserFrame).filter(UserFrame.frame_id == frame_id).all()
-    for user_frame in user_frames:
-        db.delete(user_frame)
+    db.query(UserFrame).filter(UserFrame.frame_id == frame_id).delete(synchronize_session=False)
     
     # Remove any users who have this as selected frame
-    users_with_selected = db.query(User).filter(User.selected_frame_id == frame_id).all()
-    for user in users_with_selected:
-        user.selected_frame_id = None
+    db.query(User).filter(User.selected_frame_id == frame_id).update(
+        {User.selected_frame_id: None},
+        synchronize_session=False
+    )
     
     # Delete the frame
     db.delete(frame)

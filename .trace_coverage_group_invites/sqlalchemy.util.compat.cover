@@ -1,0 +1,300 @@
+       # util/compat.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       # mypy: allow-untyped-defs, allow-untyped-calls
+       
+    1: """Handle Python version/platform incompatibilities."""
+       
+    1: from __future__ import annotations
+       
+    1: import base64
+    1: import dataclasses
+    1: import hashlib
+    1: import inspect
+    1: import operator
+    1: import platform
+    1: import sys
+    1: import typing
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import Dict
+    1: from typing import Iterable
+    1: from typing import List
+    1: from typing import Mapping
+    1: from typing import Optional
+    1: from typing import Sequence
+    1: from typing import Set
+    1: from typing import Tuple
+    1: from typing import Type
+    1: from typing import TypeVar
+       
+       
+    1: py312 = sys.version_info >= (3, 12)
+    1: py311 = sys.version_info >= (3, 11)
+    1: py310 = sys.version_info >= (3, 10)
+    1: py39 = sys.version_info >= (3, 9)
+    1: py38 = sys.version_info >= (3, 8)
+    1: pypy = platform.python_implementation() == "PyPy"
+    1: cpython = platform.python_implementation() == "CPython"
+       
+    1: win32 = sys.platform.startswith("win")
+    1: osx = sys.platform.startswith("darwin")
+    1: arm = "aarch" in platform.machine().lower()
+    1: is64bit = sys.maxsize > 2**32
+       
+    1: has_refcount_gc = bool(cpython)
+       
+    1: dottedgetter = operator.attrgetter
+       
+    1: _T_co = TypeVar("_T_co", covariant=True)
+       
+       
+    2: class FullArgSpec(typing.NamedTuple):
+    1:     args: List[str]
+    1:     varargs: Optional[str]
+    1:     varkw: Optional[str]
+    1:     defaults: Optional[Tuple[Any, ...]]
+    1:     kwonlyargs: List[str]
+    1:     kwonlydefaults: Dict[str, Any]
+    1:     annotations: Dict[str, Any]
+       
+       
+    1: def inspect_getfullargspec(func: Callable[..., Any]) -> FullArgSpec:
+           """Fully vendored version of getfullargspec from Python 3.3."""
+       
+  453:     if inspect.ismethod(func):
+    2:         func = func.__func__
+  453:     if not inspect.isfunction(func):
+>>>>>>         raise TypeError(f"{func!r} is not a Python function")
+       
+  453:     co = func.__code__
+  453:     if not inspect.iscode(co):
+>>>>>>         raise TypeError(f"{co!r} is not a code object")
+       
+  453:     nargs = co.co_argcount
+  453:     names = co.co_varnames
+  453:     nkwargs = co.co_kwonlyargcount
+  453:     args = list(names[:nargs])
+  453:     kwonlyargs = list(names[nargs : nargs + nkwargs])
+       
+  453:     nargs += nkwargs
+  453:     varargs = None
+  453:     if co.co_flags & inspect.CO_VARARGS:
+   49:         varargs = co.co_varnames[nargs]
+   49:         nargs = nargs + 1
+  453:     varkw = None
+  453:     if co.co_flags & inspect.CO_VARKEYWORDS:
+  205:         varkw = co.co_varnames[nargs]
+       
+  906:     return FullArgSpec(
+  453:         args,
+  453:         varargs,
+  453:         varkw,
+  453:         func.__defaults__,
+  453:         kwonlyargs,
+  453:         func.__kwdefaults__,
+  453:         func.__annotations__,
+           )
+       
+       
+    1: if py39:
+           # python stubs don't have a public type for this. not worth
+           # making a protocol
+    1:     def md5_not_for_security() -> Any:
+>>>>>>         return hashlib.md5(usedforsecurity=False)
+       
+       else:
+       
+>>>>>>     def md5_not_for_security() -> Any:
+>>>>>>         return hashlib.md5()
+       
+       
+    1: if typing.TYPE_CHECKING or py38:
+    1:     from importlib import metadata as importlib_metadata
+       else:
+>>>>>>     import importlib_metadata  # noqa
+       
+       
+    1: if typing.TYPE_CHECKING or py39:
+           # pep 584 dict union
+    1:     dict_union = operator.or_  # noqa
+       else:
+       
+>>>>>>     def dict_union(a: dict, b: dict) -> dict:
+>>>>>>         a = a.copy()
+>>>>>>         a.update(b)
+>>>>>>         return a
+       
+       
+    1: if py310:
+>>>>>>     anext_ = anext
+       else:
+    1:     _NOT_PROVIDED = object()
+    1:     from collections.abc import AsyncIterator
+       
+    1:     async def anext_(async_iterator, default=_NOT_PROVIDED):
+               """vendored from https://github.com/python/cpython/pull/8895"""
+       
+>>>>>>         if not isinstance(async_iterator, AsyncIterator):
+>>>>>>             raise TypeError(
+>>>>>>                 f"anext expected an AsyncIterator, got {type(async_iterator)}"
+                   )
+>>>>>>         anxt = type(async_iterator).__anext__
+>>>>>>         try:
+>>>>>>             return await anxt(async_iterator)
+>>>>>>         except StopAsyncIteration:
+>>>>>>             if default is _NOT_PROVIDED:
+>>>>>>                 raise
+>>>>>>             return default
+       
+       
+    1: def importlib_metadata_get(group):
+>>>>>>     ep = importlib_metadata.entry_points()
+>>>>>>     if typing.TYPE_CHECKING or hasattr(ep, "select"):
+>>>>>>         return ep.select(group=group)
+           else:
+>>>>>>         return ep.get(group, ())
+       
+       
+    1: def b(s):
+>>>>>>     return s.encode("latin-1")
+       
+       
+    1: def b64decode(x: str) -> bytes:
+>>>>>>     return base64.b64decode(x.encode("ascii"))
+       
+       
+    1: def b64encode(x: bytes) -> str:
+>>>>>>     return base64.b64encode(x).decode("ascii")
+       
+       
+    1: def decode_backslashreplace(text: bytes, encoding: str) -> str:
+>>>>>>     return text.decode(encoding, errors="backslashreplace")
+       
+       
+    1: def cmp(a, b):
+>>>>>>     return (a > b) - (a < b)
+       
+       
+    1: def _formatannotation(annotation, base_module=None):
+           """vendored from python 3.7"""
+       
+  594:     if isinstance(annotation, str):
+  594:         return annotation
+       
+>>>>>>     if getattr(annotation, "__module__", None) == "typing":
+>>>>>>         return repr(annotation).replace("typing.", "").replace("~", "")
+>>>>>>     if isinstance(annotation, type):
+>>>>>>         if annotation.__module__ in ("builtins", base_module):
+>>>>>>             return repr(annotation.__qualname__)
+>>>>>>         return annotation.__module__ + "." + annotation.__qualname__
+>>>>>>     elif isinstance(annotation, typing.TypeVar):
+>>>>>>         return repr(annotation).replace("~", "")
+>>>>>>     return repr(annotation).replace("~", "")
+       
+       
+    1: def inspect_formatargspec(
+           args: List[str],
+    1:     varargs: Optional[str] = None,
+    1:     varkw: Optional[str] = None,
+    1:     defaults: Optional[Sequence[Any]] = None,
+    1:     kwonlyargs: Optional[Sequence[str]] = (),
+    1:     kwonlydefaults: Optional[Mapping[str, Any]] = {},
+    1:     annotations: Mapping[str, Any] = {},
+    1:     formatarg: Callable[[str], str] = str,
+  228:     formatvarargs: Callable[[str], str] = lambda name: "*" + name,
+  508:     formatvarkw: Callable[[str], str] = lambda name: "**" + name,
+  167:     formatvalue: Callable[[Any], str] = lambda value: "=" + repr(value),
+  203:     formatreturns: Callable[[Any], str] = lambda text: " -> " + str(text),
+    1:     formatannotation: Callable[[Any], str] = _formatannotation,
+       ) -> str:
+           """Copy formatargspec from python 3.7 standard library.
+       
+           Python 3 has deprecated formatargspec and requested that Signature
+           be used instead, however this requires a full reimplementation
+           of formatargspec() in terms of creating Parameter objects and such.
+           Instead of introducing all the object-creation overhead and having
+           to reinvent from scratch, just copy their compatibility routine.
+       
+           Ultimately we would need to rewrite our "decorator" routine completely
+           which is not really worth it right now, until all Python 2.x support
+           is dropped.
+       
+           """
+       
+ 1187:     kwonlydefaults = kwonlydefaults or {}
+ 1187:     annotations = annotations or {}
+       
+ 1187:     def formatargandannotation(arg):
+ 2854:         result = formatarg(arg)
+ 2854:         if arg in annotations:
+  392:             result += ": " + formatannotation(annotations[arg])
+ 2854:         return result
+       
+ 1187:     specs = []
+ 1187:     if defaults:
+  205:         firstdefault = len(args) - len(defaults)
+           else:
+  982:         firstdefault = -1
+       
+ 3172:     for i, arg in enumerate(args):
+ 1985:         spec = formatargandannotation(arg)
+ 1985:         if defaults and i >= firstdefault:
+  453:             spec = spec + formatvalue(defaults[i - firstdefault])
+ 1985:         specs.append(spec)
+       
+ 1187:     if varargs is not None:
+  227:         specs.append(formatvarargs(formatargandannotation(varargs)))
+           else:
+  960:         if kwonlyargs:
+   33:             specs.append("*")
+       
+ 1187:     if kwonlyargs:
+  189:         for kwonlyarg in kwonlyargs:
+  135:             spec = formatargandannotation(kwonlyarg)
+  135:             if kwonlydefaults and kwonlyarg in kwonlydefaults:
+   45:                 spec += formatvalue(kwonlydefaults[kwonlyarg])
+  135:             specs.append(spec)
+       
+ 1187:     if varkw is not None:
+  507:         specs.append(formatvarkw(formatargandannotation(varkw)))
+       
+ 1187:     result = "(" + ", ".join(specs) + ")"
+ 1187:     if "return" in annotations:
+  202:         result += formatreturns(formatannotation(annotations["return"]))
+ 1187:     return result
+       
+       
+    1: def dataclass_fields(cls: Type[Any]) -> Iterable[dataclasses.Field[Any]]:
+           """Return a sequence of all dataclasses.Field objects associated
+           with a class as an already processed dataclass.
+       
+           The class must **already be a dataclass** for Field objects to be returned.
+       
+           """
+       
+>>>>>>     if dataclasses.is_dataclass(cls):
+>>>>>>         return dataclasses.fields(cls)
+           else:
+>>>>>>         return []
+       
+       
+    1: def local_dataclass_fields(cls: Type[Any]) -> Iterable[dataclasses.Field[Any]]:
+           """Return a sequence of all dataclasses.Field objects associated with
+           an already processed dataclass, excluding those that originate from a
+           superclass.
+       
+           The class must **already be a dataclass** for Field objects to be returned.
+       
+           """
+       
+>>>>>>     if dataclasses.is_dataclass(cls):
+>>>>>>         super_fields: Set[dataclasses.Field[Any]] = set()
+>>>>>>         for sup in cls.__bases__:
+>>>>>>             super_fields.update(dataclass_fields(sup))
+>>>>>>         return [f for f in dataclasses.fields(cls) if f not in super_fields]
+           else:
+>>>>>>         return []

@@ -1,0 +1,34 @@
+    1: from fastapi.encoders import jsonable_encoder
+    1: from fastapi.exceptions import RequestValidationError, WebSocketRequestValidationError
+    1: from fastapi.utils import is_body_allowed_for_status_code
+    1: from fastapi.websockets import WebSocket
+    1: from starlette.exceptions import HTTPException
+    1: from starlette.requests import Request
+    1: from starlette.responses import JSONResponse, Response
+    1: from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, WS_1008_POLICY_VIOLATION
+       
+       
+    1: async def http_exception_handler(request: Request, exc: HTTPException) -> Response:
+   11:     headers = getattr(exc, "headers", None)
+   11:     if not is_body_allowed_for_status_code(exc.status_code):
+>>>>>>         return Response(status_code=exc.status_code, headers=headers)
+   22:     return JSONResponse(
+   11:         {"detail": exc.detail}, status_code=exc.status_code, headers=headers
+           )
+       
+       
+    1: async def request_validation_exception_handler(
+    1:     request: Request, exc: RequestValidationError
+    1: ) -> JSONResponse:
+>>>>>>     return JSONResponse(
+>>>>>>         status_code=HTTP_422_UNPROCESSABLE_ENTITY,
+>>>>>>         content={"detail": jsonable_encoder(exc.errors())},
+           )
+       
+       
+    1: async def websocket_request_validation_exception_handler(
+    1:     websocket: WebSocket, exc: WebSocketRequestValidationError
+    1: ) -> None:
+>>>>>>     await websocket.close(
+>>>>>>         code=WS_1008_POLICY_VIOLATION, reason=jsonable_encoder(exc.errors())
+           )

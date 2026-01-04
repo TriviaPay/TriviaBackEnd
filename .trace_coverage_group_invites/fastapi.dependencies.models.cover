@@ -1,0 +1,58 @@
+    1: from typing import Any, Callable, List, Optional, Sequence
+       
+    1: from fastapi._compat import ModelField
+    1: from fastapi.security.base import SecurityBase
+       
+       
+    2: class SecurityRequirement:
+    2:     def __init__(
+    1:         self, security_scheme: SecurityBase, scopes: Optional[Sequence[str]] = None
+           ):
+>>>>>>         self.security_scheme = security_scheme
+>>>>>>         self.scopes = scopes
+       
+       
+    2: class Dependant:
+    2:     def __init__(
+               self,
+               *,
+    2:         path_params: Optional[List[ModelField]] = None,
+    2:         query_params: Optional[List[ModelField]] = None,
+    2:         header_params: Optional[List[ModelField]] = None,
+    2:         cookie_params: Optional[List[ModelField]] = None,
+    2:         body_params: Optional[List[ModelField]] = None,
+    2:         dependencies: Optional[List["Dependant"]] = None,
+    2:         security_schemes: Optional[List[SecurityRequirement]] = None,
+    2:         name: Optional[str] = None,
+    2:         call: Optional[Callable[..., Any]] = None,
+    2:         request_param_name: Optional[str] = None,
+    2:         websocket_param_name: Optional[str] = None,
+    2:         http_connection_param_name: Optional[str] = None,
+    2:         response_param_name: Optional[str] = None,
+    2:         background_tasks_param_name: Optional[str] = None,
+    2:         security_scopes_param_name: Optional[str] = None,
+    2:         security_scopes: Optional[List[str]] = None,
+    2:         use_cache: bool = True,
+    2:         path: Optional[str] = None,
+    1:     ) -> None:
+  544:         self.path_params = path_params or []
+  544:         self.query_params = query_params or []
+  544:         self.header_params = header_params or []
+  544:         self.cookie_params = cookie_params or []
+  544:         self.body_params = body_params or []
+  544:         self.dependencies = dependencies or []
+  544:         self.security_requirements = security_schemes or []
+  544:         self.request_param_name = request_param_name
+  544:         self.websocket_param_name = websocket_param_name
+  544:         self.http_connection_param_name = http_connection_param_name
+  544:         self.response_param_name = response_param_name
+  544:         self.background_tasks_param_name = background_tasks_param_name
+  544:         self.security_scopes = security_scopes
+  544:         self.security_scopes_param_name = security_scopes_param_name
+  544:         self.name = name
+  544:         self.call = call
+  544:         self.use_cache = use_cache
+               # Store the path to be able to re-generate a dependable from it in overrides
+  544:         self.path = path
+               # Save the cache key at creation to optimize performance
+  544:         self.cache_key = (self.call, tuple(sorted(set(self.security_scopes or []))))

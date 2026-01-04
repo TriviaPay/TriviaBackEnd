@@ -1,0 +1,51 @@
+    1: from datetime import datetime, date
+       
+    1: from fastapi import FastAPI
+    1: from fastapi.testclient import TestClient
+       
+    1: from db import get_db
+    1: from models import User
+    1: from routers.dependencies import get_current_user
+    1: import routers.draw as draw
+       
+       
+    1: def _build_client(test_db):
+    1:     user = test_db.query(User).first()
+    1:     app = FastAPI()
+    1:     app.include_router(draw.router)
+       
+    1:     def override_get_db():
+    2:         yield test_db
+       
+    1:     app.dependency_overrides[get_db] = override_get_db
+    3:     app.dependency_overrides[get_current_user] = lambda: user
+       
+    1:     return TestClient(app)
+       
+       
+    1: def test_draw_next_uses_cache_and_isoformat(monkeypatch, test_db):
+    1:     fixed_time = datetime(2024, 1, 2, 3, 4, 5)
+    1:     fixed_date = date(2024, 1, 2)
+    1:     calls = {"count": 0}
+       
+    1:     def fake_calculate_prize_pool(db, day, commit_revenue=False):
+    1:         calls["count"] += 1
+    1:         return 1234
+       
+    3:     monkeypatch.setattr(draw, "get_next_draw_time", lambda: fixed_time)
+    3:     monkeypatch.setattr(draw, "get_today_in_app_timezone", lambda: fixed_date)
+    1:     monkeypatch.setattr(draw, "calculate_prize_pool", fake_calculate_prize_pool)
+    1:     monkeypatch.setattr(draw, "_PRIZE_POOL_CACHE", {"date": None, "value": None, "expires_at": None})
+    1:     monkeypatch.setattr(draw, "_PRIZE_POOL_TTL_SECONDS", 300)
+       
+    1:     with _build_client(test_db) as client:
+    1:         first = client.get("/draw/next")
+    1:         second = client.get("/draw/next")
+       
+    1:     assert first.status_code == 200
+    1:     payload = first.json()
+    1:     assert payload["next_draw_time"] == fixed_time.isoformat()
+    1:     assert payload["prize_pool"] == 1234
+    1:     assert calls["count"] == 1
+    1:     assert second.status_code == 200
+       

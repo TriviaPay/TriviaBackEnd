@@ -1,0 +1,182 @@
+       """
+       Call loop machinery
+       """
+       
+>>>>>> from __future__ import annotations
+       
+>>>>>> from typing import cast
+>>>>>> from typing import Generator
+>>>>>> from typing import Mapping
+>>>>>> from typing import NoReturn
+>>>>>> from typing import Sequence
+>>>>>> from typing import Tuple
+>>>>>> from typing import Union
+>>>>>> import warnings
+       
+>>>>>> from ._hooks import HookImpl
+>>>>>> from ._result import HookCallError
+>>>>>> from ._result import Result
+>>>>>> from ._warnings import PluggyTeardownRaisedWarning
+       
+       
+       # Need to distinguish between old- and new-style hook wrappers.
+       # Wrapping with a tuple is the fastest type-safe way I found to do it.
+>>>>>> Teardown = Union[
+>>>>>>     Tuple[Generator[None, Result[object], None], HookImpl],
+>>>>>>     Generator[None, object, object],
+       ]
+       
+       
+>>>>>> def _raise_wrapfail(
+           wrap_controller: (
+               Generator[None, Result[object], None] | Generator[None, object, object]
+           ),
+           msg: str,
+       ) -> NoReturn:
+>>>>>>     co = wrap_controller.gi_code
+>>>>>>     raise RuntimeError(
+>>>>>>         "wrap_controller at %r %s:%d %s"
+>>>>>>         % (co.co_name, co.co_filename, co.co_firstlineno, msg)
+           )
+       
+       
+>>>>>> def _warn_teardown_exception(
+           hook_name: str, hook_impl: HookImpl, e: BaseException
+       ) -> None:
+>>>>>>     msg = "A plugin raised an exception during an old-style hookwrapper teardown.\n"
+>>>>>>     msg += f"Plugin: {hook_impl.plugin_name}, Hook: {hook_name}\n"
+>>>>>>     msg += f"{type(e).__name__}: {e}\n"
+>>>>>>     msg += "For more information see https://pluggy.readthedocs.io/en/stable/api_reference.html#pluggy.PluggyTeardownRaisedWarning"  # noqa: E501
+>>>>>>     warnings.warn(PluggyTeardownRaisedWarning(msg), stacklevel=5)
+       
+       
+>>>>>> def _multicall(
+           hook_name: str,
+           hook_impls: Sequence[HookImpl],
+           caller_kwargs: Mapping[str, object],
+           firstresult: bool,
+       ) -> object | list[object]:
+           """Execute a call into multiple python functions/methods and return the
+           result(s).
+       
+           ``caller_kwargs`` comes from HookCaller.__call__().
+           """
+ 1079:     __tracebackhide__ = True
+ 1079:     results: list[object] = []
+ 1079:     exception = None
+ 1079:     only_new_style_wrappers = True
+ 1079:     try:  # run impl and wrapper setup functions in a loop
+ 1079:         teardowns: list[Teardown] = []
+ 1079:         try:
+ 3160:             for hook_impl in reversed(hook_impls):
+ 2364:                 try:
+ 8473:                     args = [caller_kwargs[argname] for argname in hook_impl.argnames]
+>>>>>>                 except KeyError:
+>>>>>>                     for argname in hook_impl.argnames:
+>>>>>>                         if argname not in caller_kwargs:
+>>>>>>                             raise HookCallError(
+>>>>>>                                 f"hook call must provide argument {argname!r}"
+                                   )
+       
+ 2364:                 if hook_impl.hookwrapper:
+   57:                     only_new_style_wrappers = False
+   57:                     try:
+                               # If this cast is not valid, a type error is raised below,
+                               # which is the desired response.
+   57:                         res = hook_impl.function(*args)
+   57:                         wrapper_gen = cast(Generator[None, Result[object], None], res)
+   57:                         next(wrapper_gen)  # first yield
+   57:                         teardowns.append((wrapper_gen, hook_impl))
+>>>>>>                     except StopIteration:
+>>>>>>                         _raise_wrapfail(wrapper_gen, "did not yield")
+ 2307:                 elif hook_impl.wrapper:
+  524:                     try:
+                               # If this cast is not valid, a type error is raised below,
+                               # which is the desired response.
+  524:                         res = hook_impl.function(*args)
+  524:                         function_gen = cast(Generator[None, object, object], res)
+  524:                         next(function_gen)  # first yield
+  524:                         teardowns.append(function_gen)
+>>>>>>                     except StopIteration:
+>>>>>>                         _raise_wrapfail(function_gen, "did not yield")
+                       else:
+ 1783:                     res = hook_impl.function(*args)
+ 1783:                     if res is not None:
+  328:                         results.append(res)
+  328:                         if firstresult:  # halt further impl calls
+  283:                             break
+>>>>>>         except BaseException as exc:
+>>>>>>             exception = exc
+           finally:
+               # Fast path - only new-style wrappers, no Result.
+ 1079:         if only_new_style_wrappers:
+ 1022:             if firstresult:  # first result hooks return a single value
+  401:                 result = results[0] if results else None
+                   else:
+  621:                 result = results
+       
+                   # run all wrapper post-yield blocks
+ 1546:             for teardown in reversed(teardowns):
+  524:                 try:
+  524:                     if exception is not None:
+>>>>>>                         teardown.throw(exception)  # type: ignore[union-attr]
+                           else:
+  524:                         teardown.send(result)  # type: ignore[union-attr]
+                           # Following is unreachable for a well behaved hook wrapper.
+                           # Try to force finalizers otherwise postponed till GC action.
+                           # Note: close() may raise if generator handles GeneratorExit.
+>>>>>>                     teardown.close()  # type: ignore[union-attr]
+  524:                 except StopIteration as si:
+  524:                     result = si.value
+  524:                     exception = None
+  524:                     continue
+>>>>>>                 except BaseException as e:
+>>>>>>                     exception = e
+>>>>>>                     continue
+>>>>>>                 _raise_wrapfail(teardown, "has second yield")  # type: ignore[arg-type]
+       
+ 1022:             if exception is not None:
+>>>>>>                 raise exception.with_traceback(exception.__traceback__)
+                   else:
+ 1022:                 return result
+       
+               # Slow path - need to support old-style wrappers.
+               else:
+   57:             if firstresult:  # first result hooks return a single value
+  114:                 outcome: Result[object | list[object]] = Result(
+   57:                     results[0] if results else None, exception
+                       )
+                   else:
+>>>>>>                 outcome = Result(results, exception)
+       
+                   # run all wrapper post-yield blocks
+  114:             for teardown in reversed(teardowns):
+   57:                 if isinstance(teardown, tuple):
+   57:                     try:
+   57:                         teardown[0].send(outcome)
+   57:                     except StopIteration:
+   57:                         pass
+>>>>>>                     except BaseException as e:
+>>>>>>                         _warn_teardown_exception(hook_name, teardown[1], e)
+>>>>>>                         raise
+                           else:
+>>>>>>                         _raise_wrapfail(teardown[0], "has second yield")
+                       else:
+>>>>>>                     try:
+>>>>>>                         if outcome._exception is not None:
+>>>>>>                             teardown.throw(outcome._exception)
+                               else:
+>>>>>>                             teardown.send(outcome._result)
+                               # Following is unreachable for a well behaved hook wrapper.
+                               # Try to force finalizers otherwise postponed till GC action.
+                               # Note: close() may raise if generator handles GeneratorExit.
+>>>>>>                         teardown.close()
+>>>>>>                     except StopIteration as si:
+>>>>>>                         outcome.force_result(si.value)
+>>>>>>                         continue
+>>>>>>                     except BaseException as e:
+>>>>>>                         outcome.force_exception(e)
+>>>>>>                         continue
+>>>>>>                     _raise_wrapfail(teardown, "has second yield")
+       
+   57:             return outcome.get_result()

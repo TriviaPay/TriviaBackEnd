@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Optional, Dict
 import logging
 
@@ -51,6 +52,8 @@ _s3_clients: Dict[str, any] = {}  # Cache clients by region:addressing_style
 _bucket_regions: Dict[str, str] = {}  # Cache bucket regions
 _bucket_addressing_styles: Dict[str, str] = {}  # Cache addressing style per bucket (virtual or path)
 _cached_creds = None  # Tuple of (access_key_id, secret_key, session_token) for cache invalidation
+_presign_cache: Dict[str, tuple[str, float]] = {}
+_PRESIGN_CACHE_TTL_SECONDS = int(os.getenv("PRESIGN_CACHE_TTL_SECONDS", "300"))
 
 def _invalidate_client(region: str, addressing_style: str = 'virtual'):
     """Invalidate cached S3 client for a specific region and addressing style."""
@@ -64,6 +67,37 @@ def _preferred_addressing_for_bucket(bucket: str) -> str:
     Buckets with dots in the name should use path-style to avoid TLS issues.
     """
     return 'path' if '.' in bucket else 'virtual'
+
+
+def _get_presign_cache_key(bucket: str, key: str, expires: int) -> str:
+    return f"{bucket}:{key}:{expires}"
+
+
+def _get_cached_presign_url(bucket: str, key: str, expires: int) -> Optional[str]:
+    cache_key = _get_presign_cache_key(bucket, key, expires)
+    cached = _presign_cache.get(cache_key)
+    if not cached:
+        return None
+    url, expires_at = cached
+    if expires_at > time.time():
+        return url
+    _presign_cache.pop(cache_key, None)
+    return None
+
+
+def _set_cached_presign_url(bucket: str, key: str, expires: int, url: str) -> None:
+    ttl = min(expires, _PRESIGN_CACHE_TTL_SECONDS)
+    if ttl <= 0:
+        return
+    cache_key = _get_presign_cache_key(bucket, key, expires)
+    _presign_cache[cache_key] = (url, time.time() + ttl)
+    if len(_presign_cache) > 1000:
+        now = time.time()
+        for key_name, (_, expires_at) in list(_presign_cache.items()):
+            if expires_at <= now:
+                _presign_cache.pop(key_name, None)
+        if len(_presign_cache) > 1000:
+            _presign_cache.clear()
 
 def _endpoint_for_region(region: str) -> Optional[str]:
     """
@@ -436,6 +470,10 @@ def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
     if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
         logging.warning("AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set - cannot generate presigned URLs")
         return None
+
+    cached_url = _get_cached_presign_url(bucket, key, expires)
+    if cached_url:
+        return cached_url
     
     # Normalize key: strip leading slash to avoid // in URLs
     if key.startswith('/'):
@@ -449,8 +487,13 @@ def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
         expires = max_expires
     
     try:
-        # Auto-detect bucket region to avoid PermanentRedirect errors
-        bucket_region = _get_bucket_region(bucket)
+        # Auto-detect bucket region to avoid PermanentRedirect errors (allow override for performance)
+        assumed_region = os.getenv("S3_PRESIGN_ASSUME_REGION")
+        if assumed_region:
+            bucket_region = assumed_region
+            _bucket_regions[bucket] = assumed_region
+        else:
+            bucket_region = _get_bucket_region(bucket)
         
         # Determine addressing style: use cached style or preferred style for this bucket
         addressing_style = _bucket_addressing_styles.get(bucket, _preferred_addressing_for_bucket(bucket))
@@ -497,6 +540,7 @@ def presign_get(bucket: str, key: str, expires: int = 900) -> Optional[str]:
         except Exception:
             logging.debug(f"Generated presigned URL for bucket={bucket}, key={key}, region={bucket_region}, style={addressing_style}")
         
+        _set_cached_presign_url(bucket, key, expires, url)
         return url
         
     except ClientError as e:

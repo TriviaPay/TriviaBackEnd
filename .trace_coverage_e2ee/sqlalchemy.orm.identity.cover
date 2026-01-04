@@ -1,0 +1,302 @@
+       # orm/identity.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: from __future__ import annotations
+       
+    1: from typing import Any
+    1: from typing import cast
+    1: from typing import Dict
+    1: from typing import Iterable
+    1: from typing import Iterator
+    1: from typing import List
+    1: from typing import NoReturn
+    1: from typing import Optional
+    1: from typing import Set
+    1: from typing import Tuple
+    1: from typing import TYPE_CHECKING
+    1: from typing import TypeVar
+    1: import weakref
+       
+    1: from . import util as orm_util
+    1: from .. import exc as sa_exc
+       
+    1: if TYPE_CHECKING:
+>>>>>>     from ._typing import _IdentityKeyType
+>>>>>>     from .state import InstanceState
+       
+       
+    1: _T = TypeVar("_T", bound=Any)
+       
+    1: _O = TypeVar("_O", bound=object)
+       
+       
+    2: class IdentityMap:
+    1:     _wr: weakref.ref[IdentityMap]
+       
+    1:     _dict: Dict[_IdentityKeyType[Any], Any]
+    1:     _modified: Set[InstanceState[Any]]
+       
+    1:     def __init__(self) -> None:
+   32:         self._dict = {}
+   32:         self._modified = set()
+   32:         self._wr = weakref.ref(self)
+       
+    1:     def _kill(self) -> None:
+   16:         self._add_unpresent = _killed  # type: ignore
+       
+    1:     def all_states(self) -> List[InstanceState[Any]]:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def contains_state(self, state: InstanceState[Any]) -> bool:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def __contains__(self, key: _IdentityKeyType[Any]) -> bool:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def safe_discard(self, state: InstanceState[Any]) -> None:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def __getitem__(self, key: _IdentityKeyType[_O]) -> _O:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def get(
+               self, key: _IdentityKeyType[_O], default: Optional[_O] = None
+           ) -> Optional[_O]:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def fast_get_state(
+               self, key: _IdentityKeyType[_O]
+           ) -> Optional[InstanceState[_O]]:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def keys(self) -> Iterable[_IdentityKeyType[Any]]:
+>>>>>>         return self._dict.keys()
+       
+    1:     def values(self) -> Iterable[object]:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def replace(self, state: InstanceState[_O]) -> Optional[InstanceState[_O]]:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def add(self, state: InstanceState[Any]) -> bool:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def _fast_discard(self, state: InstanceState[Any]) -> None:
+>>>>>>         raise NotImplementedError()
+       
+    1:     def _add_unpresent(
+               self, state: InstanceState[Any], key: _IdentityKeyType[Any]
+           ) -> None:
+               """optional inlined form of add() which can assume item isn't present
+               in the map"""
+>>>>>>         self.add(state)
+       
+    1:     def _manage_incoming_state(self, state: InstanceState[Any]) -> None:
+   77:         state._instance_dict = self._wr
+       
+   77:         if state.modified:
+   76:             self._modified.add(state)
+       
+    1:     def _manage_removed_state(self, state: InstanceState[Any]) -> None:
+>>>>>>         del state._instance_dict
+>>>>>>         if state.modified:
+>>>>>>             self._modified.discard(state)
+       
+    1:     def _dirty_states(self) -> Set[InstanceState[Any]]:
+   43:         return self._modified
+       
+    1:     def check_modified(self) -> bool:
+               """return True if any InstanceStates present have been marked
+               as 'modified'.
+       
+               """
+  221:         return bool(self._modified)
+       
+    1:     def has_key(self, key: _IdentityKeyType[Any]) -> bool:
+>>>>>>         return key in self
+       
+    1:     def __len__(self) -> int:
+   91:         return len(self._dict)
+       
+       
+    2: class WeakInstanceDict(IdentityMap):
+    1:     _dict: Dict[_IdentityKeyType[Any], InstanceState[Any]]
+       
+    1:     def __getitem__(self, key: _IdentityKeyType[_O]) -> _O:
+>>>>>>         state = cast("InstanceState[_O]", self._dict[key])
+>>>>>>         o = state.obj()
+>>>>>>         if o is None:
+>>>>>>             raise KeyError(key)
+>>>>>>         return o
+       
+    1:     def __contains__(self, key: _IdentityKeyType[Any]) -> bool:
+   77:         try:
+   77:             if key in self._dict:
+>>>>>>                 state = self._dict[key]
+>>>>>>                 o = state.obj()
+                   else:
+   77:                 return False
+>>>>>>         except KeyError:
+>>>>>>             return False
+               else:
+>>>>>>             return o is not None
+       
+    1:     def contains_state(self, state: InstanceState[Any]) -> bool:
+    8:         if state.key in self._dict:
+    8:             if TYPE_CHECKING:
+>>>>>>                 assert state.key is not None
+    8:             try:
+    8:                 return self._dict[state.key] is state
+>>>>>>             except KeyError:
+>>>>>>                 return False
+               else:
+>>>>>>             return False
+       
+    1:     def replace(
+               self, state: InstanceState[Any]
+           ) -> Optional[InstanceState[Any]]:
+   83:         assert state.key is not None
+   83:         if state.key in self._dict:
+    6:             try:
+    6:                 existing = existing_non_none = self._dict[state.key]
+>>>>>>             except KeyError:
+                       # catch gc removed the key after we just checked for it
+>>>>>>                 existing = None
+                   else:
+    6:                 if existing_non_none is not state:
+>>>>>>                     self._manage_removed_state(existing_non_none)
+                       else:
+    6:                     return None
+               else:
+   77:             existing = None
+       
+   77:         self._dict[state.key] = state
+   77:         self._manage_incoming_state(state)
+   77:         return existing
+       
+    1:     def add(self, state: InstanceState[Any]) -> bool:
+>>>>>>         key = state.key
+>>>>>>         assert key is not None
+               # inline of self.__contains__
+>>>>>>         if key in self._dict:
+>>>>>>             try:
+>>>>>>                 existing_state = self._dict[key]
+>>>>>>             except KeyError:
+                       # catch gc removed the key after we just checked for it
+>>>>>>                 pass
+                   else:
+>>>>>>                 if existing_state is not state:
+>>>>>>                     o = existing_state.obj()
+>>>>>>                     if o is not None:
+>>>>>>                         raise sa_exc.InvalidRequestError(
+>>>>>>                             "Can't attach instance "
+                                   "%s; another instance with key %s is already "
+                                   "present in this session."
+>>>>>>                             % (orm_util.state_str(state), state.key)
+                               )
+                       else:
+>>>>>>                     return False
+>>>>>>         self._dict[key] = state
+>>>>>>         self._manage_incoming_state(state)
+>>>>>>         return True
+       
+    1:     def _add_unpresent(
+               self, state: InstanceState[Any], key: _IdentityKeyType[Any]
+           ) -> None:
+               # inlined form of add() called by loading.py
+   19:         self._dict[key] = state
+   19:         state._instance_dict = self._wr
+       
+    1:     def fast_get_state(
+               self, key: _IdentityKeyType[_O]
+           ) -> Optional[InstanceState[_O]]:
+>>>>>>         return self._dict.get(key)
+       
+    1:     def get(
+               self, key: _IdentityKeyType[_O], default: Optional[_O] = None
+           ) -> Optional[_O]:
+   54:         if key not in self._dict:
+   19:             return default
+   35:         try:
+   35:             state = cast("InstanceState[_O]", self._dict[key])
+>>>>>>         except KeyError:
+                   # catch gc removed the key after we just checked for it
+>>>>>>             return default
+               else:
+   35:             o = state.obj()
+   35:             if o is None:
+>>>>>>                 return default
+   35:             return o
+       
+    1:     def items(self) -> List[Tuple[_IdentityKeyType[Any], InstanceState[Any]]]:
+>>>>>>         values = self.all_states()
+>>>>>>         result = []
+>>>>>>         for state in values:
+>>>>>>             value = state.obj()
+>>>>>>             key = state.key
+>>>>>>             assert key is not None
+>>>>>>             if value is not None:
+>>>>>>                 result.append((key, value))
+>>>>>>         return result
+       
+    1:     def values(self) -> List[object]:
+>>>>>>         values = self.all_states()
+>>>>>>         result = []
+>>>>>>         for state in values:
+>>>>>>             value = state.obj()
+>>>>>>             if value is not None:
+>>>>>>                 result.append(value)
+       
+>>>>>>         return result
+       
+    1:     def __iter__(self) -> Iterator[_IdentityKeyType[Any]]:
+>>>>>>         return iter(self.keys())
+       
+    1:     def all_states(self) -> List[InstanceState[Any]]:
+   57:         return list(self._dict.values())
+       
+    1:     def _fast_discard(self, state: InstanceState[Any]) -> None:
+               # used by InstanceState for state being
+               # GC'ed, inlines _managed_removed_state
+   54:         key = state.key
+   54:         assert key is not None
+   54:         try:
+   54:             st = self._dict[key]
+>>>>>>         except KeyError:
+                   # catch gc removed the key after we just checked for it
+>>>>>>             pass
+               else:
+   54:             if st is state:
+   54:                 self._dict.pop(key, None)
+       
+    1:     def discard(self, state: InstanceState[Any]) -> None:
+>>>>>>         self.safe_discard(state)
+       
+    1:     def safe_discard(self, state: InstanceState[Any]) -> None:
+>>>>>>         key = state.key
+>>>>>>         if key in self._dict:
+>>>>>>             assert key is not None
+>>>>>>             try:
+>>>>>>                 st = self._dict[key]
+>>>>>>             except KeyError:
+                       # catch gc removed the key after we just checked for it
+>>>>>>                 pass
+                   else:
+>>>>>>                 if st is state:
+>>>>>>                     self._dict.pop(key, None)
+>>>>>>                     self._manage_removed_state(state)
+       
+       
+    1: def _killed(state: InstanceState[Any], key: _IdentityKeyType[Any]) -> NoReturn:
+           # external function to avoid creating cycles when assigned to
+           # the IdentityMap
+>>>>>>     raise sa_exc.InvalidRequestError(
+>>>>>>         "Object %s cannot be converted to 'persistent' state, as this "
+               "identity map is no longer valid.  Has the owning Session "
+>>>>>>         "been closed?" % orm_util.state_str(state),
+>>>>>>         code="lkrp",
+           )

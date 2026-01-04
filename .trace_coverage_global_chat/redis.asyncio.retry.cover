@@ -1,0 +1,58 @@
+    1: from asyncio import sleep
+    1: from typing import TYPE_CHECKING, Any, Awaitable, Callable, Tuple, Type, TypeVar
+       
+    1: from redis.exceptions import ConnectionError, RedisError, TimeoutError
+    1: from redis.retry import AbstractRetry
+       
+    1: T = TypeVar("T")
+       
+    1: if TYPE_CHECKING:
+>>>>>>     from redis.backoff import AbstractBackoff
+       
+       
+    2: class Retry(AbstractRetry[RedisError]):
+    1:     __hash__ = AbstractRetry.__hash__
+       
+    2:     def __init__(
+               self,
+    1:         backoff: "AbstractBackoff",
+    1:         retries: int,
+    2:         supported_errors: Tuple[Type[RedisError], ...] = (
+    1:             ConnectionError,
+    1:             TimeoutError,
+               ),
+           ):
+    1:         super().__init__(backoff, retries, supported_errors)
+       
+    1:     def __eq__(self, other: Any) -> bool:
+>>>>>>         if not isinstance(other, Retry):
+>>>>>>             return NotImplemented
+       
+>>>>>>         return (
+>>>>>>             self._backoff == other._backoff
+>>>>>>             and self._retries == other._retries
+>>>>>>             and set(self._supported_errors) == set(other._supported_errors)
+               )
+       
+    1:     async def call_with_retry(
+    1:         self, do: Callable[[], Awaitable[T]], fail: Callable[[RedisError], Any]
+    1:     ) -> T:
+               """
+               Execute an operation that might fail and returns its result, or
+               raise the exception that was thrown depending on the `Backoff` object.
+               `do`: the operation to call. Expects no argument.
+               `fail`: the failure handler, expects the last error that was thrown
+               """
+>>>>>>         self._backoff.reset()
+>>>>>>         failures = 0
+               while True:
+>>>>>>             try:
+>>>>>>                 return await do()
+>>>>>>             except self._supported_errors as error:
+>>>>>>                 failures += 1
+>>>>>>                 await fail(error)
+>>>>>>                 if self._retries >= 0 and failures > self._retries:
+>>>>>>                     raise error
+>>>>>>                 backoff = self._backoff.compute(failures)
+>>>>>>                 if backoff > 0:
+>>>>>>                     await sleep(backoff)

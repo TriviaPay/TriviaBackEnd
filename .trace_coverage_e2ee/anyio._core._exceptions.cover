@@ -1,0 +1,94 @@
+    1: from __future__ import annotations
+       
+    1: from traceback import format_exception
+       
+       
+    2: class BrokenResourceError(Exception):
+    1:     """
+           Raised when trying to use a resource that has been rendered unusable due to external causes
+           (e.g. a send stream whose peer has disconnected).
+           """
+       
+       
+    2: class BrokenWorkerProcess(Exception):
+    1:     """
+           Raised by :func:`run_sync_in_process` if the worker process terminates abruptly or otherwise
+           misbehaves.
+           """
+       
+       
+    2: class BusyResourceError(Exception):
+    1:     """Raised when two tasks are trying to read from or write to the same resource concurrently."""
+       
+    1:     def __init__(self, action: str):
+>>>>>>         super().__init__(f"Another task is already {action} this resource")
+       
+       
+    2: class ClosedResourceError(Exception):
+    1:     """Raised when trying to use a resource that has been closed."""
+       
+       
+    2: class DelimiterNotFound(Exception):
+    1:     """
+           Raised during :meth:`~anyio.streams.buffered.BufferedByteReceiveStream.receive_until` if the
+           maximum number of bytes has been read without the delimiter being found.
+           """
+       
+    1:     def __init__(self, max_bytes: int) -> None:
+>>>>>>         super().__init__(
+>>>>>>             f"The delimiter was not found among the first {max_bytes} bytes"
+               )
+       
+       
+    2: class EndOfStream(Exception):
+    1:     """Raised when trying to read from a stream that has been closed from the other end."""
+       
+       
+    2: class ExceptionGroup(BaseException):
+    1:     """
+           Raised when multiple exceptions have been raised in a task group.
+       
+           :var ~typing.Sequence[BaseException] exceptions: the sequence of exceptions raised together
+           """
+       
+    1:     SEPARATOR = "----------------------------\n"
+       
+    1:     exceptions: list[BaseException]
+       
+    1:     def __str__(self) -> str:
+>>>>>>         tracebacks = [
+>>>>>>             "".join(format_exception(type(exc), exc, exc.__traceback__))
+>>>>>>             for exc in self.exceptions
+               ]
+>>>>>>         return (
+>>>>>>             f"{len(self.exceptions)} exceptions were raised in the task group:\n"
+>>>>>>             f"{self.SEPARATOR}{self.SEPARATOR.join(tracebacks)}"
+               )
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         exception_reprs = ", ".join(repr(exc) for exc in self.exceptions)
+>>>>>>         return f"<{self.__class__.__name__}: {exception_reprs}>"
+       
+       
+    2: class IncompleteRead(Exception):
+    1:     """
+           Raised during :meth:`~anyio.streams.buffered.BufferedByteReceiveStream.receive_exactly` or
+           :meth:`~anyio.streams.buffered.BufferedByteReceiveStream.receive_until` if the
+           connection is closed before the requested amount of bytes has been read.
+           """
+       
+    1:     def __init__(self) -> None:
+>>>>>>         super().__init__(
+>>>>>>             "The stream was closed before the read operation could be completed"
+               )
+       
+       
+    2: class TypedAttributeLookupError(LookupError):
+    1:     """
+           Raised by :meth:`~anyio.TypedAttributeProvider.extra` when the given typed attribute is not
+           found and no default value has been given.
+           """
+       
+       
+    2: class WouldBlock(Exception):
+    1:     """Raised by ``X_nowait`` functions if ``X()`` would block."""

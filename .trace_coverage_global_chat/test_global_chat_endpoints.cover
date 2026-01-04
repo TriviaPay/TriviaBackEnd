@@ -1,0 +1,418 @@
+    1: from datetime import datetime, timedelta
+    1: from types import SimpleNamespace
+       
+    1: import pytest
+    1: from unittest.mock import AsyncMock, patch
+       
+    1: from fastapi import FastAPI
+    1: from fastapi.testclient import TestClient
+       
+    1: from db import get_db
+    1: from models import ChatMutePreferences, GlobalChatMessage, GlobalChatViewer, OneSignalPlayer, User
+    1: from routers.dependencies import get_current_user
+    1: from routers.global_chat import send_push_for_global_chat_sync
+    1: import routers.global_chat as global_chat
+    1: import db as db_module
+       
+       
+    1: @pytest.fixture
+    1: def current_user(test_db):
+   13:     return test_db.query(User).first()
+       
+       
+    1: @pytest.fixture
+    1: def client(test_db, current_user, monkeypatch):
+   13:     app = FastAPI()
+   13:     app.include_router(global_chat.router)
+       
+   13:     def override_get_db():
+   15:         yield test_db
+       
+   13:     app.dependency_overrides[get_db] = override_get_db
+   28:     app.dependency_overrides[get_current_user] = lambda: current_user
+   13:     monkeypatch.setattr(global_chat, "get_chat_redis", AsyncMock(return_value=None))
+   13:     monkeypatch.setattr(global_chat, "check_rate_limit", AsyncMock(return_value=True))
+   13:     monkeypatch.setattr(global_chat, "check_burst_limit", AsyncMock(return_value=True))
+       
+   13:     with TestClient(app) as test_client:
+   13:         yield test_client
+   13:     app.dependency_overrides = {}
+       
+       
+    1: def test_global_chat_messages_include_reply(client, test_db, current_user):
+    2:     base_message = GlobalChatMessage(
+    1:         user_id=current_user.account_id,
+    1:         message="Base message",
+    1:         created_at=datetime.utcnow(),
+           )
+    1:     test_db.add(base_message)
+    1:     test_db.commit()
+       
+    2:     reply_message = GlobalChatMessage(
+    1:         user_id=current_user.account_id,
+    1:         message="Reply message",
+    1:         created_at=datetime.utcnow(),
+    1:         reply_to_message_id=base_message.id,
+           )
+    1:     test_db.add(reply_message)
+    1:     test_db.commit()
+       
+    1:     response = client.get("/global-chat/messages?limit=10")
+       
+    1:     assert response.status_code == 200
+    1:     payload = response.json()
+    3:     reply = next(msg for msg in payload["messages"] if msg["id"] == reply_message.id)
+    1:     assert reply["reply_to"]["message_id"] == base_message.id
+       
+       
+    1: def test_global_chat_cleanup_requires_admin(client, current_user):
+    1:     current_user.is_admin = False
+    1:     response = client.post("/global-chat/cleanup")
+    1:     assert response.status_code == 403
+       
+       
+    1: def test_global_chat_reply_not_found(client):
+    2:     response = client.post(
+    1:         "/global-chat/send",
+    1:         json={"message": "Hello", "reply_to_message_id": 9999},
+           )
+       
+    1:     assert response.status_code == 404
+       
+       
+    1: def test_global_chat_pagination_before(client, test_db, current_user):
+    1:     messages = []
+    1:     base_time = datetime.utcnow()
+    4:     for idx in range(3):
+    6:         msg = GlobalChatMessage(
+    3:             user_id=current_user.account_id,
+    3:             message=f"Message {idx}",
+    3:             created_at=base_time + timedelta(seconds=idx),
+               )
+    3:         test_db.add(msg)
+    3:         messages.append(msg)
+    1:     test_db.commit()
+       
+    1:     before_id = messages[1].id
+    1:     response = client.get(f"/global-chat/messages?limit=10&before={before_id}")
+       
+    1:     assert response.status_code == 200
+    1:     payload = response.json()
+    3:     returned_ids = {msg["id"] for msg in payload["messages"]}
+    1:     assert before_id not in returned_ids
+    1:     assert len(returned_ids) >= 1
+       
+       
+    1: def test_global_chat_messages_updates_viewer(client, test_db, current_user):
+    1:     response = client.get("/global-chat/messages?limit=10")
+       
+    1:     assert response.status_code == 200
+    2:     viewer = test_db.query(GlobalChatViewer).filter(
+    1:         GlobalChatViewer.user_id == current_user.account_id
+           ).first()
+    1:     assert viewer is not None
+       
+       
+    1: def test_global_chat_push_respects_mutes(test_db):
+    1:     user1 = test_db.query(User).first()
+    1:     user2 = test_db.query(User).filter(User.account_id != user1.account_id).first()
+    2:     user3 = User(
+    1:         descope_user_id="test_user_3",
+    1:         email="test3@example.com",
+    1:         username="testuser3",
+           )
+    2:     user4 = User(
+    1:         descope_user_id="test_user_4",
+    1:         email="test4@example.com",
+    1:         username="testuser4",
+           )
+    1:     test_db.add_all([user3, user4])
+    1:     test_db.commit()
+    2:     test_db.add(
+    2:         ChatMutePreferences(
+    1:             user_id=user4.account_id,
+    1:             global_chat_muted=True,
+    1:             trivia_live_chat_muted=False,
+               )
+           )
+    1:     threshold = global_chat.ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS
+    2:     test_db.add(
+    2:         OneSignalPlayer(
+    1:             user_id=user1.account_id,
+    1:             player_id="player-active",
+    1:             platform="ios",
+    1:             is_valid=True,
+    1:             last_active=datetime.utcnow(),
+               )
+           )
+    2:     test_db.add(
+    2:         OneSignalPlayer(
+    1:             user_id=user2.account_id,
+    1:             player_id="player-inactive",
+    1:             platform="ios",
+    1:             is_valid=True,
+    1:             last_active=datetime.utcnow() - timedelta(seconds=threshold + 10),
+               )
+           )
+    2:     test_db.add(
+    2:         OneSignalPlayer(
+    1:             user_id=user3.account_id,
+    1:             player_id="player-active-2",
+    1:             platform="ios",
+    1:             is_valid=True,
+    1:             last_active=datetime.utcnow(),
+               )
+           )
+    2:     test_db.add(
+    2:         OneSignalPlayer(
+    1:             user_id=user4.account_id,
+    1:             player_id="player-muted",
+    1:             platform="ios",
+    1:             is_valid=True,
+    1:             last_active=datetime.utcnow(),
+               )
+           )
+    1:     test_db.commit()
+       
+    1:     async_mock = AsyncMock(return_value=True)
+       
+    1:     def _override_get_db():
+    1:         yield test_db
+       
+    3:     with patch.object(db_module, "get_db", _override_get_db), patch(
+    1:         "routers.global_chat.send_push_notification_async", async_mock
+    2:     ), patch(
+    1:         "utils.notification_storage.create_notifications_batch"
+    1:     ) as create_notifications_batch:
+    2:         send_push_for_global_chat_sync(
+    1:             message_id=1,
+    1:             sender_id=user1.account_id,
+    1:             sender_username="user1",
+    1:             message="Hello",
+    1:             created_at=datetime.utcnow(),
+               )
+       
+    4:     all_player_ids = [call.kwargs["player_ids"] for call in async_mock.call_args_list]
+    6:     flattened = [pid for batch in all_player_ids for pid in batch]
+    1:     assert "player-muted" not in flattened
+    1:     assert "player-active-2" in flattened
+    1:     assert "player-inactive" in flattened
+    1:     assert create_notifications_batch.called
+       
+       
+    2: class _FakeRedis:
+    1:     def __init__(self, cached_value):
+    2:         self.cached_value = cached_value
+    2:         self.set_calls = []
+       
+    1:     async def get(self, key):
+    2:         return self.cached_value
+       
+    1:     async def set(self, key, value, ex=None):
+    1:         self.set_calls.append((key, value, ex))
+       
+       
+    1: def test_global_chat_online_count_uses_cache(client, test_db, current_user, monkeypatch):
+    2:     viewer = GlobalChatViewer(
+    1:         user_id=current_user.account_id,
+    1:         last_seen=datetime.utcnow(),
+           )
+    1:     test_db.add(viewer)
+    1:     test_db.commit()
+       
+    1:     redis = _FakeRedis("5")
+       
+    1:     async def fake_get_chat_redis():
+    1:         return redis
+       
+    1:     monkeypatch.setattr(global_chat, "get_chat_redis", fake_get_chat_redis)
+       
+    1:     response = client.get("/global-chat/messages?limit=5")
+       
+    1:     assert response.status_code == 200
+    1:     assert response.json()["online_count"] == 5
+    1:     assert redis.set_calls == []
+       
+       
+    1: def test_global_chat_online_count_sets_cache(client, test_db, current_user, monkeypatch):
+    2:     viewer = GlobalChatViewer(
+    1:         user_id=current_user.account_id,
+    1:         last_seen=datetime.utcnow(),
+           )
+    1:     test_db.add(viewer)
+    1:     test_db.commit()
+       
+    1:     redis = _FakeRedis(None)
+       
+    1:     async def fake_get_chat_redis():
+    1:         return redis
+       
+    1:     monkeypatch.setattr(global_chat, "get_chat_redis", fake_get_chat_redis)
+       
+    1:     response = client.get("/global-chat/messages?limit=5")
+       
+    1:     assert response.status_code == 200
+    1:     assert response.json()["online_count"] == 1
+    1:     assert redis.set_calls
+       
+       
+    1: def test_get_display_username_fallbacks():
+    1:     user_with_email = SimpleNamespace(account_id=1, username="", email="user@example.com")
+    1:     assert global_chat.get_display_username(user_with_email) == "user"
+       
+    1:     user_without_email = SimpleNamespace(account_id=99, username=None, email=None)
+    1:     assert global_chat.get_display_username(user_without_email) == "User99"
+       
+       
+    1: def test_ensure_datetime_parsing():
+    1:     parsed = global_chat._ensure_datetime("2024-01-01T00:00:00")
+    1:     assert parsed.year == 2024
+       
+    1:     fallback = global_chat._ensure_datetime("not-a-date")
+    1:     assert isinstance(fallback, datetime)
+       
+       
+    1: def test_publish_to_pusher_global_includes_reply(monkeypatch):
+    1:     captured = {}
+       
+    1:     def fake_publish(channel, event, payload):
+    1:         captured["channel"] = channel
+    1:         captured["event"] = event
+    1:         captured["payload"] = payload
+       
+    1:     monkeypatch.setattr(global_chat, "publish_chat_message_sync", fake_publish)
+       
+    2:     global_chat.publish_to_pusher_global(
+    1:         message_id=5,
+    1:         user_id=10,
+    1:         username="tester",
+    1:         profile_pic=None,
+    1:         avatar_url=None,
+    1:         frame_url=None,
+    1:         badge=None,
+    1:         message="Hello",
+    1:         created_at="2024-01-01T00:00:00",
+    1:         reply_to={"message_id": 1},
+           )
+       
+    1:     assert captured["channel"] == "global-chat"
+    1:     assert captured["payload"]["reply_to"]["message_id"] == 1
+       
+       
+    1: def test_send_global_message_duplicate(client, test_db, current_user):
+    2:     existing = GlobalChatMessage(
+    1:         user_id=current_user.account_id,
+    1:         message="Hello",
+    1:         client_message_id="dup-1",
+    1:         created_at=datetime.utcnow(),
+           )
+    1:     test_db.add(existing)
+    1:     test_db.commit()
+       
+    2:     response = client.post(
+    1:         "/global-chat/send",
+    1:         json={"message": "Hello", "client_message_id": "dup-1"},
+           )
+       
+    1:     assert response.status_code == 200
+    1:     assert response.json()["duplicate"] is True
+       
+       
+    1: def test_send_global_message_success_with_reply(client, test_db, current_user, monkeypatch):
+    2:     base_message = GlobalChatMessage(
+    1:         user_id=current_user.account_id,
+    1:         message="Base",
+    1:         created_at=datetime.utcnow(),
+           )
+    1:     test_db.add(base_message)
+    1:     test_db.commit()
+       
+    1:     monkeypatch.setattr(global_chat, "enqueue_chat_event", AsyncMock(return_value=False))
+    2:     monkeypatch.setattr(
+    1:         global_chat,
+    1:         "get_user_chat_profile_data",
+    3:         lambda user, db: {
+    2:             "profile_pic_url": None,
+    2:             "avatar_url": None,
+    2:             "frame_url": None,
+    2:             "badge": None,
+               },
+           )
+       
+    2:     response = client.post(
+    1:         "/global-chat/send",
+    1:         json={"message": "Replying", "reply_to_message_id": base_message.id},
+           )
+       
+    1:     assert response.status_code == 200
+    1:     assert response.json()["duplicate"] is False
+       
+       
+    1: def test_send_global_message_burst_limit_fallback(client, test_db, current_user, monkeypatch):
+    1:     monkeypatch.setattr(global_chat, "check_burst_limit", AsyncMock(return_value=None))
+    1:     monkeypatch.setattr(global_chat, "check_rate_limit", AsyncMock(return_value=True))
+    1:     monkeypatch.setattr(global_chat, "GLOBAL_CHAT_MAX_MESSAGES_PER_BURST", 1)
+    1:     monkeypatch.setattr(global_chat, "GLOBAL_CHAT_BURST_WINDOW_SECONDS", 60)
+       
+    2:     test_db.add(
+    2:         GlobalChatMessage(
+    1:             user_id=current_user.account_id,
+    1:             message="Existing",
+    1:             created_at=datetime.utcnow(),
+               )
+           )
+    1:     test_db.commit()
+       
+    1:     response = client.post("/global-chat/send", json={"message": "Another"})
+       
+    1:     assert response.status_code == 429
+       
+       
+    1: def test_send_global_message_rate_limit_fallback(client, test_db, current_user, monkeypatch):
+    1:     monkeypatch.setattr(global_chat, "check_burst_limit", AsyncMock(return_value=True))
+    1:     monkeypatch.setattr(global_chat, "check_rate_limit", AsyncMock(return_value=None))
+    1:     monkeypatch.setattr(global_chat, "GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE", 1)
+       
+    2:     test_db.add(
+    2:         GlobalChatMessage(
+    1:             user_id=current_user.account_id,
+    1:             message="Existing",
+    1:             created_at=datetime.utcnow(),
+               )
+           )
+    1:     test_db.commit()
+       
+    1:     response = client.post("/global-chat/send", json={"message": "Another"})
+       
+    1:     assert response.status_code == 429
+       
+       
+    1: def test_global_chat_cleanup_admin(client, test_db, current_user, monkeypatch):
+    1:     current_user.is_admin = True
+    1:     monkeypatch.setattr(global_chat, "GLOBAL_CHAT_RETENTION_DAYS", 0)
+    2:     test_db.add(
+    2:         GlobalChatMessage(
+    1:             user_id=current_user.account_id,
+    1:             message="Old",
+    1:             created_at=datetime.utcnow() - timedelta(days=1),
+               )
+           )
+    1:     test_db.commit()
+       
+    1:     response = client.post("/global-chat/cleanup")
+       
+    1:     assert response.status_code == 200
+    1:     assert response.json()["deleted_count"] >= 1
+       
+       
+    1: def test_global_chat_disabled_paths(client, monkeypatch):
+    1:     monkeypatch.setattr(global_chat, "GLOBAL_CHAT_ENABLED", False)
+       
+    1:     response = client.get("/global-chat/messages?limit=5")
+    1:     assert response.status_code == 403
+       
+    1:     response = client.post("/global-chat/send", json={"message": "Hello"})
+    1:     assert response.status_code == 403
+       
+    1:     response = client.post("/global-chat/cleanup")
+    1:     assert response.status_code == 403

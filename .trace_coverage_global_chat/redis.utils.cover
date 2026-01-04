@@ -1,0 +1,348 @@
+    1: import datetime
+    1: import logging
+    1: import textwrap
+    1: import warnings
+    1: from collections.abc import Callable
+    1: from contextlib import contextmanager
+    1: from functools import wraps
+    1: from typing import Any, Dict, List, Mapping, Optional, TypeVar, Union
+       
+    1: from redis.exceptions import DataError
+    1: from redis.typing import AbsExpiryT, EncodableT, ExpiryT
+       
+    1: try:
+    1:     import hiredis  # noqa
+       
+           # Only support Hiredis >= 3.0:
+    1:     hiredis_version = hiredis.__version__.split(".")
+    2:     HIREDIS_AVAILABLE = int(hiredis_version[0]) > 3 or (
+    1:         int(hiredis_version[0]) == 3 and int(hiredis_version[1]) >= 2
+           )
+    1:     if not HIREDIS_AVAILABLE:
+>>>>>>         raise ImportError("hiredis package should be >= 3.2.0")
+>>>>>> except ImportError:
+>>>>>>     HIREDIS_AVAILABLE = False
+       
+    1: try:
+    1:     import ssl  # noqa
+       
+    1:     SSL_AVAILABLE = True
+>>>>>> except ImportError:
+>>>>>>     SSL_AVAILABLE = False
+       
+    1: try:
+    1:     import cryptography  # noqa
+       
+    1:     CRYPTOGRAPHY_AVAILABLE = True
+>>>>>> except ImportError:
+>>>>>>     CRYPTOGRAPHY_AVAILABLE = False
+       
+    1: from importlib import metadata
+       
+       
+    1: def from_url(url, **kwargs):
+           """
+           Returns an active Redis client generated from the given database URL.
+       
+           Will attempt to extract the database id from the path url fragment, if
+           none is provided.
+           """
+>>>>>>     from redis.client import Redis
+       
+>>>>>>     return Redis.from_url(url, **kwargs)
+       
+       
+    1: @contextmanager
+    1: def pipeline(redis_obj):
+>>>>>>     p = redis_obj.pipeline()
+>>>>>>     yield p
+>>>>>>     p.execute()
+       
+       
+    1: def str_if_bytes(value: Union[str, bytes]) -> str:
+>>>>>>     return (
+>>>>>>         value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+           )
+       
+       
+    1: def safe_str(value):
+>>>>>>     return str(str_if_bytes(value))
+       
+       
+    1: def dict_merge(*dicts: Mapping[str, Any]) -> Dict[str, Any]:
+           """
+           Merge all provided dicts into 1 dict.
+           *dicts : `dict`
+               dictionaries to merge
+           """
+    2:     merged = {}
+       
+   16:     for d in dicts:
+   14:         merged.update(d)
+       
+    2:     return merged
+       
+       
+    1: def list_keys_to_dict(key_list, callback):
+   14:     return dict.fromkeys(key_list, callback)
+       
+       
+    1: def merge_result(command, res):
+           """
+           Merge all items in `res` into a list.
+       
+           This command is used when sending a command to multiple nodes
+           and the result from each node should be merged into a single list.
+       
+           res : 'dict'
+           """
+>>>>>>     result = set()
+       
+>>>>>>     for v in res.values():
+>>>>>>         for value in v:
+>>>>>>             result.add(value)
+       
+>>>>>>     return list(result)
+       
+       
+    1: def warn_deprecated(name, reason="", version="", stacklevel=2):
+>>>>>>     import warnings
+       
+>>>>>>     msg = f"Call to deprecated {name}."
+>>>>>>     if reason:
+>>>>>>         msg += f" ({reason})"
+>>>>>>     if version:
+>>>>>>         msg += f" -- Deprecated since version {version}."
+>>>>>>     warnings.warn(msg, category=DeprecationWarning, stacklevel=stacklevel)
+       
+       
+    1: def deprecated_function(reason="", version="", name=None):
+           """
+           Decorator to mark a function as deprecated.
+           """
+       
+    5:     def decorator(func):
+    5:         @wraps(func)
+    5:         def wrapper(*args, **kwargs):
+>>>>>>             warn_deprecated(name or func.__name__, reason, version, stacklevel=3)
+>>>>>>             return func(*args, **kwargs)
+       
+    5:         return wrapper
+       
+    5:     return decorator
+       
+       
+    2: def warn_deprecated_arg_usage(
+    1:     arg_name: Union[list, str],
+    1:     function_name: str,
+    1:     reason: str = "",
+    1:     version: str = "",
+    1:     stacklevel: int = 2,
+       ):
+>>>>>>     import warnings
+       
+>>>>>>     msg = (
+>>>>>>         f"Call to '{function_name}' function with deprecated"
+>>>>>>         f" usage of input argument/s '{arg_name}'."
+           )
+>>>>>>     if reason:
+>>>>>>         msg += f" ({reason})"
+>>>>>>     if version:
+>>>>>>         msg += f" -- Deprecated since version {version}."
+>>>>>>     warnings.warn(msg, category=DeprecationWarning, stacklevel=stacklevel)
+       
+       
+    1: C = TypeVar("C", bound=Callable)
+       
+       
+    2: def deprecated_args(
+    2:     args_to_warn: list = ["*"],
+    2:     allowed_args: list = [],
+    2:     reason: str = "",
+    2:     version: str = "",
+    1: ) -> Callable[[C], C]:
+           """
+           Decorator to mark specified args of a function as deprecated.
+           If '*' is in args_to_warn, all arguments will be marked as deprecated.
+           """
+       
+   14:     def decorator(func: C) -> C:
+   14:         @wraps(func)
+   14:         def wrapper(*args, **kwargs):
+                   # Get function argument names
+>>>>>>             arg_names = func.__code__.co_varnames[: func.__code__.co_argcount]
+       
+>>>>>>             provided_args = dict(zip(arg_names, args))
+>>>>>>             provided_args.update(kwargs)
+       
+>>>>>>             provided_args.pop("self", None)
+>>>>>>             for allowed_arg in allowed_args:
+>>>>>>                 provided_args.pop(allowed_arg, None)
+       
+>>>>>>             for arg in args_to_warn:
+>>>>>>                 if arg == "*" and len(provided_args) > 0:
+>>>>>>                     warn_deprecated_arg_usage(
+>>>>>>                         list(provided_args.keys()),
+>>>>>>                         func.__name__,
+>>>>>>                         reason,
+>>>>>>                         version,
+>>>>>>                         stacklevel=3,
+                           )
+>>>>>>                 elif arg in provided_args:
+>>>>>>                     warn_deprecated_arg_usage(
+>>>>>>                         arg, func.__name__, reason, version, stacklevel=3
+                           )
+       
+>>>>>>             return func(*args, **kwargs)
+       
+   14:         return wrapper
+       
+   14:     return decorator
+       
+       
+    1: def _set_info_logger():
+           """
+           Set up a logger that log info logs to stdout.
+           (This is used by the default push response handler)
+           """
+>>>>>>     if "push_response" not in logging.root.manager.loggerDict.keys():
+>>>>>>         logger = logging.getLogger("push_response")
+>>>>>>         logger.setLevel(logging.INFO)
+>>>>>>         handler = logging.StreamHandler()
+>>>>>>         handler.setLevel(logging.INFO)
+>>>>>>         logger.addHandler(handler)
+       
+       
+    1: def get_lib_version():
+    5:     try:
+    5:         libver = metadata.version("redis")
+>>>>>>     except metadata.PackageNotFoundError:
+>>>>>>         libver = "99.99.99"
+    5:     return libver
+       
+       
+    1: def format_error_message(host_error: str, exception: BaseException) -> str:
+>>>>>>     if not exception.args:
+>>>>>>         return f"Error connecting to {host_error}."
+>>>>>>     elif len(exception.args) == 1:
+>>>>>>         return f"Error {exception.args[0]} connecting to {host_error}."
+           else:
+>>>>>>         return (
+>>>>>>             f"Error {exception.args[0]} connecting to {host_error}. "
+>>>>>>             f"{exception.args[1]}."
+               )
+       
+       
+    1: def compare_versions(version1: str, version2: str) -> int:
+           """
+           Compare two versions.
+       
+           :return: -1 if version1 > version2
+                    0 if both versions are equal
+                    1 if version1 < version2
+           """
+       
+>>>>>>     num_versions1 = list(map(int, version1.split(".")))
+>>>>>>     num_versions2 = list(map(int, version2.split(".")))
+       
+>>>>>>     if len(num_versions1) > len(num_versions2):
+>>>>>>         diff = len(num_versions1) - len(num_versions2)
+>>>>>>         for _ in range(diff):
+>>>>>>             num_versions2.append(0)
+>>>>>>     elif len(num_versions1) < len(num_versions2):
+>>>>>>         diff = len(num_versions2) - len(num_versions1)
+>>>>>>         for _ in range(diff):
+>>>>>>             num_versions1.append(0)
+       
+>>>>>>     for i, ver in enumerate(num_versions1):
+>>>>>>         if num_versions1[i] > num_versions2[i]:
+>>>>>>             return -1
+>>>>>>         elif num_versions1[i] < num_versions2[i]:
+>>>>>>             return 1
+       
+>>>>>>     return 0
+       
+       
+    1: def ensure_string(key):
+>>>>>>     if isinstance(key, bytes):
+>>>>>>         return key.decode("utf-8")
+>>>>>>     elif isinstance(key, str):
+>>>>>>         return key
+           else:
+>>>>>>         raise TypeError("Key must be either a string or bytes")
+       
+       
+    2: def extract_expire_flags(
+    1:     ex: Optional[ExpiryT] = None,
+    1:     px: Optional[ExpiryT] = None,
+    1:     exat: Optional[AbsExpiryT] = None,
+    1:     pxat: Optional[AbsExpiryT] = None,
+    1: ) -> List[EncodableT]:
+>>>>>>     exp_options: list[EncodableT] = []
+>>>>>>     if ex is not None:
+>>>>>>         exp_options.append("EX")
+>>>>>>         if isinstance(ex, datetime.timedelta):
+>>>>>>             exp_options.append(int(ex.total_seconds()))
+>>>>>>         elif isinstance(ex, int):
+>>>>>>             exp_options.append(ex)
+>>>>>>         elif isinstance(ex, str) and ex.isdigit():
+>>>>>>             exp_options.append(int(ex))
+               else:
+>>>>>>             raise DataError("ex must be datetime.timedelta or int")
+>>>>>>     elif px is not None:
+>>>>>>         exp_options.append("PX")
+>>>>>>         if isinstance(px, datetime.timedelta):
+>>>>>>             exp_options.append(int(px.total_seconds() * 1000))
+>>>>>>         elif isinstance(px, int):
+>>>>>>             exp_options.append(px)
+               else:
+>>>>>>             raise DataError("px must be datetime.timedelta or int")
+>>>>>>     elif exat is not None:
+>>>>>>         if isinstance(exat, datetime.datetime):
+>>>>>>             exat = int(exat.timestamp())
+>>>>>>         exp_options.extend(["EXAT", exat])
+>>>>>>     elif pxat is not None:
+>>>>>>         if isinstance(pxat, datetime.datetime):
+>>>>>>             pxat = int(pxat.timestamp() * 1000)
+>>>>>>         exp_options.extend(["PXAT", pxat])
+       
+>>>>>>     return exp_options
+       
+       
+    1: def truncate_text(txt, max_length=100):
+>>>>>>     return textwrap.shorten(
+>>>>>>         text=txt, width=max_length, placeholder="...", break_long_words=True
+           )
+       
+       
+    1: def dummy_fail():
+           """
+           Fake function for a Retry object if you don't need to handle each failure.
+           """
+>>>>>>     pass
+       
+       
+    1: async def dummy_fail_async():
+           """
+           Async fake function for a Retry object if you don't need to handle each failure.
+           """
+>>>>>>     pass
+       
+       
+    1: def experimental(cls):
+           """
+           Decorator to mark a class as experimental.
+           """
+>>>>>>     original_init = cls.__init__
+       
+>>>>>>     @wraps(original_init)
+>>>>>>     def new_init(self, *args, **kwargs):
+>>>>>>         warnings.warn(
+>>>>>>             f"{cls.__name__} is an experimental and may change or be removed in future versions.",
+>>>>>>             category=UserWarning,
+>>>>>>             stacklevel=2,
+               )
+>>>>>>         original_init(self, *args, **kwargs)
+       
+>>>>>>     cls.__init__ = new_init
+>>>>>>     return cls

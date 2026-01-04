@@ -1,0 +1,162 @@
+       # sql/expression.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """Defines the public namespace for SQL expression constructs.
+       
+       
+       """
+       
+       
+    1: from __future__ import annotations
+       
+    1: from ._dml_constructors import delete as delete
+    1: from ._dml_constructors import insert as insert
+    1: from ._dml_constructors import update as update
+    1: from ._elements_constructors import all_ as all_
+    1: from ._elements_constructors import and_ as and_
+    1: from ._elements_constructors import any_ as any_
+    1: from ._elements_constructors import asc as asc
+    1: from ._elements_constructors import between as between
+    1: from ._elements_constructors import bindparam as bindparam
+    1: from ._elements_constructors import bitwise_not as bitwise_not
+    1: from ._elements_constructors import case as case
+    1: from ._elements_constructors import cast as cast
+    1: from ._elements_constructors import collate as collate
+    1: from ._elements_constructors import column as column
+    1: from ._elements_constructors import desc as desc
+    1: from ._elements_constructors import distinct as distinct
+    1: from ._elements_constructors import extract as extract
+    1: from ._elements_constructors import false as false
+    1: from ._elements_constructors import funcfilter as funcfilter
+    1: from ._elements_constructors import label as label
+    1: from ._elements_constructors import not_ as not_
+    1: from ._elements_constructors import null as null
+    1: from ._elements_constructors import nulls_first as nulls_first
+    1: from ._elements_constructors import nulls_last as nulls_last
+    1: from ._elements_constructors import or_ as or_
+    1: from ._elements_constructors import outparam as outparam
+    1: from ._elements_constructors import over as over
+    1: from ._elements_constructors import text as text
+    1: from ._elements_constructors import true as true
+    1: from ._elements_constructors import try_cast as try_cast
+    1: from ._elements_constructors import tuple_ as tuple_
+    1: from ._elements_constructors import type_coerce as type_coerce
+    1: from ._elements_constructors import within_group as within_group
+    1: from ._selectable_constructors import alias as alias
+    1: from ._selectable_constructors import cte as cte
+    1: from ._selectable_constructors import except_ as except_
+    1: from ._selectable_constructors import except_all as except_all
+    1: from ._selectable_constructors import exists as exists
+    1: from ._selectable_constructors import intersect as intersect
+    1: from ._selectable_constructors import intersect_all as intersect_all
+    1: from ._selectable_constructors import join as join
+    1: from ._selectable_constructors import lateral as lateral
+    1: from ._selectable_constructors import outerjoin as outerjoin
+    1: from ._selectable_constructors import select as select
+    1: from ._selectable_constructors import table as table
+    1: from ._selectable_constructors import tablesample as tablesample
+    1: from ._selectable_constructors import union as union
+    1: from ._selectable_constructors import union_all as union_all
+    1: from ._selectable_constructors import values as values
+    1: from ._typing import ColumnExpressionArgument as ColumnExpressionArgument
+    1: from .base import _from_objects as _from_objects
+    1: from .base import _select_iterables as _select_iterables
+    1: from .base import ColumnCollection as ColumnCollection
+    1: from .base import Executable as Executable
+    1: from .cache_key import CacheKey as CacheKey
+    1: from .dml import Delete as Delete
+    1: from .dml import Insert as Insert
+    1: from .dml import Update as Update
+    1: from .dml import UpdateBase as UpdateBase
+    1: from .dml import ValuesBase as ValuesBase
+    1: from .elements import _truncated_label as _truncated_label
+    1: from .elements import BinaryExpression as BinaryExpression
+    1: from .elements import BindParameter as BindParameter
+    1: from .elements import BooleanClauseList as BooleanClauseList
+    1: from .elements import Case as Case
+    1: from .elements import Cast as Cast
+    1: from .elements import ClauseElement as ClauseElement
+    1: from .elements import ClauseList as ClauseList
+    1: from .elements import CollectionAggregate as CollectionAggregate
+    1: from .elements import ColumnClause as ColumnClause
+    1: from .elements import ColumnElement as ColumnElement
+    1: from .elements import ExpressionClauseList as ExpressionClauseList
+    1: from .elements import Extract as Extract
+    1: from .elements import False_ as False_
+    1: from .elements import FunctionFilter as FunctionFilter
+    1: from .elements import Grouping as Grouping
+    1: from .elements import Label as Label
+    1: from .elements import literal as literal
+    1: from .elements import literal_column as literal_column
+    1: from .elements import Null as Null
+    1: from .elements import Over as Over
+    1: from .elements import quoted_name as quoted_name
+    1: from .elements import ReleaseSavepointClause as ReleaseSavepointClause
+    1: from .elements import RollbackToSavepointClause as RollbackToSavepointClause
+    1: from .elements import SavepointClause as SavepointClause
+    1: from .elements import SQLColumnExpression as SQLColumnExpression
+    1: from .elements import TextClause as TextClause
+    1: from .elements import True_ as True_
+    1: from .elements import TryCast as TryCast
+    1: from .elements import Tuple as Tuple
+    1: from .elements import TypeClause as TypeClause
+    1: from .elements import TypeCoerce as TypeCoerce
+    1: from .elements import UnaryExpression as UnaryExpression
+    1: from .elements import WithinGroup as WithinGroup
+    1: from .functions import func as func
+    1: from .functions import Function as Function
+    1: from .functions import FunctionElement as FunctionElement
+    1: from .functions import modifier as modifier
+    1: from .lambdas import lambda_stmt as lambda_stmt
+    1: from .lambdas import LambdaElement as LambdaElement
+    1: from .lambdas import StatementLambdaElement as StatementLambdaElement
+    1: from .operators import ColumnOperators as ColumnOperators
+    1: from .operators import custom_op as custom_op
+    1: from .operators import Operators as Operators
+    1: from .selectable import Alias as Alias
+    1: from .selectable import AliasedReturnsRows as AliasedReturnsRows
+    1: from .selectable import CompoundSelect as CompoundSelect
+    1: from .selectable import CTE as CTE
+    1: from .selectable import Exists as Exists
+    1: from .selectable import FromClause as FromClause
+    1: from .selectable import FromGrouping as FromGrouping
+    1: from .selectable import GenerativeSelect as GenerativeSelect
+    1: from .selectable import HasCTE as HasCTE
+    1: from .selectable import HasPrefixes as HasPrefixes
+    1: from .selectable import HasSuffixes as HasSuffixes
+    1: from .selectable import Join as Join
+    1: from .selectable import LABEL_STYLE_DEFAULT as LABEL_STYLE_DEFAULT
+    1: from .selectable import (
+           LABEL_STYLE_DISAMBIGUATE_ONLY as LABEL_STYLE_DISAMBIGUATE_ONLY,
+       )
+    1: from .selectable import LABEL_STYLE_NONE as LABEL_STYLE_NONE
+    1: from .selectable import (
+           LABEL_STYLE_TABLENAME_PLUS_COL as LABEL_STYLE_TABLENAME_PLUS_COL,
+       )
+    1: from .selectable import Lateral as Lateral
+    1: from .selectable import ReturnsRows as ReturnsRows
+    1: from .selectable import ScalarSelect as ScalarSelect
+    1: from .selectable import ScalarValues as ScalarValues
+    1: from .selectable import Select as Select
+    1: from .selectable import Selectable as Selectable
+    1: from .selectable import SelectBase as SelectBase
+    1: from .selectable import SelectLabelStyle as SelectLabelStyle
+    1: from .selectable import Subquery as Subquery
+    1: from .selectable import TableClause as TableClause
+    1: from .selectable import TableSample as TableSample
+    1: from .selectable import TableValuedAlias as TableValuedAlias
+    1: from .selectable import TextAsFrom as TextAsFrom
+    1: from .selectable import TextualSelect as TextualSelect
+    1: from .selectable import Values as Values
+    1: from .visitors import Visitable as Visitable
+       
+    1: nullsfirst = nulls_first
+       """Synonym for the :func:`.nulls_first` function."""
+       
+       
+    1: nullslast = nulls_last
+    1: """Synonym for the :func:`.nulls_last` function."""

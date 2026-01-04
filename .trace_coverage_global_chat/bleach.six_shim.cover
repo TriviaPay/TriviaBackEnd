@@ -1,0 +1,19 @@
+    1: """
+       Replacement module for what html5lib uses six for.
+       """
+       
+    1: import http.client
+    1: import operator
+    1: import urllib
+       
+       
+    1: PY3 = True
+    1: binary_type = bytes
+    1: string_types = (str,)
+    1: text_type = str
+    1: unichr = chr
+    1: viewkeys = operator.methodcaller("keys")
+       
+    1: http_client = http.client
+    1: urllib = urllib
+    1: urllib_parse = urllib.parse

@@ -1,0 +1,120 @@
+       # util/topological.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """Topological sorting algorithms."""
+       
+    1: from __future__ import annotations
+       
+    1: from typing import Any
+    1: from typing import Collection
+    1: from typing import DefaultDict
+    1: from typing import Iterable
+    1: from typing import Iterator
+    1: from typing import Sequence
+    1: from typing import Set
+    1: from typing import Tuple
+    1: from typing import TypeVar
+       
+    1: from .. import util
+    1: from ..exc import CircularDependencyError
+       
+    1: _T = TypeVar("_T", bound=Any)
+       
+    1: __all__ = ["sort", "sort_as_subsets", "find_cycles"]
+       
+       
+    1: def sort_as_subsets(
+           tuples: Collection[Tuple[_T, _T]], allitems: Collection[_T]
+       ) -> Iterator[Sequence[_T]]:
+   52:     edges: DefaultDict[_T, Set[_T]] = util.defaultdict(set)
+  638:     for parent, child in tuples:
+  586:         edges[child].add(parent)
+       
+   52:     todo = list(allitems)
+   52:     todo_set = set(allitems)
+       
+  171:     while todo_set:
+  120:         output = []
+ 1633:         for node in todo:
+ 1513:             if todo_set.isdisjoint(edges[node]):
+  636:                 output.append(node)
+       
+  120:         if not output:
+>>>>>>             raise CircularDependencyError(
+>>>>>>                 "Circular dependency detected.",
+>>>>>>                 find_cycles(tuples, allitems),
+>>>>>>                 _gen_edges(edges),
+                   )
+       
+  120:         todo_set.difference_update(output)
+ 1753:         todo = [t for t in todo if t in todo_set]
+  120:         yield output
+       
+       
+    1: def sort(
+           tuples: Collection[Tuple[_T, _T]],
+           allitems: Collection[_T],
+           deterministic_order: bool = True,
+       ) -> Iterator[_T]:
+           """sort the given list of items by dependency.
+       
+           'tuples' is a list of tuples representing a partial ordering.
+       
+           deterministic_order is no longer used, the order is now always
+           deterministic given the order of "allitems".    the flag is there
+           for backwards compatibility with Alembic.
+       
+           """
+       
+  171:     for set_ in sort_as_subsets(tuples, allitems):
+  120:         yield from set_
+       
+       
+    1: def find_cycles(
+           tuples: Iterable[Tuple[_T, _T]], allitems: Iterable[_T]
+       ) -> Set[_T]:
+           # adapted from:
+           # https://neopythonic.blogspot.com/2009/01/detecting-cycles-in-directed-graph.html
+       
+   36:     edges: DefaultDict[_T, Set[_T]] = util.defaultdict(set)
+   77:     for parent, child in tuples:
+   41:         edges[parent].add(child)
+   36:     nodes_to_test = set(edges)
+       
+   36:     output = set()
+       
+           # we'd like to find all nodes that are
+           # involved in cycles, so we do the full
+           # pass through the whole thing for each
+           # node in the original list.
+       
+           # we can go just through parent edge nodes.
+           # if a node is only a child and never a parent,
+           # by definition it can't be part of a cycle.  same
+           # if it's not in the edges at all.
+   77:     for node in nodes_to_test:
+   41:         stack = [node]
+   41:         todo = nodes_to_test.difference(stack)
+   82:         while stack:
+   41:             top = stack[-1]
+   82:             for node in edges[top]:
+   41:                 if node in stack:
+>>>>>>                     cyc = stack[stack.index(node) :]
+>>>>>>                     todo.difference_update(cyc)
+>>>>>>                     output.update(cyc)
+       
+   41:                 if node in todo:
+>>>>>>                     stack.append(node)
+>>>>>>                     todo.remove(node)
+>>>>>>                     break
+                   else:
+   41:                 node = stack.pop()
+   36:     return output
+       
+       
+    1: def _gen_edges(edges: DefaultDict[_T, Set[_T]]) -> Set[Tuple[_T, _T]]:
+>>>>>>     return {(right, left) for left in edges for right in edges[left]}

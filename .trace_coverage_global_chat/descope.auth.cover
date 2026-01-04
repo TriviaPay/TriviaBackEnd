@@ -1,0 +1,738 @@
+    1: from __future__ import annotations
+       
+    1: import copy
+    1: import json
+    1: import os
+    1: import platform
+    1: import re
+    1: from http import HTTPStatus
+    1: from threading import Lock
+    1: from typing import Iterable
+       
+    1: import jwt
+       
+    1: try:
+    1:     from importlib.metadata import version
+>>>>>> except ImportError:
+>>>>>>     from pkg_resources import get_distribution
+       
+    1: import requests
+    1: from email_validator import EmailNotValidError, validate_email
+    1: from jwt import ExpiredSignatureError, ImmatureSignatureError
+       
+    1: from descope.common import (
+           COOKIE_DATA_NAME,
+           DEFAULT_BASE_URL,
+           DEFAULT_DOMAIN,
+           DEFAULT_TIMEOUT_SECONDS,
+           DEFAULT_URL_PREFIX,
+           PHONE_REGEX,
+           REFRESH_SESSION_COOKIE_NAME,
+           REFRESH_SESSION_TOKEN_NAME,
+           SESSION_TOKEN_NAME,
+           AccessKeyLoginOptions,
+           DeliveryMethod,
+           EndpointsV1,
+           EndpointsV2,
+       )
+    1: from descope.exceptions import (
+           API_RATE_LIMIT_RETRY_AFTER_HEADER,
+           ERROR_TYPE_API_RATE_LIMIT,
+           ERROR_TYPE_INVALID_ARGUMENT,
+           ERROR_TYPE_INVALID_PUBLIC_KEY,
+           ERROR_TYPE_INVALID_TOKEN,
+           ERROR_TYPE_SERVER_ERROR,
+           AuthException,
+           RateLimitException,
+       )
+       
+       
+    1: def sdk_version():
+    1:     try:
+    1:         return version("descope")
+>>>>>>     except NameError:
+>>>>>>         return get_distribution("descope").version
+       
+       
+    1: _default_headers = {
+    1:     "Content-Type": "application/json",
+    1:     "x-descope-sdk-name": "python",
+    1:     "x-descope-sdk-python-version": platform.python_version(),
+    1:     "x-descope-sdk-version": sdk_version(),
+       }
+       
+       
+    2: class Auth:
+    1:     ALGORITHM_KEY = "alg"
+       
+    1:     def __init__(
+               self,
+    1:         project_id: str | None = None,
+    1:         public_key: dict | str | None = None,
+    1:         skip_verify: bool = False,
+    1:         management_key: str | None = None,
+    1:         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    1:         jwt_validation_leeway: int = 5,
+           ):
+    1:         self.lock_public_keys = Lock()
+               # validate project id
+    1:         project_id = project_id or os.getenv("DESCOPE_PROJECT_ID", "")
+    1:         if not project_id:
+>>>>>>             raise AuthException(
+>>>>>>                 400,
+>>>>>>                 ERROR_TYPE_INVALID_ARGUMENT,
+                       (
+>>>>>>                     "Unable to init Auth object because project_id cannot be empty. "
+                           "Set environment variable DESCOPE_PROJECT_ID or pass your Project ID to the init function."
+                       ),
+                   )
+    1:         self.project_id = project_id
+    1:         self.jwt_validation_leeway = jwt_validation_leeway
+    1:         self.secure = not skip_verify
+       
+    1:         self.base_url = os.getenv("DESCOPE_BASE_URI")
+    1:         if not self.base_url:
+    1:             self.base_url = self.base_url_for_project_id(self.project_id)
+    1:         self.timeout_seconds = timeout_seconds
+    1:         self.management_key = management_key or os.getenv("DESCOPE_MANAGEMENT_KEY")
+       
+    1:         public_key = public_key or os.getenv("DESCOPE_PUBLIC_KEY")
+    1:         with self.lock_public_keys:
+    1:             if not public_key:
+    1:                 self.public_keys = {}
+                   else:
+>>>>>>                 kid, pub_key, alg = self._validate_and_load_public_key(public_key)
+>>>>>>                 self.public_keys = {kid: (pub_key, alg)}
+       
+    1:     def _raise_rate_limit_exception(self, response):
+>>>>>>         try:
+>>>>>>             resp = response.json()
+>>>>>>             raise RateLimitException(
+>>>>>>                 resp.get("errorCode", HTTPStatus.TOO_MANY_REQUESTS),
+>>>>>>                 ERROR_TYPE_API_RATE_LIMIT,
+>>>>>>                 resp.get("errorDescription", ""),
+>>>>>>                 resp.get("errorMessage", ""),
+>>>>>>                 rate_limit_parameters={
+>>>>>>                     API_RATE_LIMIT_RETRY_AFTER_HEADER: self._parse_retry_after(
+>>>>>>                         response.headers
+                           )
+                       },
+                   )
+>>>>>>         except RateLimitException:
+>>>>>>             raise
+>>>>>>         except Exception as e:
+>>>>>>             raise RateLimitException(
+>>>>>>                 status_code=HTTPStatus.TOO_MANY_REQUESTS,
+>>>>>>                 error_type=ERROR_TYPE_API_RATE_LIMIT,
+>>>>>>                 error_message=ERROR_TYPE_API_RATE_LIMIT,
+>>>>>>                 error_description=ERROR_TYPE_API_RATE_LIMIT,
+                   )
+       
+    1:     def _parse_retry_after(self, headers):
+>>>>>>         try:
+>>>>>>             return int(headers.get(API_RATE_LIMIT_RETRY_AFTER_HEADER, 0))
+>>>>>>         except (ValueError, TypeError):
+>>>>>>             return 0
+       
+    1:     def do_get(
+               self,
+               uri: str,
+               params=None,
+               allow_redirects=None,
+               pswd: str | None = None,
+           ) -> requests.Response:
+>>>>>>         response = requests.get(
+>>>>>>             f"{self.base_url}{uri}",
+>>>>>>             headers=self._get_default_headers(pswd),
+>>>>>>             params=params,
+>>>>>>             allow_redirects=allow_redirects,
+>>>>>>             verify=self.secure,
+>>>>>>             timeout=self.timeout_seconds,
+               )
+>>>>>>         self._raise_from_response(response)
+>>>>>>         return response
+       
+    1:     def do_post(
+               self,
+               uri: str,
+               body: dict | list[dict] | list[str] | None,
+               params=None,
+               pswd: str | None = None,
+           ) -> requests.Response:
+>>>>>>         response = requests.post(
+>>>>>>             f"{self.base_url}{uri}",
+>>>>>>             headers=self._get_default_headers(pswd),
+>>>>>>             json=body,
+>>>>>>             allow_redirects=False,
+>>>>>>             verify=self.secure,
+>>>>>>             params=params,
+>>>>>>             timeout=self.timeout_seconds,
+               )
+>>>>>>         self._raise_from_response(response)
+>>>>>>         return response
+       
+    1:     def do_patch(
+               self,
+               uri: str,
+               body: dict | list[dict] | list[str] | None,
+               params=None,
+               pswd: str | None = None,
+           ) -> requests.Response:
+>>>>>>         response = requests.patch(
+>>>>>>             f"{self.base_url}{uri}",
+>>>>>>             headers=self._get_default_headers(pswd),
+>>>>>>             json=body,
+>>>>>>             allow_redirects=False,
+>>>>>>             verify=self.secure,
+>>>>>>             params=params,
+>>>>>>             timeout=self.timeout_seconds,
+               )
+>>>>>>         self._raise_from_response(response)
+>>>>>>         return response
+       
+    1:     def do_delete(
+               self, uri: str, params=None, pswd: str | None = None
+           ) -> requests.Response:
+>>>>>>         response = requests.delete(
+>>>>>>             f"{self.base_url}{uri}",
+>>>>>>             params=params,
+>>>>>>             headers=self._get_default_headers(pswd),
+>>>>>>             allow_redirects=False,
+>>>>>>             verify=self.secure,
+>>>>>>             timeout=self.timeout_seconds,
+               )
+>>>>>>         self._raise_from_response(response)
+>>>>>>         return response
+       
+    1:     def exchange_token(
+               self, uri, code: str, audience: str | None | Iterable[str] = None
+           ) -> dict:
+>>>>>>         if not code:
+>>>>>>             raise AuthException(
+>>>>>>                 400,
+>>>>>>                 ERROR_TYPE_INVALID_ARGUMENT,
+>>>>>>                 "exchange code is empty",
+                   )
+       
+>>>>>>         body = Auth._compose_exchange_body(code)
+>>>>>>         response = self.do_post(uri=uri, body=body, params=None)
+>>>>>>         resp = response.json()
+>>>>>>         jwt_response = self.generate_jwt_response(
+>>>>>>             resp, response.cookies.get(REFRESH_SESSION_COOKIE_NAME), audience
+               )
+>>>>>>         return jwt_response
+       
+    1:     @staticmethod
+    1:     def base_url_for_project_id(project_id):
+    1:         if len(project_id) >= 32:
+>>>>>>             region = project_id[1:5]
+>>>>>>             return ".".join([DEFAULT_URL_PREFIX, region, DEFAULT_DOMAIN])
+    1:         return DEFAULT_BASE_URL
+       
+    1:     @staticmethod
+    1:     def adjust_and_verify_delivery_method(
+               method: DeliveryMethod, login_id: str, user: dict
+           ) -> bool:
+>>>>>>         if not login_id:
+>>>>>>             return False
+       
+>>>>>>         if not isinstance(user, dict):
+>>>>>>             return False
+       
+>>>>>>         if method == DeliveryMethod.EMAIL:
+>>>>>>             if not user.get("email", None):
+>>>>>>                 user["email"] = login_id
+>>>>>>             try:
+>>>>>>                 validate_email(user["email"], check_deliverability=False)
+>>>>>>                 return True
+>>>>>>             except EmailNotValidError:
+>>>>>>                 return False
+>>>>>>         elif method == DeliveryMethod.SMS:
+>>>>>>             if not user.get("phone", None):
+>>>>>>                 user["phone"] = login_id
+>>>>>>             if not re.match(PHONE_REGEX, user["phone"]):
+>>>>>>                 return False
+>>>>>>         elif method == DeliveryMethod.VOICE:
+>>>>>>             if not user.get("phone", None):
+>>>>>>                 user["phone"] = login_id
+>>>>>>             if not re.match(PHONE_REGEX, user["phone"]):
+>>>>>>                 return False
+>>>>>>         elif method == DeliveryMethod.WHATSAPP:
+>>>>>>             if not user.get("phone", None):
+>>>>>>                 user["phone"] = login_id
+>>>>>>             if not re.match(PHONE_REGEX, user["phone"]):
+>>>>>>                 return False
+               else:
+>>>>>>             return False
+       
+>>>>>>         return True
+       
+    1:     @staticmethod
+    1:     def compose_url(base: str, method: DeliveryMethod) -> str:
+>>>>>>         suffix = {
+>>>>>>             DeliveryMethod.EMAIL: "email",
+>>>>>>             DeliveryMethod.SMS: "sms",
+>>>>>>             DeliveryMethod.VOICE: "voice",
+>>>>>>             DeliveryMethod.WHATSAPP: "whatsapp",
+>>>>>>         }.get(method)
+       
+>>>>>>         if not suffix:
+>>>>>>             raise AuthException(
+>>>>>>                 400, ERROR_TYPE_INVALID_ARGUMENT, f"Unknown delivery method: {method}"
+                   )
+       
+>>>>>>         return f"{base}/{suffix}"
+       
+    1:     @staticmethod
+    1:     def get_login_id_by_method(method: DeliveryMethod, user: dict) -> tuple[str, str]:
+>>>>>>         login_id = {
+>>>>>>             DeliveryMethod.EMAIL: ("email", user.get("email", "")),
+>>>>>>             DeliveryMethod.SMS: ("phone", user.get("phone", "")),
+>>>>>>             DeliveryMethod.VOICE: ("voice", user.get("phone", "")),
+>>>>>>             DeliveryMethod.WHATSAPP: ("whatsapp", user.get("phone", "")),
+>>>>>>         }.get(method)
+       
+>>>>>>         if not login_id:
+>>>>>>             raise AuthException(
+>>>>>>                 400, ERROR_TYPE_INVALID_ARGUMENT, f"Unknown delivery method: {method}"
+                   )
+       
+>>>>>>         return login_id
+       
+    1:     @staticmethod
+    1:     def get_method_string(method: DeliveryMethod) -> str:
+>>>>>>         name = {
+>>>>>>             DeliveryMethod.EMAIL: "email",
+>>>>>>             DeliveryMethod.SMS: "sms",
+>>>>>>             DeliveryMethod.VOICE: "voice",
+>>>>>>             DeliveryMethod.WHATSAPP: "whatsapp",
+>>>>>>             DeliveryMethod.EMBEDDED: "Embedded",
+>>>>>>         }.get(method)
+       
+>>>>>>         if not name:
+>>>>>>             raise AuthException(
+>>>>>>                 400, ERROR_TYPE_INVALID_ARGUMENT, f"Unknown delivery method: {method}"
+                   )
+       
+>>>>>>         return name
+       
+    1:     @staticmethod
+    1:     def validate_email(email: str):
+>>>>>>         if email == "":
+>>>>>>             raise AuthException(
+>>>>>>                 400,
+>>>>>>                 ERROR_TYPE_INVALID_ARGUMENT,
+>>>>>>                 "email address argument cannot be empty",
+                   )
+       
+>>>>>>         try:
+>>>>>>             validate_email(email, check_deliverability=False)
+>>>>>>         except EmailNotValidError as ex:
+>>>>>>             raise AuthException(
+>>>>>>                 400, ERROR_TYPE_INVALID_ARGUMENT, f"Invalid email address: {ex}"
+                   )
+       
+    1:     @staticmethod
+    1:     def validate_phone(method: DeliveryMethod, phone: str):
+>>>>>>         if phone == "":
+>>>>>>             raise AuthException(
+>>>>>>                 400,
+>>>>>>                 ERROR_TYPE_INVALID_ARGUMENT,
+>>>>>>                 "Phone number argument cannot be empty",
+                   )
+       
+>>>>>>         if not re.match(PHONE_REGEX, phone):
+>>>>>>             raise AuthException(
+>>>>>>                 400, ERROR_TYPE_INVALID_ARGUMENT, "Invalid phone number"
+                   )
+       
+>>>>>>         if (
+>>>>>>             method != DeliveryMethod.SMS
+>>>>>>             and method != DeliveryMethod.VOICE
+>>>>>>             and method != DeliveryMethod.WHATSAPP
+               ):
+>>>>>>             raise AuthException(
+>>>>>>                 400, ERROR_TYPE_INVALID_ARGUMENT, "Invalid delivery method"
+                   )
+       
+    1:     def exchange_access_key(
+               self,
+               access_key: str,
+               audience: str | Iterable[str] | None = None,
+               login_options: AccessKeyLoginOptions | None = None,
+           ) -> dict:
+>>>>>>         uri = EndpointsV1.exchange_auth_access_key_path
+>>>>>>         body = {
+>>>>>>             "loginOptions": login_options.__dict__ if login_options else {},
+               }
+>>>>>>         server_response = self.do_post(uri=uri, body=body, params=None, pswd=access_key)
+>>>>>>         json = server_response.json()
+>>>>>>         return self._generate_auth_info(
+>>>>>>             response_body=json, refresh_token=None, user_jwt=False, audience=audience
+               )
+       
+    1:     @staticmethod
+    1:     def _compose_exchange_body(code: str) -> dict:
+>>>>>>         return {"code": code}
+       
+    1:     @staticmethod
+    1:     def _validate_and_load_public_key(public_key) -> tuple[str, jwt.PyJWK, str]:
+>>>>>>         if not isinstance(public_key, (str, dict)):
+>>>>>>             raise AuthException(
+>>>>>>                 500,
+>>>>>>                 ERROR_TYPE_INVALID_PUBLIC_KEY,
+>>>>>>                 "Unable to load public key. Invalid public key error: (unknown type)",
+                   )
+       
+>>>>>>         if isinstance(public_key, str):
+>>>>>>             try:
+>>>>>>                 public_key = json.loads(public_key)
+>>>>>>             except (ValueError, TypeError) as e:
+>>>>>>                 raise AuthException(
+>>>>>>                     500,
+>>>>>>                     ERROR_TYPE_INVALID_PUBLIC_KEY,
+>>>>>>                     f"Unable to load public key. error: {e}",
+                       )
+       
+>>>>>>         alg = public_key.get(Auth.ALGORITHM_KEY, None)
+>>>>>>         if alg is None:
+>>>>>>             raise AuthException(
+>>>>>>                 500,
+>>>>>>                 ERROR_TYPE_INVALID_PUBLIC_KEY,
+>>>>>>                 "Unable to load public key. Missing property: alg",
+                   )
+       
+>>>>>>         kid = public_key.get("kid", None)
+>>>>>>         if kid is None:
+>>>>>>             raise AuthException(
+>>>>>>                 500,
+>>>>>>                 ERROR_TYPE_INVALID_PUBLIC_KEY,
+>>>>>>                 "Unable to load public key. Missing property: kid",
+                   )
+>>>>>>         try:
+                   # Load and validate public key
+>>>>>>             return (kid, jwt.PyJWK(public_key), alg)
+>>>>>>         except (jwt.PyJWKError, jwt.InvalidKeyError) as e:
+>>>>>>             raise AuthException(
+>>>>>>                 500,
+>>>>>>                 ERROR_TYPE_INVALID_PUBLIC_KEY,
+>>>>>>                 f"Unable to load public key {e}",
+                   )
+       
+    1:     def _raise_from_response(self, response):
+               """Raise appropriate exception from response, does nothing if response.ok is True."""
+>>>>>>         if response.ok:
+>>>>>>             return
+       
+>>>>>>         if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+>>>>>>             self._raise_rate_limit_exception(response)  # Raise RateLimitException
+       
+>>>>>>         raise AuthException(
+>>>>>>             response.status_code,
+>>>>>>             ERROR_TYPE_SERVER_ERROR,
+>>>>>>             response.text,
+               )
+       
+    1:     def _fetch_public_keys(self) -> None:
+               # This function called under mutex protection so no need to acquire it once again
+>>>>>>         response = requests.get(
+>>>>>>             f"{self.base_url}{EndpointsV2.public_key_path}/{self.project_id}",
+>>>>>>             headers=self._get_default_headers(),
+>>>>>>             verify=self.secure,
+>>>>>>             timeout=self.timeout_seconds,
+               )
+>>>>>>         self._raise_from_response(response)
+       
+>>>>>>         jwks_data = response.text
+>>>>>>         try:
+>>>>>>             jwkeys_wrapper = json.loads(jwks_data)
+>>>>>>             jwkeys = jwkeys_wrapper["keys"]
+>>>>>>         except (ValueError, TypeError, KeyError) as e:
+>>>>>>             raise AuthException(
+>>>>>>                 500, ERROR_TYPE_INVALID_PUBLIC_KEY, f"Unable to load jwks. Error: {e}"
+                   )
+       
+               # Load all public keys for this project
+>>>>>>         self.public_keys = {}
+>>>>>>         for key in jwkeys:
+>>>>>>             try:
+>>>>>>                 loaded_kid, pub_key, alg = Auth._validate_and_load_public_key(key)
+>>>>>>                 self.public_keys[loaded_kid] = (pub_key, alg)
+>>>>>>             except AuthException:
+                       # just continue to the next key
+>>>>>>                 pass
+       
+    1:     def adjust_properties(self, jwt_response: dict, user_jwt: bool):
+               # Save permissions, roles and tenants info from Session token or from refresh token on the json top level
+>>>>>>         if SESSION_TOKEN_NAME in jwt_response:
+>>>>>>             jwt_response["permissions"] = jwt_response[SESSION_TOKEN_NAME].get(
+>>>>>>                 "permissions", []
+                   )
+>>>>>>             jwt_response["roles"] = jwt_response[SESSION_TOKEN_NAME].get("roles", [])
+>>>>>>             jwt_response["tenants"] = jwt_response[SESSION_TOKEN_NAME].get(
+>>>>>>                 "tenants", {}
+                   )
+>>>>>>         elif REFRESH_SESSION_TOKEN_NAME in jwt_response:
+>>>>>>             jwt_response["permissions"] = jwt_response[REFRESH_SESSION_TOKEN_NAME].get(
+>>>>>>                 "permissions", []
+                   )
+>>>>>>             jwt_response["roles"] = jwt_response[REFRESH_SESSION_TOKEN_NAME].get(
+>>>>>>                 "roles", []
+                   )
+>>>>>>             jwt_response["tenants"] = jwt_response[REFRESH_SESSION_TOKEN_NAME].get(
+>>>>>>                 "tenants", {}
+                   )
+               else:
+>>>>>>             jwt_response["permissions"] = jwt_response.get("permissions", [])
+>>>>>>             jwt_response["roles"] = jwt_response.get("roles", [])
+>>>>>>             jwt_response["tenants"] = jwt_response.get("tenants", {})
+       
+               # Save the projectID also in the dict top level
+>>>>>>         issuer = (
+>>>>>>             jwt_response.get(SESSION_TOKEN_NAME, {}).get("iss", None)
+>>>>>>             or jwt_response.get(REFRESH_SESSION_TOKEN_NAME, {}).get("iss", None)
+>>>>>>             or jwt_response.get("iss", "")
+               )
+>>>>>>         jwt_response["projectId"] = issuer.rsplit("/")[
+>>>>>>             -1
+               ]  # support both url issuer and project ID issuer
+       
+>>>>>>         sub = (
+>>>>>>             jwt_response.get(SESSION_TOKEN_NAME, {}).get("sub", None)
+>>>>>>             or jwt_response.get(REFRESH_SESSION_TOKEN_NAME, {}).get("sub", None)
+>>>>>>             or jwt_response.get("sub", "")
+               )
+>>>>>>         if user_jwt:
+                   # Save the userID also in the dict top level
+>>>>>>             jwt_response["userId"] = sub
+               else:
+                   # Save the AccessKeyID also in the dict top level
+>>>>>>             jwt_response["keyId"] = sub
+       
+>>>>>>         return jwt_response
+       
+    1:     def _generate_auth_info(
+               self,
+               response_body: dict,
+               refresh_token: str | None,
+               user_jwt: bool,
+               audience: str | None | Iterable[str] = None,
+           ) -> dict:
+>>>>>>         jwt_response = {}
+>>>>>>         st_jwt = response_body.get("sessionJwt", "")
+>>>>>>         if st_jwt:
+>>>>>>             jwt_response[SESSION_TOKEN_NAME] = self._validate_token(st_jwt, audience)
+>>>>>>         rt_jwt = response_body.get("refreshJwt", "")
+>>>>>>         if rt_jwt:
+>>>>>>             jwt_response[REFRESH_SESSION_TOKEN_NAME] = self._validate_token(
+>>>>>>                 rt_jwt, audience
+                   )
+>>>>>>         elif refresh_token:
+>>>>>>             jwt_response[REFRESH_SESSION_TOKEN_NAME] = self._validate_token(
+>>>>>>                 refresh_token, audience
+                   )
+       
+>>>>>>         jwt_response = self.adjust_properties(jwt_response, user_jwt)
+       
+>>>>>>         if user_jwt:
+>>>>>>             jwt_response[COOKIE_DATA_NAME] = {
+>>>>>>                 "exp": response_body.get("cookieExpiration", 0),
+>>>>>>                 "maxAge": response_body.get("cookieMaxAge", 0),
+>>>>>>                 "domain": response_body.get("cookieDomain", ""),
+>>>>>>                 "path": response_body.get("cookiePath", "/"),
+                   }
+       
+>>>>>>         return jwt_response
+       
+    1:     def generate_jwt_response(
+               self,
+               response_body: dict,
+               refresh_cookie: str | None,
+               audience: str | None | Iterable[str] = None,
+           ) -> dict:
+>>>>>>         jwt_response = self._generate_auth_info(
+>>>>>>             response_body, refresh_cookie, True, audience
+               )
+       
+>>>>>>         jwt_response["user"] = response_body.get("user", {})
+>>>>>>         jwt_response["firstSeen"] = response_body.get("firstSeen", True)
+>>>>>>         return jwt_response
+       
+    1:     def _get_default_headers(self, pswd: str | None = None):
+>>>>>>         headers = _default_headers.copy()
+>>>>>>         headers["x-descope-project-id"] = self.project_id
+>>>>>>         bearer = self.project_id
+>>>>>>         if pswd:
+>>>>>>             bearer = f"{self.project_id}:{pswd}"
+>>>>>>         headers["Authorization"] = f"Bearer {bearer}"
+>>>>>>         return headers
+       
+           # Validate a token and load the public key if needed
+    1:     def _validate_token(
+               self, token: str, audience: str | None | Iterable[str] = None
+           ) -> dict:
+>>>>>>         if not token:
+>>>>>>             raise AuthException(
+>>>>>>                 500,
+>>>>>>                 ERROR_TYPE_INVALID_TOKEN,
+>>>>>>                 "Token validation received empty token",
+                   )
+>>>>>>         try:
+>>>>>>             unverified_header = jwt.get_unverified_header(token)
+>>>>>>         except jwt.exceptions.PyJWTError as e:
+>>>>>>             raise AuthException(
+>>>>>>                 500,
+>>>>>>                 ERROR_TYPE_INVALID_TOKEN,
+>>>>>>                 f"Unable to parse token header. Error: {e}",
+>>>>>>             ) from e
+       
+>>>>>>         alg_header = unverified_header.get(Auth.ALGORITHM_KEY, None)
+>>>>>>         if alg_header is None or alg_header == "none":
+>>>>>>             raise AuthException(
+>>>>>>                 500, ERROR_TYPE_INVALID_TOKEN, "Token header is missing property: alg"
+                   )
+       
+>>>>>>         kid = unverified_header.get("kid", None)
+>>>>>>         if kid is None:
+>>>>>>             raise AuthException(
+>>>>>>                 500, ERROR_TYPE_INVALID_TOKEN, "Token header is missing property: kid"
+                   )
+       
+>>>>>>         with self.lock_public_keys:
+>>>>>>             if self.public_keys == {} or self.public_keys.get(kid, None) is None:
+>>>>>>                 self._fetch_public_keys()
+       
+>>>>>>             found_key = self.public_keys.get(kid, None)
+>>>>>>             if found_key is None:
+>>>>>>                 raise AuthException(
+>>>>>>                     500,
+>>>>>>                     ERROR_TYPE_INVALID_PUBLIC_KEY,
+>>>>>>                     "Unable to validate public key. Public key not found.",
+                       )
+                   # save reference to the founded key
+                   # (as another thread can change the self.public_keys dict)
+>>>>>>             copy_key = found_key
+       
+>>>>>>         alg_from_key = copy_key[1]
+>>>>>>         if alg_header != alg_from_key:
+>>>>>>             raise AuthException(
+>>>>>>                 500,
+>>>>>>                 ERROR_TYPE_INVALID_PUBLIC_KEY,
+>>>>>>                 "Algorithm signature in JWT header does not match the algorithm signature in the public key",
+                   )
+       
+>>>>>>         try:
+>>>>>>             claims = jwt.decode(
+>>>>>>                 jwt=token,
+>>>>>>                 key=copy_key[0].key,
+>>>>>>                 algorithms=[alg_header],
+>>>>>>                 audience=audience,
+>>>>>>                 leeway=self.jwt_validation_leeway,
+                   )
+>>>>>>         except (ImmatureSignatureError, ExpiredSignatureError):
+>>>>>>             raise AuthException(
+>>>>>>                 400,
+>>>>>>                 ERROR_TYPE_INVALID_TOKEN,
+>>>>>>                 "Received Invalid token times error due to time glitch (between machines) during jwt validation, try to set the jwt_validation_leeway parameter (in DescopeClient) to higher value than 5sec which is the default",
+                   )
+       
+>>>>>>         claims["jwt"] = token
+>>>>>>         return claims
+       
+    1:     def validate_session(
+               self, session_token: str, audience: str | None | Iterable[str] = None
+           ) -> dict:
+>>>>>>         if not session_token:
+>>>>>>             raise AuthException(
+>>>>>>                 400,
+>>>>>>                 ERROR_TYPE_INVALID_TOKEN,
+>>>>>>                 "Session token is required for validation",
+                   )
+       
+>>>>>>         res = self._validate_token(session_token, audience)
+>>>>>>         res[SESSION_TOKEN_NAME] = copy.deepcopy(
+>>>>>>             res
+               )  # Duplicate for saving backward compatibility but keep the same structure as the refresh operation response
+>>>>>>         return self.adjust_properties(res, True)
+       
+    1:     def refresh_session(
+               self, refresh_token: str, audience: str | None | Iterable[str] = None
+           ) -> dict:
+>>>>>>         if not refresh_token:
+>>>>>>             raise AuthException(
+>>>>>>                 400,
+>>>>>>                 ERROR_TYPE_INVALID_TOKEN,
+>>>>>>                 "Refresh token is required to refresh a session",
+                   )
+       
+>>>>>>         self._validate_token(refresh_token, audience)
+       
+>>>>>>         uri = EndpointsV1.refresh_token_path
+>>>>>>         response = self.do_post(uri=uri, body={}, params=None, pswd=refresh_token)
+       
+>>>>>>         resp = response.json()
+>>>>>>         refresh_token = (
+>>>>>>             response.cookies.get(REFRESH_SESSION_COOKIE_NAME, None) or refresh_token
+               )
+>>>>>>         return self.generate_jwt_response(resp, refresh_token, audience)
+       
+    1:     def validate_and_refresh_session(
+               self,
+               session_token: str,
+               refresh_token: str,
+               audience: str | None | Iterable[str] = None,
+           ) -> dict:
+>>>>>>         if not session_token:
+>>>>>>             raise AuthException(
+>>>>>>                 400,
+>>>>>>                 ERROR_TYPE_INVALID_TOKEN,
+>>>>>>                 "Session token is missing",
+                   )
+       
+>>>>>>         try:
+>>>>>>             return self.validate_session(session_token, audience)
+>>>>>>         except AuthException:
+                   # Session is invalid - try to refresh it
+>>>>>>             if not refresh_token:
+>>>>>>                 raise AuthException(
+>>>>>>                     400,
+>>>>>>                     ERROR_TYPE_INVALID_TOKEN,
+>>>>>>                     "Refresh token is missing",
+                       )
+>>>>>>             return self.refresh_session(refresh_token, audience)
+       
+    1:     def select_tenant(
+               self,
+               tenant_id: str,
+               refresh_token: str,
+               audience: str | None | Iterable[str] = None,
+           ) -> dict:
+>>>>>>         if not refresh_token:
+>>>>>>             raise AuthException(
+>>>>>>                 400,
+>>>>>>                 ERROR_TYPE_INVALID_TOKEN,
+>>>>>>                 "Refresh token is required to refresh a session",
+                   )
+       
+>>>>>>         uri = EndpointsV1.select_tenant_path
+>>>>>>         response = self.do_post(
+>>>>>>             uri=uri, body={"tenant": tenant_id}, params=None, pswd=refresh_token
+               )
+       
+>>>>>>         resp = response.json()
+>>>>>>         jwt_response = self.generate_jwt_response(
+>>>>>>             resp, response.cookies.get(REFRESH_SESSION_COOKIE_NAME, None), audience
+               )
+>>>>>>         return jwt_response
+       
+    1:     @staticmethod
+    1:     def extract_masked_address(response: dict, method: DeliveryMethod) -> str:
+>>>>>>         if (
+>>>>>>             method == DeliveryMethod.SMS
+>>>>>>             or method == DeliveryMethod.VOICE
+>>>>>>             or method == DeliveryMethod.WHATSAPP
+               ):
+>>>>>>             return response["maskedPhone"]
+>>>>>>         elif method == DeliveryMethod.EMAIL:
+>>>>>>             return response["maskedEmail"]
+>>>>>>         return ""

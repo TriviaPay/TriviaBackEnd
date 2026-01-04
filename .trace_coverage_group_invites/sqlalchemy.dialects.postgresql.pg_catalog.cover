@@ -1,0 +1,294 @@
+       # dialects/postgresql/pg_catalog.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       # mypy: ignore-errors
+       
+    1: from .array import ARRAY
+    1: from .types import OID
+    1: from .types import REGCLASS
+    1: from ... import Column
+    1: from ... import func
+    1: from ... import MetaData
+    1: from ... import Table
+    1: from ...types import BigInteger
+    1: from ...types import Boolean
+    1: from ...types import CHAR
+    1: from ...types import Float
+    1: from ...types import Integer
+    1: from ...types import SmallInteger
+    1: from ...types import String
+    1: from ...types import Text
+    1: from ...types import TypeDecorator
+       
+       
+       # types
+    2: class NAME(TypeDecorator):
+    1:     impl = String(64, collation="C")
+    1:     cache_ok = True
+       
+       
+    2: class PG_NODE_TREE(TypeDecorator):
+    1:     impl = Text(collation="C")
+    1:     cache_ok = True
+       
+       
+    2: class INT2VECTOR(TypeDecorator):
+    1:     impl = ARRAY(SmallInteger)
+    1:     cache_ok = True
+       
+       
+    2: class OIDVECTOR(TypeDecorator):
+    1:     impl = ARRAY(OID)
+    1:     cache_ok = True
+       
+       
+    2: class _SpaceVector:
+    1:     def result_processor(self, dialect, coltype):
+>>>>>>         def process(value):
+>>>>>>             if value is None:
+>>>>>>                 return value
+>>>>>>             return [int(p) for p in value.split(" ")]
+       
+>>>>>>         return process
+       
+       
+    1: REGPROC = REGCLASS  # seems an alias
+       
+       # functions
+    1: _pg_cat = func.pg_catalog
+    1: quote_ident = _pg_cat.quote_ident
+    1: pg_table_is_visible = _pg_cat.pg_table_is_visible
+    1: pg_type_is_visible = _pg_cat.pg_type_is_visible
+    1: pg_get_viewdef = _pg_cat.pg_get_viewdef
+    1: pg_get_serial_sequence = _pg_cat.pg_get_serial_sequence
+    1: format_type = _pg_cat.format_type
+    1: pg_get_expr = _pg_cat.pg_get_expr
+    1: pg_get_constraintdef = _pg_cat.pg_get_constraintdef
+    1: pg_get_indexdef = _pg_cat.pg_get_indexdef
+       
+       # constants
+    1: RELKINDS_TABLE_NO_FOREIGN = ("r", "p")
+    1: RELKINDS_TABLE = RELKINDS_TABLE_NO_FOREIGN + ("f",)
+    1: RELKINDS_VIEW = ("v",)
+    1: RELKINDS_MAT_VIEW = ("m",)
+    1: RELKINDS_ALL_TABLE_LIKE = RELKINDS_TABLE + RELKINDS_VIEW + RELKINDS_MAT_VIEW
+       
+       # tables
+    1: pg_catalog_meta = MetaData()
+       
+    2: pg_namespace = Table(
+    1:     "pg_namespace",
+    1:     pg_catalog_meta,
+    1:     Column("oid", OID),
+    1:     Column("nspname", NAME),
+    1:     Column("nspowner", OID),
+    1:     schema="pg_catalog",
+       )
+       
+    2: pg_class = Table(
+    1:     "pg_class",
+    1:     pg_catalog_meta,
+    1:     Column("oid", OID, info={"server_version": (9, 3)}),
+    1:     Column("relname", NAME),
+    1:     Column("relnamespace", OID),
+    1:     Column("reltype", OID),
+    1:     Column("reloftype", OID),
+    1:     Column("relowner", OID),
+    1:     Column("relam", OID),
+    1:     Column("relfilenode", OID),
+    1:     Column("reltablespace", OID),
+    1:     Column("relpages", Integer),
+    1:     Column("reltuples", Float),
+    1:     Column("relallvisible", Integer, info={"server_version": (9, 2)}),
+    1:     Column("reltoastrelid", OID),
+    1:     Column("relhasindex", Boolean),
+    1:     Column("relisshared", Boolean),
+    1:     Column("relpersistence", CHAR, info={"server_version": (9, 1)}),
+    1:     Column("relkind", CHAR),
+    1:     Column("relnatts", SmallInteger),
+    1:     Column("relchecks", SmallInteger),
+    1:     Column("relhasrules", Boolean),
+    1:     Column("relhastriggers", Boolean),
+    1:     Column("relhassubclass", Boolean),
+    1:     Column("relrowsecurity", Boolean),
+    1:     Column("relforcerowsecurity", Boolean, info={"server_version": (9, 5)}),
+    1:     Column("relispopulated", Boolean, info={"server_version": (9, 3)}),
+    1:     Column("relreplident", CHAR, info={"server_version": (9, 4)}),
+    1:     Column("relispartition", Boolean, info={"server_version": (10,)}),
+    1:     Column("relrewrite", OID, info={"server_version": (11,)}),
+    1:     Column("reloptions", ARRAY(Text)),
+    1:     schema="pg_catalog",
+       )
+       
+    2: pg_type = Table(
+    1:     "pg_type",
+    1:     pg_catalog_meta,
+    1:     Column("oid", OID, info={"server_version": (9, 3)}),
+    1:     Column("typname", NAME),
+    1:     Column("typnamespace", OID),
+    1:     Column("typowner", OID),
+    1:     Column("typlen", SmallInteger),
+    1:     Column("typbyval", Boolean),
+    1:     Column("typtype", CHAR),
+    1:     Column("typcategory", CHAR),
+    1:     Column("typispreferred", Boolean),
+    1:     Column("typisdefined", Boolean),
+    1:     Column("typdelim", CHAR),
+    1:     Column("typrelid", OID),
+    1:     Column("typelem", OID),
+    1:     Column("typarray", OID),
+    1:     Column("typinput", REGPROC),
+    1:     Column("typoutput", REGPROC),
+    1:     Column("typreceive", REGPROC),
+    1:     Column("typsend", REGPROC),
+    1:     Column("typmodin", REGPROC),
+    1:     Column("typmodout", REGPROC),
+    1:     Column("typanalyze", REGPROC),
+    1:     Column("typalign", CHAR),
+    1:     Column("typstorage", CHAR),
+    1:     Column("typnotnull", Boolean),
+    1:     Column("typbasetype", OID),
+    1:     Column("typtypmod", Integer),
+    1:     Column("typndims", Integer),
+    1:     Column("typcollation", OID, info={"server_version": (9, 1)}),
+    1:     Column("typdefault", Text),
+    1:     schema="pg_catalog",
+       )
+       
+    2: pg_index = Table(
+    1:     "pg_index",
+    1:     pg_catalog_meta,
+    1:     Column("indexrelid", OID),
+    1:     Column("indrelid", OID),
+    1:     Column("indnatts", SmallInteger),
+    1:     Column("indnkeyatts", SmallInteger, info={"server_version": (11,)}),
+    1:     Column("indisunique", Boolean),
+    1:     Column("indnullsnotdistinct", Boolean, info={"server_version": (15,)}),
+    1:     Column("indisprimary", Boolean),
+    1:     Column("indisexclusion", Boolean, info={"server_version": (9, 1)}),
+    1:     Column("indimmediate", Boolean),
+    1:     Column("indisclustered", Boolean),
+    1:     Column("indisvalid", Boolean),
+    1:     Column("indcheckxmin", Boolean),
+    1:     Column("indisready", Boolean),
+    1:     Column("indislive", Boolean, info={"server_version": (9, 3)}),  # 9.3
+    1:     Column("indisreplident", Boolean),
+    1:     Column("indkey", INT2VECTOR),
+    1:     Column("indcollation", OIDVECTOR, info={"server_version": (9, 1)}),  # 9.1
+    1:     Column("indclass", OIDVECTOR),
+    1:     Column("indoption", INT2VECTOR),
+    1:     Column("indexprs", PG_NODE_TREE),
+    1:     Column("indpred", PG_NODE_TREE),
+    1:     schema="pg_catalog",
+       )
+       
+    2: pg_attribute = Table(
+    1:     "pg_attribute",
+    1:     pg_catalog_meta,
+    1:     Column("attrelid", OID),
+    1:     Column("attname", NAME),
+    1:     Column("atttypid", OID),
+    1:     Column("attstattarget", Integer),
+    1:     Column("attlen", SmallInteger),
+    1:     Column("attnum", SmallInteger),
+    1:     Column("attndims", Integer),
+    1:     Column("attcacheoff", Integer),
+    1:     Column("atttypmod", Integer),
+    1:     Column("attbyval", Boolean),
+    1:     Column("attstorage", CHAR),
+    1:     Column("attalign", CHAR),
+    1:     Column("attnotnull", Boolean),
+    1:     Column("atthasdef", Boolean),
+    1:     Column("atthasmissing", Boolean, info={"server_version": (11,)}),
+    1:     Column("attidentity", CHAR, info={"server_version": (10,)}),
+    1:     Column("attgenerated", CHAR, info={"server_version": (12,)}),
+    1:     Column("attisdropped", Boolean),
+    1:     Column("attislocal", Boolean),
+    1:     Column("attinhcount", Integer),
+    1:     Column("attcollation", OID, info={"server_version": (9, 1)}),
+    1:     schema="pg_catalog",
+       )
+       
+    2: pg_constraint = Table(
+    1:     "pg_constraint",
+    1:     pg_catalog_meta,
+    1:     Column("oid", OID),  # 9.3
+    1:     Column("conname", NAME),
+    1:     Column("connamespace", OID),
+    1:     Column("contype", CHAR),
+    1:     Column("condeferrable", Boolean),
+    1:     Column("condeferred", Boolean),
+    1:     Column("convalidated", Boolean, info={"server_version": (9, 1)}),
+    1:     Column("conrelid", OID),
+    1:     Column("contypid", OID),
+    1:     Column("conindid", OID),
+    1:     Column("conparentid", OID, info={"server_version": (11,)}),
+    1:     Column("confrelid", OID),
+    1:     Column("confupdtype", CHAR),
+    1:     Column("confdeltype", CHAR),
+    1:     Column("confmatchtype", CHAR),
+    1:     Column("conislocal", Boolean),
+    1:     Column("coninhcount", Integer),
+    1:     Column("connoinherit", Boolean, info={"server_version": (9, 2)}),
+    1:     Column("conkey", ARRAY(SmallInteger)),
+    1:     Column("confkey", ARRAY(SmallInteger)),
+    1:     schema="pg_catalog",
+       )
+       
+    2: pg_sequence = Table(
+    1:     "pg_sequence",
+    1:     pg_catalog_meta,
+    1:     Column("seqrelid", OID),
+    1:     Column("seqtypid", OID),
+    1:     Column("seqstart", BigInteger),
+    1:     Column("seqincrement", BigInteger),
+    1:     Column("seqmax", BigInteger),
+    1:     Column("seqmin", BigInteger),
+    1:     Column("seqcache", BigInteger),
+    1:     Column("seqcycle", Boolean),
+    1:     schema="pg_catalog",
+    1:     info={"server_version": (10,)},
+       )
+       
+    2: pg_attrdef = Table(
+    1:     "pg_attrdef",
+    1:     pg_catalog_meta,
+    1:     Column("oid", OID, info={"server_version": (9, 3)}),
+    1:     Column("adrelid", OID),
+    1:     Column("adnum", SmallInteger),
+    1:     Column("adbin", PG_NODE_TREE),
+    1:     schema="pg_catalog",
+       )
+       
+    2: pg_description = Table(
+    1:     "pg_description",
+    1:     pg_catalog_meta,
+    1:     Column("objoid", OID),
+    1:     Column("classoid", OID),
+    1:     Column("objsubid", Integer),
+    1:     Column("description", Text(collation="C")),
+    1:     schema="pg_catalog",
+       )
+       
+    2: pg_enum = Table(
+    1:     "pg_enum",
+    1:     pg_catalog_meta,
+    1:     Column("oid", OID, info={"server_version": (9, 3)}),
+    1:     Column("enumtypid", OID),
+    1:     Column("enumsortorder", Float(), info={"server_version": (9, 1)}),
+    1:     Column("enumlabel", NAME),
+    1:     schema="pg_catalog",
+       )
+       
+    2: pg_am = Table(
+    1:     "pg_am",
+    1:     pg_catalog_meta,
+    1:     Column("oid", OID, info={"server_version": (9, 3)}),
+    1:     Column("amname", NAME),
+    1:     Column("amhandler", REGPROC, info={"server_version": (9, 6)}),
+    1:     Column("amtype", CHAR, info={"server_version": (9, 6)}),
+    1:     schema="pg_catalog",
+       )

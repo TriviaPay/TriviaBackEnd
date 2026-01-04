@@ -4,10 +4,12 @@ Generic service for trivia mode operations.
 import os
 import json
 import logging
+import random
 from typing import Optional, Dict, Any, List
 from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, func
+from sqlalchemy.exc import IntegrityError
 import pytz
 from models import (
     TriviaModeConfig, TriviaQuestionsFreeMode, TriviaQuestionsFreeModeDaily,
@@ -15,6 +17,34 @@ from models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _select_random_rows(base_query, count: int, order_col):
+    """
+    Select a random subset using indexed ordering and offsets.
+    Avoids ORDER BY random() full scans.
+    """
+    total = base_query.count()
+    if total <= 0:
+        return []
+    if total <= count:
+        return base_query.order_by(order_col).all()
+
+    offsets = random.sample(range(total), count)
+    results = []
+    seen_ids = set()
+    for offset in offsets:
+        row = base_query.order_by(order_col).offset(offset).limit(1).first()
+        if row and row.id not in seen_ids:
+            results.append(row)
+            seen_ids.add(row.id)
+    while len(results) < count:
+        offset = random.randrange(total)
+        row = base_query.order_by(order_col).offset(offset).limit(1).first()
+        if row and row.id not in seen_ids:
+            results.append(row)
+            seen_ids.add(row.id)
+    return results
 
 
 def get_mode_config(db: Session, mode_id: str) -> Optional[TriviaModeConfig]:
@@ -184,24 +214,32 @@ def get_free_mode_questions(db: Session, user: User, target_date: date) -> List[
             logger.info(f"Mode config found, questions_count: {questions_count}")
             
             # Get available questions (prefer unused)
-            unused_questions = db.query(TriviaQuestionsFreeMode).filter(
+            unused_count = db.query(func.count(TriviaQuestionsFreeMode.id)).filter(
                 TriviaQuestionsFreeMode.is_used == False
-            ).all()
+            ).scalar() or 0
             
-            logger.info(f"Found {len(unused_questions)} unused questions")
+            logger.info(f"Found {unused_count} unused questions")
             
-            # If not enough unused questions, get any questions
-            import random
-            if len(unused_questions) < questions_count:
-                all_questions = db.query(TriviaQuestionsFreeMode).all()
-                logger.info(f"Not enough unused questions, using all {len(all_questions)} questions")
-                if len(all_questions) >= questions_count:
-                    available_questions = random.sample(all_questions, questions_count)
+            # If not enough unused questions, fall back to any questions
+            if unused_count < questions_count:
+                all_count = db.query(func.count(TriviaQuestionsFreeMode.id)).scalar() or 0
+                logger.info(f"Not enough unused questions, using all {all_count} questions")
+                if all_count == 0:
+                    available_questions = []
                 else:
-                    available_questions = all_questions
-                    logger.warning(f"Only {len(all_questions)} questions available, need {questions_count}")
+                    available_questions = _select_random_rows(
+                        db.query(TriviaQuestionsFreeMode),
+                        questions_count,
+                        TriviaQuestionsFreeMode.id
+                    )
             else:
-                available_questions = random.sample(unused_questions, questions_count)
+                available_questions = _select_random_rows(
+                    db.query(TriviaQuestionsFreeMode).filter(
+                        TriviaQuestionsFreeMode.is_used == False
+                    ),
+                    questions_count,
+                    TriviaQuestionsFreeMode.id
+                )
             
             if len(available_questions) == 0:
                 logger.error("No questions available to allocate")
@@ -221,8 +259,13 @@ def get_free_mode_questions(db: Session, user: User, target_date: date) -> List[
                 # Mark question as used
                 question.is_used = True
             
-            db.commit()
-            logger.info(f"Successfully allocated {len(available_questions)} questions")
+            try:
+                db.commit()
+                logger.info(f"Successfully allocated {len(available_questions)} questions")
+            except IntegrityError:
+                # Another process likely allocated concurrently; fall back to re-query
+                db.rollback()
+                logger.warning("Auto-allocation hit a race; reloading daily pool")
             
             # Re-query the daily pool with eager loading
             daily_pool = db.query(TriviaQuestionsFreeModeDaily).options(
@@ -250,16 +293,10 @@ def get_free_mode_questions(db: Session, user: User, target_date: date) -> List[
     questions = []
     for dq in daily_pool:
         # Eagerly load the question relationship
-        if not hasattr(dq, 'question') or dq.question is None:
-            # If relationship not loaded, query directly
-            question = db.query(TriviaQuestionsFreeMode).filter(
-                TriviaQuestionsFreeMode.id == dq.question_id
-            ).first()
-            if not question:
-                logger.warning(f"Question {dq.question_id} not found for daily pool entry {dq.id}")
-                continue
-        else:
-            question = dq.question
+        question = dq.question
+        if question is None:
+            logger.warning(f"Question {dq.question_id} not found for daily pool entry {dq.id}")
+            continue
         
         user_attempt = user_attempts.get((target_date, dq.question_order))
         
@@ -450,4 +487,3 @@ def check_question_duplicate(db: Session, question_text: str, mode_id: str) -> b
     
     question_hash = generate_question_hash(question_text)
     return check_duplicate_in_mode(db, question_hash, mode_id)
-

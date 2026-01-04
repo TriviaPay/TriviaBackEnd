@@ -1,0 +1,92 @@
+    1: from descope.auth import Auth
+    1: from descope.management.access_key import AccessKey  # noqa: F401
+    1: from descope.management.audit import Audit  # noqa: F401
+    1: from descope.management.authz import Authz  # noqa: F401
+    1: from descope.management.fga import FGA  # noqa: F401
+    1: from descope.management.flow import Flow  # noqa: F401
+    1: from descope.management.group import Group  # noqa: F401
+    1: from descope.management.jwt import JWT  # noqa: F401
+    1: from descope.management.permission import Permission  # noqa: F401
+    1: from descope.management.project import Project  # noqa: F401
+    1: from descope.management.role import Role  # noqa: F401
+    1: from descope.management.sso_application import SSOApplication  # noqa: F401
+    1: from descope.management.sso_settings import SSOSettings  # noqa: F401
+    1: from descope.management.tenant import Tenant  # noqa: F401
+    1: from descope.management.user import User  # noqa: F401
+       
+       
+    2: class MGMT:
+    1:     _auth: Auth
+       
+    1:     def __init__(self, auth: Auth):
+    1:         self._auth = auth
+    1:         self._tenant = Tenant(auth)
+    1:         self._sso_application = SSOApplication(auth)
+    1:         self._user = User(auth)
+    1:         self._access_key = AccessKey(auth)
+    1:         self._sso = SSOSettings(auth)
+    1:         self._jwt = JWT(auth)
+    1:         self._permission = Permission(auth)
+    1:         self._role = Role(auth)
+    1:         self._group = Group(auth)
+    1:         self._flow = Flow(auth)
+    1:         self._audit = Audit(auth)
+    1:         self._authz = Authz(auth)
+    1:         self._fga = FGA(auth)
+    1:         self._project = Project(auth)
+       
+    1:     @property
+    1:     def tenant(self):
+>>>>>>         return self._tenant
+       
+    1:     @property
+    1:     def sso_application(self):
+>>>>>>         return self._sso_application
+       
+    1:     @property
+    1:     def user(self):
+>>>>>>         return self._user
+       
+    1:     @property
+    1:     def access_key(self):
+>>>>>>         return self._access_key
+       
+    1:     @property
+    1:     def sso(self):
+>>>>>>         return self._sso
+       
+    1:     @property
+    1:     def jwt(self):
+>>>>>>         return self._jwt
+       
+    1:     @property
+    1:     def permission(self):
+>>>>>>         return self._permission
+       
+    1:     @property
+    1:     def role(self):
+>>>>>>         return self._role
+       
+    1:     @property
+    1:     def group(self):
+>>>>>>         return self._group
+       
+    1:     @property
+    1:     def flow(self):
+>>>>>>         return self._flow
+       
+    1:     @property
+    1:     def audit(self):
+>>>>>>         return self._audit
+       
+    1:     @property
+    1:     def authz(self):
+>>>>>>         return self._authz
+       
+    1:     @property
+    1:     def fga(self):
+>>>>>>         return self._fga
+       
+    1:     @property
+    1:     def project(self):
+>>>>>>         return self._project

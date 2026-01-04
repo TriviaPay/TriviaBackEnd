@@ -8,8 +8,6 @@ from auth import validate_descope_jwt
 from models import User
 import os
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 def get_current_user(request: Request, db=Depends(get_db)):

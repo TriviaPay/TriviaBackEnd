@@ -1,0 +1,149 @@
+    1: import os
+    1: import re
+    1: import ssl
+    1: from sqlalchemy import create_engine, MetaData
+    1: from sqlalchemy.ext.declarative import declarative_base
+    1: from sqlalchemy.orm import sessionmaker
+    1: from contextlib import contextmanager
+    1: import warnings
+    1: import sys
+    1: import io
+    1: import urllib.parse
+       
+       # Suppress ALL warnings from dotenv BEFORE importing it
+    1: warnings.filterwarnings("ignore", category=UserWarning)
+    1: warnings.filterwarnings("ignore", message=".*dotenv.*")
+    1: warnings.filterwarnings("ignore", message=".*Python-dotenv.*")
+       
+       # Create a filter for stderr that removes dotenv warnings
+    2: class FilteredStderr:
+    1:     def __init__(self, original_stderr):
+    1:         self.original_stderr = original_stderr
+               
+    1:     def write(self, text):
+               # Filter out dotenv-related warnings
+   11:         if text and ('dotenv' not in text.lower() and 'Python-dotenv' not in text):
+>>>>>>             self.original_stderr.write(text)
+                   
+    1:     def flush(self):
+   11:         self.original_stderr.flush()
+               
+    1:     def __getattr__(self, name):
+>>>>>>         return getattr(self.original_stderr, name)
+       
+       # Redirect stderr to filter out dotenv warnings (only if not already filtered)
+    1: if not isinstance(sys.stderr, FilteredStderr):
+    1:     _filtered_stderr = FilteredStderr(sys.stderr)
+    1:     sys.stderr = _filtered_stderr
+       
+    1: from dotenv import load_dotenv
+       
+       # Load environment variables
+    1: load_dotenv(override=False)
+       
+       # Database connection string
+    1: DATABASE_URL = os.getenv("DATABASE_URL")
+       
+       # Check if we're in a testing environment
+    1: TESTING = os.getenv("TESTING", "false").lower() == "true"
+       
+    1: if not DATABASE_URL:
+>>>>>>     if TESTING:
+               # In testing environment, use SQLite in-memory database as fallback
+>>>>>>         DATABASE_URL = "sqlite:///:memory:"
+>>>>>>         print("⚠️  Using in-memory SQLite database for testing")
+           else:
+>>>>>>         raise ValueError("DATABASE_URL environment variable is not set")
+       
+       # Only apply PostgreSQL-specific modifications if we're actually using PostgreSQL
+    1: if DATABASE_URL and not DATABASE_URL.startswith("sqlite"):
+           # If using Heroku/Vercel, convert the postgres:// URL to postgresql://
+    1:     if DATABASE_URL.startswith("postgres://"):
+>>>>>>         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+       
+           # Parse the URL to extract any query parameters
+    1:     parsed = urllib.parse.urlparse(DATABASE_URL)
+    1:     query_params = urllib.parse.parse_qs(parsed.query)
+           
+           # Get SSL mode from URL or default based on environment
+    1:     ssl_mode = query_params.get('sslmode', [None])[0]
+           
+           # Modify URL to use pg8000 instead of psycopg2
+    1:     if "postgresql" in DATABASE_URL and "driver=" not in DATABASE_URL:
+               # Extract all parts of the connection URL
+    1:         pattern = r'postgresql://([^:]+):([^@]+)@([^:/]+):?(\d*)/?([^?]*)'
+    1:         match = re.match(pattern, DATABASE_URL)
+               
+    1:         if match:
+    1:             username, password, host, port, dbname = match.groups()
+                   
+                   # Default port if not specified
+    1:             if not port:
+    1:                 port = "5432"
+                       
+                   # Reconstruct URL with pg8000 driver (without URL-level SSL params)
+    1:             DATABASE_URL = f"postgresql+pg8000://{username}:{password}@{host}:{port}/{dbname}"
+       
+       # Create engine with appropriate settings
+    1: if DATABASE_URL.startswith("sqlite"):
+           # SQLite settings for testing
+>>>>>>     engine = create_engine(
+>>>>>>         DATABASE_URL,
+>>>>>>         echo=False,
+>>>>>>         connect_args={"check_same_thread": False}
+           )
+       else:
+           # PostgreSQL settings with SSL support for pg8000
+    1:     connect_args = {}
+           
+           # Handle SSL configuration based on environment and URL parameters
+    1:     if ssl_mode == 'disable' or TESTING:
+               # No SSL for testing or when explicitly disabled
+>>>>>>         pass
+    1:     elif ssl_mode == 'require' or not ssl_mode:
+               # Use SSL for production (default) or when explicitly required
+    1:         ssl_context = ssl.create_default_context()
+    1:         ssl_context.check_hostname = False
+    1:         ssl_context.verify_mode = ssl.CERT_NONE
+    1:         connect_args["ssl_context"] = ssl_context
+           
+    2:     engine = create_engine(
+    1:         DATABASE_URL,
+    1:         pool_size=10,
+    1:         max_overflow=20,
+    1:         pool_pre_ping=True,
+    1:         echo=False,
+    1:         pool_recycle=300,
+    1:         connect_args=connect_args
+           )
+       
+       # Create SessionLocal class
+    1: SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+       
+       # Create Base class
+    1: Base = declarative_base()
+       
+    1: def get_db():
+           """Dependency to get database session"""
+>>>>>>     db = SessionLocal()
+>>>>>>     try:
+>>>>>>         yield db
+           finally:
+>>>>>>         db.close()
+       
+    1: @contextmanager
+    1: def get_db_context():
+           """Context manager for database sessions"""
+>>>>>>     db = SessionLocal()
+>>>>>>     try:
+>>>>>>         yield db
+           finally:
+>>>>>>         db.close()
+       
+    1: def create_tables():
+           """Create all tables"""
+>>>>>>     Base.metadata.create_all(bind=engine)
+       
+    1: def drop_tables():
+           """Drop all tables"""
+>>>>>>     Base.metadata.drop_all(bind=engine)

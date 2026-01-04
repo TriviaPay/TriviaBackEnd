@@ -1,0 +1,38 @@
+    1: import typing
+       
+    1: from .._models import Request, Response
+    1: from .base import AsyncBaseTransport, BaseTransport
+       
+    1: SyncHandler = typing.Callable[[Request], Response]
+    1: AsyncHandler = typing.Callable[[Request], typing.Coroutine[None, None, Response]]
+       
+       
+    2: class MockTransport(AsyncBaseTransport, BaseTransport):
+    1:     def __init__(self, handler: typing.Union[SyncHandler, AsyncHandler]) -> None:
+>>>>>>         self.handler = handler
+       
+    1:     def handle_request(
+               self,
+    1:         request: Request,
+    1:     ) -> Response:
+>>>>>>         request.read()
+>>>>>>         response = self.handler(request)
+>>>>>>         if not isinstance(response, Response):  # pragma: no cover
+>>>>>>             raise TypeError("Cannot use an async handler in a sync Client")
+>>>>>>         return response
+       
+    1:     async def handle_async_request(
+               self,
+    1:         request: Request,
+    1:     ) -> Response:
+>>>>>>         await request.aread()
+>>>>>>         response = self.handler(request)
+       
+               # Allow handler to *optionally* be an `async` function.
+               # If it is, then the `response` variable need to be awaited to actually
+               # return the result.
+       
+>>>>>>         if not isinstance(response, Response):
+>>>>>>             response = await response
+       
+>>>>>>         return response

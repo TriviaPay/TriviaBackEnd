@@ -1,0 +1,187 @@
+       # dialects/postgresql/_psycopg_common.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       # mypy: ignore-errors
+    1: from __future__ import annotations
+       
+    1: import decimal
+       
+    1: from .array import ARRAY as PGARRAY
+    1: from .base import _DECIMAL_TYPES
+    1: from .base import _FLOAT_TYPES
+    1: from .base import _INT_TYPES
+    1: from .base import PGDialect
+    1: from .base import PGExecutionContext
+    1: from .hstore import HSTORE
+    1: from .pg_catalog import _SpaceVector
+    1: from .pg_catalog import INT2VECTOR
+    1: from .pg_catalog import OIDVECTOR
+    1: from ... import exc
+    1: from ... import types as sqltypes
+    1: from ... import util
+    1: from ...engine import processors
+       
+    1: _server_side_id = util.counter()
+       
+       
+    2: class _PsycopgNumeric(sqltypes.Numeric):
+    1:     def bind_processor(self, dialect):
+    2:         return None
+       
+    1:     def result_processor(self, dialect, coltype):
+    2:         if self.asdecimal:
+>>>>>>             if coltype in _FLOAT_TYPES:
+>>>>>>                 return processors.to_decimal_processor_factory(
+>>>>>>                     decimal.Decimal, self._effective_decimal_return_scale
+                       )
+>>>>>>             elif coltype in _DECIMAL_TYPES or coltype in _INT_TYPES:
+                       # psycopg returns Decimal natively for 1700
+>>>>>>                 return None
+                   else:
+>>>>>>                 raise exc.InvalidRequestError(
+>>>>>>                     "Unknown PG numeric type: %d" % coltype
+                       )
+               else:
+    2:             if coltype in _FLOAT_TYPES:
+                       # psycopg returns float natively for 701
+    2:                 return None
+>>>>>>             elif coltype in _DECIMAL_TYPES or coltype in _INT_TYPES:
+>>>>>>                 return processors.to_float
+                   else:
+>>>>>>                 raise exc.InvalidRequestError(
+>>>>>>                     "Unknown PG numeric type: %d" % coltype
+                       )
+       
+       
+    2: class _PsycopgFloat(_PsycopgNumeric):
+    1:     __visit_name__ = "float"
+       
+       
+    2: class _PsycopgHStore(HSTORE):
+    1:     def bind_processor(self, dialect):
+>>>>>>         if dialect._has_native_hstore:
+>>>>>>             return None
+               else:
+>>>>>>             return super().bind_processor(dialect)
+       
+    1:     def result_processor(self, dialect, coltype):
+>>>>>>         if dialect._has_native_hstore:
+>>>>>>             return None
+               else:
+>>>>>>             return super().result_processor(dialect, coltype)
+       
+       
+    2: class _PsycopgARRAY(PGARRAY):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PsycopgINT2VECTOR(_SpaceVector, INT2VECTOR):
+    1:     pass
+       
+       
+    2: class _PsycopgOIDVECTOR(_SpaceVector, OIDVECTOR):
+    1:     pass
+       
+       
+    2: class _PGExecutionContext_common_psycopg(PGExecutionContext):
+    1:     def create_server_side_cursor(self):
+               # use server-side cursors:
+               # psycopg
+               # https://www.psycopg.org/psycopg3/docs/advanced/cursors.html#server-side-cursors
+               # psycopg2
+               # https://www.psycopg.org/docs/usage.html#server-side-cursors
+>>>>>>         ident = "c_%s_%s" % (hex(id(self))[2:], hex(_server_side_id())[2:])
+>>>>>>         return self._dbapi_connection.cursor(ident)
+       
+       
+    2: class _PGDialect_common_psycopg(PGDialect):
+    1:     supports_statement_cache = True
+    1:     supports_server_side_cursors = True
+       
+    1:     default_paramstyle = "pyformat"
+       
+    1:     _has_native_hstore = True
+       
+    2:     colspecs = util.update_copy(
+    1:         PGDialect.colspecs,
+    1:         {
+    1:             sqltypes.Numeric: _PsycopgNumeric,
+    1:             sqltypes.Float: _PsycopgFloat,
+    1:             HSTORE: _PsycopgHStore,
+    1:             sqltypes.ARRAY: _PsycopgARRAY,
+    1:             INT2VECTOR: _PsycopgINT2VECTOR,
+    1:             OIDVECTOR: _PsycopgOIDVECTOR,
+               },
+           )
+       
+    1:     def __init__(
+               self,
+               client_encoding=None,
+               use_native_hstore=True,
+               **kwargs,
+           ):
+    1:         PGDialect.__init__(self, **kwargs)
+    1:         if not use_native_hstore:
+>>>>>>             self._has_native_hstore = False
+    1:         self.use_native_hstore = use_native_hstore
+    1:         self.client_encoding = client_encoding
+       
+    1:     def create_connect_args(self, url):
+    1:         opts = url.translate_connect_args(username="user", database="dbname")
+       
+    1:         multihosts, multiports = self._split_multihost_from_url(url)
+       
+    1:         if opts or url.query:
+    1:             if not opts:
+>>>>>>                 opts = {}
+    1:             if "port" in opts:
+>>>>>>                 opts["port"] = int(opts["port"])
+    1:             opts.update(url.query)
+       
+    1:             if multihosts:
+>>>>>>                 opts["host"] = ",".join(multihosts)
+>>>>>>                 comma_ports = ",".join(str(p) if p else "" for p in multiports)
+>>>>>>                 if comma_ports:
+>>>>>>                     opts["port"] = comma_ports
+    1:             return ([], opts)
+               else:
+                   # no connection arguments whatsoever; psycopg2.connect()
+                   # requires that "dsn" be present as a blank string.
+>>>>>>             return ([""], opts)
+       
+    1:     def get_isolation_level_values(self, dbapi_connection):
+>>>>>>         return (
+                   "AUTOCOMMIT",
+                   "READ COMMITTED",
+                   "READ UNCOMMITTED",
+                   "REPEATABLE READ",
+                   "SERIALIZABLE",
+               )
+       
+    1:     def set_deferrable(self, connection, value):
+>>>>>>         connection.deferrable = value
+       
+    1:     def get_deferrable(self, connection):
+>>>>>>         return connection.deferrable
+       
+    1:     def _do_autocommit(self, connection, value):
+>>>>>>         connection.autocommit = value
+       
+    1:     def do_ping(self, dbapi_connection):
+    4:         cursor = None
+    4:         before_autocommit = dbapi_connection.autocommit
+       
+    4:         if not before_autocommit:
+    4:             dbapi_connection.autocommit = True
+    4:         cursor = dbapi_connection.cursor()
+    4:         try:
+    4:             cursor.execute(self._dialect_specific_select_one)
+               finally:
+    4:             cursor.close()
+    4:             if not before_autocommit and not dbapi_connection.closed:
+    4:                 dbapi_connection.autocommit = before_autocommit
+       
+    4:         return True

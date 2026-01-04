@@ -1,0 +1,24 @@
+       # This file is dual licensed under the terms of the Apache License, Version
+       # 2.0, and the BSD License. See the LICENSE file in the root of this repository
+       # for complete details.
+       
+    1: from __future__ import annotations
+       
+    1: from cryptography.hazmat.bindings._rust import asn1
+    1: from cryptography.hazmat.primitives import hashes
+       
+    1: decode_dss_signature = asn1.decode_dss_signature
+    1: encode_dss_signature = asn1.encode_dss_signature
+       
+       
+    2: class Prehashed:
+    1:     def __init__(self, algorithm: hashes.HashAlgorithm):
+>>>>>>         if not isinstance(algorithm, hashes.HashAlgorithm):
+>>>>>>             raise TypeError("Expected instance of HashAlgorithm.")
+       
+>>>>>>         self._algorithm = algorithm
+>>>>>>         self._digest_size = algorithm.digest_size
+       
+    1:     @property
+    1:     def digest_size(self) -> int:
+>>>>>>         return self._digest_size

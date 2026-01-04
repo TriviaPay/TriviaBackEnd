@@ -1,0 +1,164 @@
+    1: from __future__ import annotations
+       
+    1: import dataclasses
+    1: from inspect import Parameter, Signature, signature
+    1: from typing import TYPE_CHECKING, Any, Callable
+       
+    1: from pydantic_core import PydanticUndefined
+       
+    1: from ._config import ConfigWrapper
+    1: from ._utils import is_valid_identifier
+       
+    1: if TYPE_CHECKING:
+>>>>>>     from ..fields import FieldInfo
+       
+       
+    1: def _field_name_for_signature(field_name: str, field_info: FieldInfo) -> str:
+           """Extract the correct name to use for the field when generating a signature.
+       
+           Assuming the field has a valid alias, this will return the alias. Otherwise, it will return the field name.
+           First priority is given to the validation_alias, then the alias, then the field name.
+       
+           Args:
+               field_name: The name of the field
+               field_info: The corresponding FieldInfo object.
+       
+           Returns:
+               The correct name to use when generating a signature.
+           """
+       
+  223:     def _alias_if_valid(x: Any) -> str | None:
+               """Return the alias if it is a valid alias and identifier, else None."""
+  439:         return x if isinstance(x, str) and is_valid_identifier(x) else None
+       
+  223:     return _alias_if_valid(field_info.alias) or _alias_if_valid(field_info.validation_alias) or field_name
+       
+       
+    1: def _process_param_defaults(param: Parameter) -> Parameter:
+           """Modify the signature for a parameter in a dataclass where the default value is a FieldInfo instance.
+       
+           Args:
+               param (Parameter): The parameter
+       
+           Returns:
+               Parameter: The custom processed parameter
+           """
+>>>>>>     from ..fields import FieldInfo
+       
+>>>>>>     param_default = param.default
+>>>>>>     if isinstance(param_default, FieldInfo):
+>>>>>>         annotation = param.annotation
+               # Replace the annotation if appropriate
+               # inspect does "clever" things to show annotations as strings because we have
+               # `from __future__ import annotations` in main, we don't want that
+>>>>>>         if annotation == 'Any':
+>>>>>>             annotation = Any
+       
+               # Replace the field default
+>>>>>>         default = param_default.default
+>>>>>>         if default is PydanticUndefined:
+>>>>>>             if param_default.default_factory is PydanticUndefined:
+>>>>>>                 default = Signature.empty
+                   else:
+                       # this is used by dataclasses to indicate a factory exists:
+>>>>>>                 default = dataclasses._HAS_DEFAULT_FACTORY  # type: ignore
+>>>>>>         return param.replace(
+>>>>>>             annotation=annotation, name=_field_name_for_signature(param.name, param_default), default=default
+               )
+>>>>>>     return param
+       
+       
+    1: def _generate_signature_parameters(  # noqa: C901 (ignore complexity, could use a refactor)
+           init: Callable[..., None],
+           fields: dict[str, FieldInfo],
+           config_wrapper: ConfigWrapper,
+       ) -> dict[str, Parameter]:
+           """Generate a mapping of parameter names to Parameter objects for a pydantic BaseModel or dataclass."""
+   44:     from itertools import islice
+       
+   44:     present_params = signature(init).parameters.values()
+   44:     merged_params: dict[str, Parameter] = {}
+   44:     var_kw = None
+   44:     use_var_kw = False
+       
+   88:     for param in islice(present_params, 1, None):  # skip self arg
+               # inspect does "clever" things to show annotations as strings because we have
+               # `from __future__ import annotations` in main, we don't want that
+   44:         if fields.get(param.name):
+                   # exclude params with init=False
+>>>>>>             if getattr(fields[param.name], 'init', True) is False:
+>>>>>>                 continue
+>>>>>>             param = param.replace(name=_field_name_for_signature(param.name, fields[param.name]))
+   44:         if param.annotation == 'Any':
+   44:             param = param.replace(annotation=Any)
+   44:         if param.kind is param.VAR_KEYWORD:
+   44:             var_kw = param
+   44:             continue
+>>>>>>         merged_params[param.name] = param
+       
+   44:     if var_kw:  # if custom init has no var_kw, fields which are not declared in it cannot be passed through
+   44:         allow_names = config_wrapper.populate_by_name
+  267:         for field_name, field in fields.items():
+                   # when alias is a str it should be used for signature generation
+  223:             param_name = _field_name_for_signature(field_name, field)
+       
+  223:             if field_name in merged_params or param_name in merged_params:
+>>>>>>                 continue
+       
+  223:             if not is_valid_identifier(param_name):
+>>>>>>                 if allow_names:
+>>>>>>                     param_name = field_name
+                       else:
+>>>>>>                     use_var_kw = True
+>>>>>>                     continue
+       
+  223:             kwargs = {} if field.is_required() else {'default': field.get_default(call_default_factory=False)}
+  892:             merged_params[param_name] = Parameter(
+  669:                 param_name, Parameter.KEYWORD_ONLY, annotation=field.rebuild_annotation(), **kwargs
+                   )
+       
+   44:     if config_wrapper.extra == 'allow':
+   30:         use_var_kw = True
+       
+   44:     if var_kw and use_var_kw:
+               # Make sure the parameter for extra kwargs
+               # does not have the same name as a field
+   30:         default_model_signature = [
+   30:             ('self', Parameter.POSITIONAL_ONLY),
+   30:             ('data', Parameter.VAR_KEYWORD),
+               ]
+  120:         if [(p.name, p.kind) for p in present_params] == default_model_signature:
+                   # if this is the standard model signature, use extra_data as the extra args name
+   30:             var_kw_name = 'extra_data'
+               else:
+                   # else start from var_kw
+>>>>>>             var_kw_name = var_kw.name
+       
+               # generate a name that's definitely unique
+   30:         while var_kw_name in fields:
+>>>>>>             var_kw_name += '_'
+   30:         merged_params[var_kw_name] = var_kw.replace(name=var_kw_name)
+       
+   44:     return merged_params
+       
+       
+    1: def generate_pydantic_signature(
+           init: Callable[..., None], fields: dict[str, FieldInfo], config_wrapper: ConfigWrapper, is_dataclass: bool = False
+       ) -> Signature:
+           """Generate signature for a pydantic BaseModel or dataclass.
+       
+           Args:
+               init: The class init.
+               fields: The model fields.
+               config_wrapper: The config wrapper instance.
+               is_dataclass: Whether the model is a dataclass.
+       
+           Returns:
+               The dataclass/BaseModel subclass signature.
+           """
+   44:     merged_params = _generate_signature_parameters(init, fields, config_wrapper)
+       
+   44:     if is_dataclass:
+>>>>>>         merged_params = {k: _process_param_defaults(v) for k, v in merged_params.items()}
+       
+   44:     return Signature(parameters=list(merged_params.values()), return_annotation=None)

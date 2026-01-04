@@ -1,17 +1,49 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy import func, desc
 from datetime import datetime
+from collections import OrderedDict, deque
+import threading
+import time
 
 from db import get_db
 from models import User, OneSignalPlayer
 from routers.dependencies import get_current_user
-from config import ONESIGNAL_ENABLED
+from config import ONESIGNAL_ENABLED, ONESIGNAL_MAX_PLAYERS_PER_USER
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/onesignal", tags=["OneSignal"])
+
+_rate_limit_store = OrderedDict()
+_rate_limit_lock = threading.Lock()
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_MAX_REQUESTS = 20
+RATE_LIMIT_MAX_KEYS = 10000
+
+
+def _check_rate_limit(identifier: str) -> bool:
+    now = time.time()
+    with _rate_limit_lock:
+        bucket = _rate_limit_store.get(identifier)
+        if bucket is None:
+            bucket = deque()
+            _rate_limit_store[identifier] = bucket
+        else:
+            _rate_limit_store.move_to_end(identifier)
+
+        while bucket and now - bucket[0] >= RATE_LIMIT_WINDOW_SECONDS:
+            bucket.popleft()
+        if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+            return False
+
+        bucket.append(now)
+        if len(_rate_limit_store) > RATE_LIMIT_MAX_KEYS:
+            _rate_limit_store.popitem(last=False)
+
+    return True
 
 
 class RegisterPlayerRequest(BaseModel):
@@ -20,8 +52,9 @@ class RegisterPlayerRequest(BaseModel):
 
 
 @router.post("/register")
-async def register_player(
+def register_player(
     request: RegisterPlayerRequest,
+    req: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -39,19 +72,30 @@ async def register_player(
     ).first()
     
     if existing:
-        # Update user if different, and update last_active
+        # Prevent reassignment to a different user
         if existing.user_id != current_user.account_id:
-            existing.user_id = current_user.account_id
+            raise HTTPException(status_code=409, detail="Player ID is already registered to another user")
         existing.last_active = datetime.utcnow()
         existing.is_valid = True  # Re-validate if it was marked invalid
         existing.platform = request.platform
-        db.commit()
-        logger.info(f"Updated OneSignal player {request.player_id} for user {current_user.account_id}")
-        return {
-            "message": "Player updated",
-            "player_id": request.player_id,
-            "user_id": current_user.account_id
-        }
+        try:
+            db.commit()
+            logger.info(f"Updated OneSignal player {request.player_id} for user {current_user.account_id}")
+            return {
+                "message": "Player updated",
+                "player_id": request.player_id,
+                "user_id": current_user.account_id
+            }
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to update OneSignal player {request.player_id}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to update player")
+
+    player_count = db.query(func.count(OneSignalPlayer.id)).filter(
+        OneSignalPlayer.user_id == current_user.account_id
+    ).scalar() or 0
+    if player_count >= ONESIGNAL_MAX_PLAYERS_PER_USER:
+        raise HTTPException(status_code=409, detail="Player limit reached for this user")
     
     # Create new player
     new_player = OneSignalPlayer(
@@ -62,7 +106,12 @@ async def register_player(
         last_active=datetime.utcnow()
     )
     db.add(new_player)
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to register OneSignal player {request.player_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to register player")
     
     logger.info(f"Registered OneSignal player {request.player_id} for user {current_user.account_id}")
     
@@ -74,7 +123,9 @@ async def register_player(
 
 
 @router.get("/players")
-async def list_players(
+def list_players(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -84,9 +135,18 @@ async def list_players(
     
     players = db.query(OneSignalPlayer).filter(
         OneSignalPlayer.user_id == current_user.account_id
-    ).all()
+    ).order_by(
+        desc(OneSignalPlayer.created_at)
+    ).offset(offset).limit(limit).all()
+    
+    total = db.query(func.count(OneSignalPlayer.id)).filter(
+        OneSignalPlayer.user_id == current_user.account_id
+    ).scalar() or 0
     
     return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
         "players": [
             {
                 "player_id": p.player_id,
@@ -99,4 +159,7 @@ async def list_players(
             for p in players
         ]
     }
-
+    ip = req.client.host if req.client else "unknown"
+    rl_key = f"osreg:{ip}:{current_user.account_id}"
+    if not _check_rate_limit(rl_key):
+        raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")

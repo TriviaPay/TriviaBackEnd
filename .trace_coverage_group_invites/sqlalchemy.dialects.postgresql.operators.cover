@@ -1,0 +1,129 @@
+       # dialects/postgresql/operators.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       # mypy: ignore-errors
+    1: from ...sql import operators
+       
+       
+    1: _getitem_precedence = operators._PRECEDENCE[operators.json_getitem_op]
+    1: _eq_precedence = operators._PRECEDENCE[operators.eq]
+       
+       # JSON + JSONB
+    2: ASTEXT = operators.custom_op(
+    1:     "->>",
+    1:     precedence=_getitem_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+       )
+       
+    2: JSONPATH_ASTEXT = operators.custom_op(
+    1:     "#>>",
+    1:     precedence=_getitem_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+       )
+       
+       # JSONB + HSTORE
+    2: HAS_KEY = operators.custom_op(
+    1:     "?",
+    1:     precedence=_eq_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+    1:     is_comparison=True,
+       )
+       
+    2: HAS_ALL = operators.custom_op(
+    1:     "?&",
+    1:     precedence=_eq_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+    1:     is_comparison=True,
+       )
+       
+    2: HAS_ANY = operators.custom_op(
+    1:     "?|",
+    1:     precedence=_eq_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+    1:     is_comparison=True,
+       )
+       
+       # JSONB
+    2: DELETE_PATH = operators.custom_op(
+    1:     "#-",
+    1:     precedence=_getitem_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+       )
+       
+    2: PATH_EXISTS = operators.custom_op(
+    1:     "@?",
+    1:     precedence=_eq_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+    1:     is_comparison=True,
+       )
+       
+    2: PATH_MATCH = operators.custom_op(
+    1:     "@@",
+    1:     precedence=_eq_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+    1:     is_comparison=True,
+       )
+       
+       # JSONB + ARRAY + HSTORE + RANGE
+    2: CONTAINS = operators.custom_op(
+    1:     "@>",
+    1:     precedence=_eq_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+    1:     is_comparison=True,
+       )
+       
+    2: CONTAINED_BY = operators.custom_op(
+    1:     "<@",
+    1:     precedence=_eq_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+    1:     is_comparison=True,
+       )
+       
+       # ARRAY + RANGE
+    2: OVERLAP = operators.custom_op(
+    1:     "&&",
+    1:     precedence=_eq_precedence,
+    1:     is_comparison=True,
+       )
+       
+       # RANGE
+    2: STRICTLY_LEFT_OF = operators.custom_op(
+    1:     "<<", precedence=_eq_precedence, is_comparison=True
+       )
+       
+    2: STRICTLY_RIGHT_OF = operators.custom_op(
+    1:     ">>", precedence=_eq_precedence, is_comparison=True
+       )
+       
+    2: NOT_EXTEND_RIGHT_OF = operators.custom_op(
+    1:     "&<", precedence=_eq_precedence, is_comparison=True
+       )
+       
+    2: NOT_EXTEND_LEFT_OF = operators.custom_op(
+    1:     "&>", precedence=_eq_precedence, is_comparison=True
+       )
+       
+    2: ADJACENT_TO = operators.custom_op(
+    1:     "-|-", precedence=_eq_precedence, is_comparison=True
+       )
+       
+       # HSTORE
+    2: GETITEM = operators.custom_op(
+    1:     "->",
+    1:     precedence=_getitem_precedence,
+    1:     natural_self_precedent=True,
+    1:     eager_grouping=True,
+       )

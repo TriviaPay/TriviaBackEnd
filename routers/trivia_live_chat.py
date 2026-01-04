@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, exc
 from datetime import datetime, timedelta, date
 from typing import Optional, Union
@@ -22,9 +22,9 @@ from config import (
 from utils.draw_calculations import get_next_draw_time
 from utils.pusher_client import publish_chat_message_sync
 from utils.message_sanitizer import sanitize_message
-from utils.chat_helpers import get_user_chat_profile_data
-from utils.onesignal_client import send_push_notification_async, should_send_push, get_user_player_ids, is_user_active
-from utils.chat_mute import is_chat_muted
+from utils.chat_helpers import get_user_chat_profile_data, get_user_chat_profile_data_bulk
+from utils.onesignal_client import send_push_notification_async, ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS
+from utils.chat_mute import get_muted_user_ids
 from utils.chat_redis import check_burst_limit, check_rate_limit, enqueue_chat_event
 from models import OneSignalPlayer
 import logging
@@ -153,6 +153,16 @@ def send_push_for_trivia_live_chat_sync(message_id: int, sender_id: int, sender_
             logger.debug("No OneSignal players found for trivia live chat push")
             return
         
+        # Precompute muted users and active users to avoid per-user queries
+        player_user_ids = {player.user_id for player in all_players}
+        muted_user_ids = get_muted_user_ids(list(player_user_ids), 'trivia_live', db)
+        threshold_time = datetime.utcnow() - timedelta(seconds=ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS)
+        active_user_ids = {
+            player.user_id
+            for player in all_players
+            if player.last_active and player.last_active >= threshold_time
+        }
+
         # Batch player IDs separately for active (in-app) and inactive (system) users
         BATCH_SIZE = 2000
         active_player_batches = []  # In-app notifications
@@ -164,13 +174,10 @@ def send_push_for_trivia_live_chat_sync(message_id: int, sender_id: int, sender_
             user_id = player.user_id
             
             # Check if user has muted trivia live chat
-            if is_chat_muted(user_id, 'trivia_live', db):
+            if user_id in muted_user_ids:
                 continue
             
-            # Check if user is active
-            is_active = is_user_active(user_id, db)
-            
-            if is_active:
+            if user_id in active_user_ids:
                 # Active user: in-app notification
                 active_current_batch.append(player.player_id)
                 if len(active_current_batch) >= BATCH_SIZE:
@@ -239,7 +246,7 @@ def send_push_for_trivia_live_chat_sync(message_id: int, sender_id: int, sender_
         total_inactive = sum(len(b) for b in inactive_player_batches)
         
         # Store notifications in database for all recipients
-        all_recipient_ids = [p.user_id for p in all_players if not is_chat_muted(p.user_id, 'trivia_live', db)]
+        all_recipient_ids = list(player_user_ids - muted_user_ids)
         if all_recipient_ids:
             create_notifications_batch(
                 db=db,
@@ -314,12 +321,14 @@ async def send_trivia_live_message(
         )
     if burst_allowed is None:
         burst_window_ago = datetime.utcnow() - timedelta(seconds=TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS)
-        recent_burst = db.query(TriviaLiveChatMessage).filter(
+        recent_burst = db.query(TriviaLiveChatMessage.id).filter(
             TriviaLiveChatMessage.user_id == current_user.account_id,
             TriviaLiveChatMessage.created_at >= burst_window_ago
-        ).count()
+        ).order_by(TriviaLiveChatMessage.created_at.desc()).limit(
+            TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST
+        ).all()
         
-        if recent_burst >= TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST:
+        if len(recent_burst) >= TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST:
             raise HTTPException(
                 status_code=429,
                 detail=f"Burst rate limit exceeded. Maximum {TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST} messages per {TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS} seconds."
@@ -339,13 +348,15 @@ async def send_trivia_live_message(
         )
     if minute_allowed is None:
         one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
-        recent_messages = db.query(TriviaLiveChatMessage).filter(
+        recent_messages = db.query(TriviaLiveChatMessage.id).filter(
             TriviaLiveChatMessage.user_id == current_user.account_id,
             TriviaLiveChatMessage.created_at >= one_minute_ago,
             TriviaLiveChatMessage.draw_date == draw_date
-        ).count()
+        ).order_by(TriviaLiveChatMessage.created_at.desc()).limit(
+            TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE
+        ).all()
         
-        if recent_messages >= TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE:
+        if len(recent_messages) >= TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE:
             raise HTTPException(
                 status_code=429,
                 detail=f"Rate limit exceeded. Maximum {TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE} messages per minute."
@@ -548,7 +559,9 @@ async def get_trivia_live_messages(
         }
     
     # Query messages by draw_date and created_at range
-    messages = db.query(TriviaLiveChatMessage).filter(
+    messages = db.query(TriviaLiveChatMessage).options(
+        joinedload(TriviaLiveChatMessage.user)
+    ).filter(
         TriviaLiveChatMessage.draw_date == draw_date,
         TriviaLiveChatMessage.created_at >= window_start_utc,
         TriviaLiveChatMessage.created_at <= window_end_utc
@@ -606,19 +619,51 @@ async def get_trivia_live_messages(
         )
     ).count()
     
+    # Batch load reply messages and user profile data
+    reply_message_ids = {msg.reply_to_message_id for msg in messages if msg.reply_to_message_id}
+    replied_messages = {}
+    if reply_message_ids:
+        replied_msgs = db.query(TriviaLiveChatMessage).options(
+            joinedload(TriviaLiveChatMessage.user)
+        ).filter(
+            TriviaLiveChatMessage.id.in_(list(reply_message_ids))
+        ).all()
+        replied_messages = {msg.id: msg for msg in replied_msgs}
+
+    users_by_id = {msg.user_id: msg.user for msg in messages if msg.user}
+    for replied_msg in replied_messages.values():
+        if replied_msg.user:
+            users_by_id.setdefault(replied_msg.user_id, replied_msg.user)
+
+    profile_cache = get_user_chat_profile_data_bulk(list(users_by_id.values()), db)
+
     # Get profile data for all message senders
     result_messages = []
     for msg in reversed(messages):
-        profile_data = get_user_chat_profile_data(msg.user, db)
+        profile_data = profile_cache.get(msg.user_id, {
+            "profile_pic_url": None,
+            "avatar_url": None,
+            "frame_url": None,
+            "badge": None,
+            "subscription_badges": [],
+            "level": 1,
+            "level_progress": "0/100"
+        })
         
         # Get reply information if this message is a reply
         reply_info = None
         if msg.reply_to_message_id:
-            replied_msg = db.query(TriviaLiveChatMessage).filter(
-                TriviaLiveChatMessage.id == msg.reply_to_message_id
-            ).first()
+            replied_msg = replied_messages.get(msg.reply_to_message_id)
             if replied_msg:
-                replied_sender_profile = get_user_chat_profile_data(replied_msg.user, db)
+                replied_sender_profile = profile_cache.get(replied_msg.user_id, {
+                    "profile_pic_url": None,
+                    "avatar_url": None,
+                    "frame_url": None,
+                    "badge": None,
+                    "subscription_badges": [],
+                    "level": 1,
+                    "level_progress": "0/100"
+                })
                 reply_info = {
                     "message_id": replied_msg.id,
                     "sender_id": replied_msg.user_id,

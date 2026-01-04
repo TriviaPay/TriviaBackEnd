@@ -1,0 +1,365 @@
+    1: from typing import List, Optional
+       
+       
+    2: class MgmtV1:
+           # tenant
+    1:     tenant_create_path = "/v1/mgmt/tenant/create"
+    1:     tenant_update_path = "/v1/mgmt/tenant/update"
+    1:     tenant_delete_path = "/v1/mgmt/tenant/delete"
+    1:     tenant_load_path = "/v1/mgmt/tenant"
+    1:     tenant_load_all_path = "/v1/mgmt/tenant/all"
+    1:     tenant_search_all_path = "/v1/mgmt/tenant/search"
+       
+           # sso application
+    1:     sso_application_oidc_create_path = "/v1/mgmt/sso/idp/app/oidc/create"
+    1:     sso_application_saml_create_path = "/v1/mgmt/sso/idp/app/saml/create"
+    1:     sso_application_oidc_update_path = "/v1/mgmt/sso/idp/app/oidc/update"
+    1:     sso_application_saml_update_path = "/v1/mgmt/sso/idp/app/saml/update"
+    1:     sso_application_delete_path = "/v1/mgmt/sso/idp/app/delete"
+    1:     sso_application_load_path = "/v1/mgmt/sso/idp/app/load"
+    1:     sso_application_load_all_path = "/v1/mgmt/sso/idp/apps/load"
+       
+           # user
+    1:     user_create_path = "/v1/mgmt/user/create"
+    1:     test_user_create_path = "/v1/mgmt/user/create/test"
+    1:     user_create_batch_path = "/v1/mgmt/user/create/batch"
+    1:     user_update_path = "/v1/mgmt/user/update"
+    1:     user_patch_path = "/v1/mgmt/user/patch"
+    1:     user_delete_path = "/v1/mgmt/user/delete"
+    1:     user_logout_path = "/v1/mgmt/user/logout"
+    1:     user_delete_all_test_users_path = "/v1/mgmt/user/test/delete/all"
+    1:     user_load_path = "/v1/mgmt/user"
+    1:     users_search_path = "/v2/mgmt/user/search"
+    1:     test_users_search_path = "/v2/mgmt/user/search/test"
+    1:     user_get_provider_token = "/v1/mgmt/user/provider/token"
+    1:     user_update_status_path = "/v1/mgmt/user/update/status"
+    1:     user_update_login_id_path = "/v1/mgmt/user/update/loginid"
+    1:     user_update_email_path = "/v1/mgmt/user/update/email"
+    1:     user_update_phone_path = "/v1/mgmt/user/update/phone"
+    1:     user_update_name_path = "/v1/mgmt/user/update/name"
+    1:     user_update_picture_path = "/v1/mgmt/user/update/picture"
+    1:     user_update_custom_attribute_path = "/v1/mgmt/user/update/customAttribute"
+    1:     user_set_role_path = "/v1/mgmt/user/update/role/set"
+    1:     user_add_role_path = "/v2/mgmt/user/update/role/add"
+    1:     user_remove_role_path = "/v1/mgmt/user/update/role/remove"
+    1:     user_add_sso_apps = "/v1/mgmt/user/update/ssoapp/add"
+    1:     user_set_sso_apps = "/v1/mgmt/user/update/ssoapp/set"
+    1:     user_remove_sso_apps = "/v1/mgmt/user/update/ssoapp/remove"
+    1:     user_set_password_path = "/v1/mgmt/user/password/set"  # Deprecated
+    1:     user_set_temporary_password_path = "/v1/mgmt/user/password/set/temporary"
+    1:     user_set_active_password_path = "/v1/mgmt/user/password/set/active"
+    1:     user_expire_password_path = "/v1/mgmt/user/password/expire"
+    1:     user_remove_all_passkeys_path = "/v1/mgmt/user/passkeys/delete"
+    1:     user_remove_totp_seed_path = "/v1/mgmt/user/totp/delete"
+    1:     user_add_tenant_path = "/v1/mgmt/user/update/tenant/add"
+    1:     user_remove_tenant_path = "/v1/mgmt/user/update/tenant/remove"
+    1:     user_generate_otp_for_test_path = "/v1/mgmt/tests/generate/otp"
+    1:     user_generate_magic_link_for_test_path = "/v1/mgmt/tests/generate/magiclink"
+    1:     user_generate_enchanted_link_for_test_path = "/v1/mgmt/tests/generate/enchantedlink"
+    1:     user_generate_embedded_link_path = "/v1/mgmt/user/signin/embeddedlink"
+    1:     user_history_path = "/v1/mgmt/user/history"
+       
+           # access key
+    1:     access_key_create_path = "/v1/mgmt/accesskey/create"
+    1:     access_key_load_path = "/v1/mgmt/accesskey"
+    1:     access_keys_search_path = "/v1/mgmt/accesskey/search"
+    1:     access_key_update_path = "/v1/mgmt/accesskey/update"
+    1:     access_key_deactivate_path = "/v1/mgmt/accesskey/deactivate"
+    1:     access_key_activate_path = "/v1/mgmt/accesskey/activate"
+    1:     access_key_delete_path = "/v1/mgmt/accesskey/delete"
+       
+           # sso
+    1:     sso_settings_path = "/v1/mgmt/sso/settings"
+    1:     sso_metadata_path = "/v1/mgmt/sso/metadata"
+    1:     sso_mapping_path = "/v1/mgmt/sso/mapping"
+    1:     sso_load_settings_path = "/v2/mgmt/sso/settings"  # v2 only
+    1:     sso_configure_oidc_settings = "/v1/mgmt/sso/oidc"
+    1:     sso_configure_saml_settings = "/v1/mgmt/sso/saml"
+    1:     sso_configure_saml_by_metadata_settings = "/v1/mgmt/sso/saml/metadata"
+       
+           # jwt
+    1:     update_jwt_path = "/v1/mgmt/jwt/update"
+    1:     impersonate_path = "/v1/mgmt/impersonate"
+    1:     stop_impersonation_path = "/v1/mgmt/stop/impersonation"
+    1:     mgmt_sign_in_path = "/v1/mgmt/auth/signin"
+    1:     mgmt_sign_up_path = "/v1/mgmt/auth/signup"
+    1:     mgmt_sign_up_or_in_path = "/v1/mgmt/auth/signup-in"
+    1:     anonymous_path = "/v1/mgmt/auth/anonymous"
+       
+           # permission
+    1:     permission_create_path = "/v1/mgmt/permission/create"
+    1:     permission_update_path = "/v1/mgmt/permission/update"
+    1:     permission_delete_path = "/v1/mgmt/permission/delete"
+    1:     permission_load_all_path = "/v1/mgmt/permission/all"
+       
+           # role
+    1:     role_create_path = "/v1/mgmt/role/create"
+    1:     role_update_path = "/v1/mgmt/role/update"
+    1:     role_delete_path = "/v1/mgmt/role/delete"
+    1:     role_load_all_path = "/v1/mgmt/role/all"
+    1:     role_search_path = "/v1/mgmt/role/search"
+       
+           # flow
+    1:     flow_list_path = "/v1/mgmt/flow/list"
+    1:     flow_delete_path = "/v1/mgmt/flow/delete"
+    1:     flow_import_path = "/v1/mgmt/flow/import"
+    1:     flow_export_path = "/v1/mgmt/flow/export"
+       
+           # theme
+    1:     theme_import_path = "/v1/mgmt/theme/import"
+    1:     theme_export_path = "/v1/mgmt/theme/export"
+       
+           # group
+    1:     group_load_all_path = "/v1/mgmt/group/all"
+    1:     group_load_all_for_member_path = "/v1/mgmt/group/member/all"
+    1:     group_load_all_group_members_path = "/v1/mgmt/group/members"
+       
+           # Audit
+    1:     audit_search = "/v1/mgmt/audit/search"
+    1:     audit_create_event = "/v1/mgmt/audit/event"
+       
+           # Authz ReBAC
+    1:     authz_schema_save = "/v1/mgmt/authz/schema/save"
+    1:     authz_schema_delete = "/v1/mgmt/authz/schema/delete"
+    1:     authz_schema_load = "/v1/mgmt/authz/schema/load"
+    1:     authz_ns_save = "/v1/mgmt/authz/ns/save"
+    1:     authz_ns_delete = "/v1/mgmt/authz/ns/delete"
+    1:     authz_rd_save = "/v1/mgmt/authz/rd/save"
+    1:     authz_rd_delete = "/v1/mgmt/authz/rd/delete"
+    1:     authz_re_create = "/v1/mgmt/authz/re/create"
+    1:     authz_re_delete = "/v1/mgmt/authz/re/delete"
+    1:     authz_re_delete_resources = "/v1/mgmt/authz/re/deleteresources"
+    1:     authz_re_has_relations = "/v1/mgmt/authz/re/has"
+    1:     authz_re_who = "/v1/mgmt/authz/re/who"
+    1:     authz_re_resource = "/v1/mgmt/authz/re/resource"
+    1:     authz_re_targets = "/v1/mgmt/authz/re/targets"
+    1:     authz_re_target_all = "/v1/mgmt/authz/re/targetall"
+    1:     authz_re_target_with_relation = "/v1/mgmt/authz/re/targetwithrelation"
+    1:     authz_get_modified = "/v1/mgmt/authz/getmodified"
+       
+           # FGA (new style Authz)
+    1:     fga_save_schema = "/v1/mgmt/fga/schema"
+    1:     fga_create_relations = "/v1/mgmt/fga/relations"
+    1:     fga_delete_relations = "/v1/mgmt/fga/relations/delete"
+    1:     fga_check = "/v1/mgmt/fga/check"
+    1:     fga_resources_load = "/v1/mgmt/fga/resources/load"
+    1:     fga_resources_save = "/v1/mgmt/fga/resources/save"
+       
+           # Project
+    1:     project_update_name = "/v1/mgmt/project/update/name"
+    1:     project_update_tags = "/v1/mgmt/project/update/tags"
+    1:     project_clone = "/v1/mgmt/project/clone"
+    1:     project_export = "/v1/mgmt/project/export"
+    1:     project_import = "/v1/mgmt/project/import"
+    1:     project_list_projects = "/v1/mgmt/projects/list"
+       
+       
+    2: class MgmtSignUpOptions:
+    2:     def __init__(
+               self,
+    1:         custom_claims: Optional[dict] = None,
+    1:         refresh_duration: Optional[int] = None,
+           ):
+>>>>>>         self.custom_claims = custom_claims
+>>>>>>         self.refresh_duration = refresh_duration
+       
+       
+    2: class MgmtLoginOptions:
+    2:     def __init__(
+               self,
+    1:         stepup: bool = False,
+    1:         mfa: bool = False,
+    1:         revoke_other_sessions: Optional[bool] = None,
+    1:         custom_claims: Optional[dict] = None,
+    1:         jwt: Optional[str] = None,
+    1:         refresh_duration: Optional[int] = None,
+           ):
+>>>>>>         self.stepup = stepup
+>>>>>>         self.custom_claims = custom_claims
+>>>>>>         self.mfa = mfa
+>>>>>>         self.revoke_other_sessions = revoke_other_sessions
+>>>>>>         self.jwt = jwt
+>>>>>>         self.refresh_duration = refresh_duration
+       
+       
+    1: def is_jwt_required(lgo: MgmtLoginOptions) -> bool:
+>>>>>>     return lgo is not None and (lgo.stepup or lgo.mfa)
+       
+       
+    2: class MgmtUserRequest:
+    2:     def __init__(
+               self,
+    1:         name: Optional[str] = None,
+    1:         given_name: Optional[str] = None,
+    1:         middle_name: Optional[str] = None,
+    1:         family_name: Optional[str] = None,
+    1:         phone: Optional[str] = None,
+    1:         email: Optional[str] = None,
+    1:         email_verified: Optional[bool] = None,
+    1:         phone_verified: Optional[bool] = None,
+    1:         sso_app_id: Optional[str] = None,
+           ):
+>>>>>>         self.name = name
+>>>>>>         self.given_name = given_name
+>>>>>>         self.middle_name = middle_name
+>>>>>>         self.family_name = family_name
+>>>>>>         self.phone = phone
+>>>>>>         self.email = email
+>>>>>>         self.email_verified = email_verified
+>>>>>>         self.phone_verified = phone_verified
+>>>>>>         self.sso_app_id = sso_app_id
+       
+    1:     def to_dict(self) -> dict:
+>>>>>>         return {
+>>>>>>             "name": self.name,
+>>>>>>             "givenName": self.given_name,
+>>>>>>             "middleName": self.middle_name,
+>>>>>>             "familyName": self.family_name,
+>>>>>>             "phone": self.phone,
+>>>>>>             "email": self.email,
+>>>>>>             "emailVerified": self.email_verified,
+>>>>>>             "phoneVerified": self.phone_verified,
+>>>>>>             "ssoAppId": self.sso_app_id,
+               }
+       
+       
+    2: class AssociatedTenant:
+    1:     """
+           Represents a tenant association for a User or Access Key. The tenant_id is required to denote
+           which tenant the user or access key belongs to. The role_names array is an optional list of
+           roles for the user or access key in this specific tenant.
+           """
+       
+    1:     def __init__(self, tenant_id: str, role_names: Optional[List[str]] = None):
+>>>>>>         self.tenant_id = tenant_id
+>>>>>>         self.role_names = [] if role_names is None else role_names
+       
+       
+    1: def associated_tenants_to_dict(associated_tenants: List[AssociatedTenant]) -> list:
+>>>>>>     associated_tenant_list = []
+>>>>>>     if associated_tenants:
+>>>>>>         for associated_tenant in associated_tenants:
+>>>>>>             associated_tenant_list.append(
+>>>>>>                 {
+>>>>>>                     "tenantId": associated_tenant.tenant_id,
+>>>>>>                     "roleNames": associated_tenant.role_names,
+                       }
+                   )
+>>>>>>     return associated_tenant_list
+       
+       
+    2: class SAMLIDPAttributeMappingInfo:
+    1:     """
+           Represents a SAML IDP attribute mapping object. use this class for mapping Descope attribute
+           to the relevant SAML Assertion attributes matching your expected SP attributes names.
+           """
+       
+    1:     def __init__(self, name: str, type: str, value: str):
+>>>>>>         self.name = name
+>>>>>>         self.type = type
+>>>>>>         self.value = value
+       
+       
+    2: def saml_idp_attribute_mapping_info_to_dict(
+    1:     attributes_mapping: Optional[List[SAMLIDPAttributeMappingInfo]] = None,
+    1: ) -> list:
+>>>>>>     attributes_mapping_list = []
+>>>>>>     if attributes_mapping:
+>>>>>>         for attribute_mapping in attributes_mapping:
+>>>>>>             attributes_mapping_list.append(
+>>>>>>                 {
+>>>>>>                     "name": attribute_mapping.name,
+>>>>>>                     "type": attribute_mapping.type,
+>>>>>>                     "value": attribute_mapping.value,
+                       }
+                   )
+>>>>>>     return attributes_mapping_list
+       
+       
+    2: class SAMLIDPRoleGroupMappingInfo:
+    1:     """
+           Represents a SAML IDP Role Group mapping object.
+           """
+       
+    1:     def __init__(self, id: str, name: str):
+>>>>>>         self.id = id
+>>>>>>         self.name = name
+       
+       
+    2: def saml_idp_role_group_mapping_info_to_dict(
+    1:     role_groups_mapping: Optional[List[SAMLIDPRoleGroupMappingInfo]] = None,
+    1: ) -> list:
+>>>>>>     role_groups_mapping_list = []
+>>>>>>     if role_groups_mapping:
+>>>>>>         for group_mapping in role_groups_mapping:
+>>>>>>             role_groups_mapping_list.append(
+>>>>>>                 {
+>>>>>>                     "id": group_mapping.id,
+>>>>>>                     "name": group_mapping.name,
+                       }
+                   )
+>>>>>>     return role_groups_mapping_list
+       
+       
+    2: class SAMLIDPGroupsMappingInfo:
+    1:     """
+           Represents a SAML IDP Descope roles to SP groups mapping object. use this class for mapping Descope roles
+           to your SP groups.
+           """
+       
+    1:     def __init__(
+               self,
+    1:         name: str,
+    1:         type: str,
+    1:         filter_type: str,
+    1:         value: str,
+    1:         roles: List[SAMLIDPRoleGroupMappingInfo],
+           ):
+>>>>>>         self.name = name
+>>>>>>         self.type = type
+>>>>>>         self.filter_type = filter_type
+>>>>>>         self.value = value
+>>>>>>         self.roles = roles
+       
+       
+    2: def saml_idp_groups_mapping_info_to_dict(
+    1:     groups_mapping: Optional[List[SAMLIDPGroupsMappingInfo]] = None,
+    1: ) -> list:
+>>>>>>     groups_mapping_list = []
+>>>>>>     if groups_mapping:
+>>>>>>         for group_mapping in groups_mapping:
+>>>>>>             groups_mapping_list.append(
+>>>>>>                 {
+>>>>>>                     "name": group_mapping.name,
+>>>>>>                     "type": group_mapping.type,
+>>>>>>                     "filterType": group_mapping.filter_type,
+>>>>>>                     "value": group_mapping.value,
+>>>>>>                     "roles": saml_idp_role_group_mapping_info_to_dict(
+>>>>>>                         group_mapping.roles
+                           ),
+                       }
+                   )
+>>>>>>     return groups_mapping_list
+       
+       
+    2: class Sort:
+    1:     """
+           Represents a sort object.
+           """
+       
+    1:     def __init__(self, field: str, desc: Optional[bool] = False):
+>>>>>>         self.field = field
+>>>>>>         self.desc = desc
+       
+       
+    1: def sort_to_dict(sort: List[Sort]) -> list:
+>>>>>>     sort_list = []
+>>>>>>     if sort:
+>>>>>>         for s in sort:
+>>>>>>             sort_list.append(
+>>>>>>                 {
+>>>>>>                     "field": s.field,
+>>>>>>                     "desc": s.desc,
+                       }
+                   )
+>>>>>>     return sort_list

@@ -1,0 +1,167 @@
+       # dialects/postgresql/__init__.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       # mypy: ignore-errors
+       
+    1: from types import ModuleType
+       
+    1: from . import array as arraylib  # noqa # must be above base and other dialects
+    1: from . import asyncpg  # noqa
+    1: from . import base
+    1: from . import pg8000  # noqa
+    1: from . import psycopg  # noqa
+    1: from . import psycopg2  # noqa
+    1: from . import psycopg2cffi  # noqa
+    1: from .array import All
+    1: from .array import Any
+    1: from .array import ARRAY
+    1: from .array import array
+    1: from .base import BIGINT
+    1: from .base import BOOLEAN
+    1: from .base import CHAR
+    1: from .base import DATE
+    1: from .base import DOMAIN
+    1: from .base import DOUBLE_PRECISION
+    1: from .base import FLOAT
+    1: from .base import INTEGER
+    1: from .base import NUMERIC
+    1: from .base import REAL
+    1: from .base import SMALLINT
+    1: from .base import TEXT
+    1: from .base import UUID
+    1: from .base import VARCHAR
+    1: from .dml import Insert
+    1: from .dml import insert
+    1: from .ext import aggregate_order_by
+    1: from .ext import array_agg
+    1: from .ext import ExcludeConstraint
+    1: from .ext import phraseto_tsquery
+    1: from .ext import plainto_tsquery
+    1: from .ext import to_tsquery
+    1: from .ext import to_tsvector
+    1: from .ext import ts_headline
+    1: from .ext import websearch_to_tsquery
+    1: from .hstore import HSTORE
+    1: from .hstore import hstore
+    1: from .json import JSON
+    1: from .json import JSONB
+    1: from .json import JSONPATH
+    1: from .named_types import CreateDomainType
+    1: from .named_types import CreateEnumType
+    1: from .named_types import DropDomainType
+    1: from .named_types import DropEnumType
+    1: from .named_types import ENUM
+    1: from .named_types import NamedType
+    1: from .ranges import AbstractMultiRange
+    1: from .ranges import AbstractRange
+    1: from .ranges import AbstractSingleRange
+    1: from .ranges import DATEMULTIRANGE
+    1: from .ranges import DATERANGE
+    1: from .ranges import INT4MULTIRANGE
+    1: from .ranges import INT4RANGE
+    1: from .ranges import INT8MULTIRANGE
+    1: from .ranges import INT8RANGE
+    1: from .ranges import MultiRange
+    1: from .ranges import NUMMULTIRANGE
+    1: from .ranges import NUMRANGE
+    1: from .ranges import Range
+    1: from .ranges import TSMULTIRANGE
+    1: from .ranges import TSRANGE
+    1: from .ranges import TSTZMULTIRANGE
+    1: from .ranges import TSTZRANGE
+    1: from .types import BIT
+    1: from .types import BYTEA
+    1: from .types import CIDR
+    1: from .types import CITEXT
+    1: from .types import INET
+    1: from .types import INTERVAL
+    1: from .types import MACADDR
+    1: from .types import MACADDR8
+    1: from .types import MONEY
+    1: from .types import OID
+    1: from .types import REGCLASS
+    1: from .types import REGCONFIG
+    1: from .types import TIME
+    1: from .types import TIMESTAMP
+    1: from .types import TSQUERY
+    1: from .types import TSVECTOR
+       
+       
+       # Alias psycopg also as psycopg_async
+    2: psycopg_async = type(
+    1:     "psycopg_async", (ModuleType,), {"dialect": psycopg.dialect_async}
+       )
+       
+    1: base.dialect = dialect = psycopg2.dialect
+       
+       
+    1: __all__ = (
+           "INTEGER",
+           "BIGINT",
+           "SMALLINT",
+           "VARCHAR",
+           "CHAR",
+           "TEXT",
+           "NUMERIC",
+           "FLOAT",
+           "REAL",
+           "INET",
+           "CIDR",
+           "CITEXT",
+           "UUID",
+           "BIT",
+           "MACADDR",
+           "MACADDR8",
+           "MONEY",
+           "OID",
+           "REGCLASS",
+           "REGCONFIG",
+           "TSQUERY",
+           "TSVECTOR",
+           "DOUBLE_PRECISION",
+           "TIMESTAMP",
+           "TIME",
+           "DATE",
+           "BYTEA",
+           "BOOLEAN",
+           "INTERVAL",
+           "ARRAY",
+           "ENUM",
+           "DOMAIN",
+           "dialect",
+           "array",
+           "HSTORE",
+           "hstore",
+           "INT4RANGE",
+           "INT8RANGE",
+           "NUMRANGE",
+           "DATERANGE",
+           "INT4MULTIRANGE",
+           "INT8MULTIRANGE",
+           "NUMMULTIRANGE",
+           "DATEMULTIRANGE",
+           "TSVECTOR",
+           "TSRANGE",
+           "TSTZRANGE",
+           "TSMULTIRANGE",
+           "TSTZMULTIRANGE",
+           "JSON",
+           "JSONB",
+           "JSONPATH",
+           "Any",
+           "All",
+           "DropEnumType",
+           "DropDomainType",
+           "CreateDomainType",
+           "NamedType",
+           "CreateEnumType",
+           "ExcludeConstraint",
+           "Range",
+           "aggregate_order_by",
+           "array_agg",
+           "insert",
+           "Insert",
+       )

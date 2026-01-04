@@ -1,0 +1,2360 @@
+    1: from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+       
+    1: from fastapi import params
+    1: from fastapi._compat import Undefined
+    1: from fastapi.openapi.models import Example
+    1: from typing_extensions import Annotated, Doc, deprecated  # type: ignore [attr-defined]
+       
+    1: _Unset: Any = Undefined
+       
+       
+    3: def Path(  # noqa: N802
+    2:     default: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Default value if the parameter field is not set.
+       
+                   This doesn't affect `Path` parameters as the value is always required.
+                   The parameter is available only for compatibility.
+                   """
+               ),
+           ] = ...,
+           *,
+    2:     default_factory: Annotated[
+    2:         Union[Callable[[], Any], None],
+    2:         Doc(
+    1:             """
+                   A callable to generate the default value.
+       
+                   This doesn't affect `Path` parameters as the value is always required.
+                   The parameter is available only for compatibility.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     alias: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   An alternative name for the parameter field.
+       
+                   This will be used to extract the data and for the generated OpenAPI.
+                   It is particularly useful when you can't use the name you want because it
+                   is a Python reserved keyword or similar.
+                   """
+               ),
+    1:     ] = None,
+    2:     alias_priority: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Priority of the alias. This affects whether an alias generator is used.
+                   """
+               ),
+    1:     ] = _Unset,
+           # TODO: update when deprecating Pydantic v1, import these types
+           # validation_alias: str | AliasPath | AliasChoices | None
+    2:     validation_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Whitelist' validation step. The parameter field will be the single one
+                   allowed by the alias or set of aliases defined.
+                   """
+               ),
+    1:     ] = None,
+    2:     serialization_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Blacklist' validation step. The vanilla parameter field will be the
+                   single one of the alias' or set of aliases' fields and all the other
+                   fields will be ignored at serialization time.
+                   """
+               ),
+    1:     ] = None,
+    2:     title: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable title.
+                   """
+               ),
+    1:     ] = None,
+    2:     description: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable description.
+                   """
+               ),
+    1:     ] = None,
+    2:     gt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than. If set, value must be greater than this. Only applicable to
+                   numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     ge: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than or equal. If set, value must be greater than or equal to
+                   this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     lt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than. If set, value must be less than this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     le: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than or equal. If set, value must be less than or equal to this.
+                   Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     min_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Minimum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     max_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Maximum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     pattern: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     regex: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    2:         deprecated(
+    1:             "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+               ),
+    1:     ] = None,
+    2:     discriminator: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   Parameter field name for discriminating the type in a tagged union.
+                   """
+               ),
+    1:     ] = None,
+    2:     strict: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   If `True`, strict validation is applied to the field.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     multiple_of: Annotated[
+    2:         Union[float, None],
+    2:         Doc(
+    1:             """
+                   Value must be a multiple of this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     allow_inf_nan: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   Allow `inf`, `-inf`, `nan`. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     max_digits: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of allow digits for strings.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     decimal_places: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of decimal places allowed for numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     examples: Annotated[
+    2:         Optional[List[Any]],
+    2:         Doc(
+    1:             """
+                   Example values for this field.
+                   """
+               ),
+    1:     ] = None,
+    2:     example: Annotated[
+    2:         Optional[Any],
+    2:         deprecated(
+    1:             "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                   "although still supported. Use examples instead."
+               ),
+    1:     ] = _Unset,
+    2:     openapi_examples: Annotated[
+    2:         Optional[Dict[str, Example]],
+    2:         Doc(
+    1:             """
+                   OpenAPI-specific examples.
+       
+                   It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+       
+                   Swagger UI (that provides the `/docs` interface) has better support for the
+                   OpenAPI-specific examples than the JSON Schema `examples`, that's the main
+                   use case for this.
+       
+                   Read more about it in the
+                   [FastAPI docs for Declare Request Example Data](https://fastapi.tiangolo.com/tutorial/schema-extra-example/#using-the-openapi_examples-parameter).
+                   """
+               ),
+    1:     ] = None,
+    2:     deprecated: Annotated[
+    2:         Optional[bool],
+    2:         Doc(
+    1:             """
+                   Mark this parameter field as deprecated.
+       
+                   It will affect the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = None,
+    2:     include_in_schema: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   To include (or not) this parameter field in the generated OpenAPI.
+                   You probably don't need it, but it's available.
+       
+                   This affects the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = True,
+    2:     json_schema_extra: Annotated[
+    2:         Union[Dict[str, Any], None],
+    2:         Doc(
+    1:             """
+                   Any additional JSON schema data.
+                   """
+               ),
+    1:     ] = None,
+    2:     **extra: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Include extra fields used by the JSON Schema.
+                   """
+               ),
+    2:         deprecated(
+    1:             """
+                   The `extra` kwargs is deprecated. Use `json_schema_extra` instead.
+                   """
+               ),
+           ],
+    1: ) -> Any:
+           """
+           Declare a path parameter for a *path operation*.
+       
+           Read more about it in the
+           [FastAPI docs for Path Parameters and Numeric Validations](https://fastapi.tiangolo.com/tutorial/path-params-numeric-validations/).
+       
+           ```python
+           from typing import Annotated
+       
+           from fastapi import FastAPI, Path
+       
+           app = FastAPI()
+       
+       
+           @app.get("/items/{item_id}")
+           async def read_items(
+               item_id: Annotated[int, Path(title="The ID of the item to get")],
+           ):
+               return {"item_id": item_id}
+           ```
+           """
+>>>>>>     return params.Path(
+>>>>>>         default=default,
+>>>>>>         default_factory=default_factory,
+>>>>>>         alias=alias,
+>>>>>>         alias_priority=alias_priority,
+>>>>>>         validation_alias=validation_alias,
+>>>>>>         serialization_alias=serialization_alias,
+>>>>>>         title=title,
+>>>>>>         description=description,
+>>>>>>         gt=gt,
+>>>>>>         ge=ge,
+>>>>>>         lt=lt,
+>>>>>>         le=le,
+>>>>>>         min_length=min_length,
+>>>>>>         max_length=max_length,
+>>>>>>         pattern=pattern,
+>>>>>>         regex=regex,
+>>>>>>         discriminator=discriminator,
+>>>>>>         strict=strict,
+>>>>>>         multiple_of=multiple_of,
+>>>>>>         allow_inf_nan=allow_inf_nan,
+>>>>>>         max_digits=max_digits,
+>>>>>>         decimal_places=decimal_places,
+>>>>>>         example=example,
+>>>>>>         examples=examples,
+>>>>>>         openapi_examples=openapi_examples,
+>>>>>>         deprecated=deprecated,
+>>>>>>         include_in_schema=include_in_schema,
+>>>>>>         json_schema_extra=json_schema_extra,
+>>>>>>         **extra,
+           )
+       
+       
+    3: def Query(  # noqa: N802
+    2:     default: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Default value if the parameter field is not set.
+                   """
+               ),
+    1:     ] = Undefined,
+           *,
+    2:     default_factory: Annotated[
+    2:         Union[Callable[[], Any], None],
+    2:         Doc(
+    1:             """
+                   A callable to generate the default value.
+       
+                   This doesn't affect `Path` parameters as the value is always required.
+                   The parameter is available only for compatibility.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     alias: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   An alternative name for the parameter field.
+       
+                   This will be used to extract the data and for the generated OpenAPI.
+                   It is particularly useful when you can't use the name you want because it
+                   is a Python reserved keyword or similar.
+                   """
+               ),
+    1:     ] = None,
+    2:     alias_priority: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Priority of the alias. This affects whether an alias generator is used.
+                   """
+               ),
+    1:     ] = _Unset,
+           # TODO: update when deprecating Pydantic v1, import these types
+           # validation_alias: str | AliasPath | AliasChoices | None
+    2:     validation_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Whitelist' validation step. The parameter field will be the single one
+                   allowed by the alias or set of aliases defined.
+                   """
+               ),
+    1:     ] = None,
+    2:     serialization_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Blacklist' validation step. The vanilla parameter field will be the
+                   single one of the alias' or set of aliases' fields and all the other
+                   fields will be ignored at serialization time.
+                   """
+               ),
+    1:     ] = None,
+    2:     title: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable title.
+                   """
+               ),
+    1:     ] = None,
+    2:     description: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable description.
+                   """
+               ),
+    1:     ] = None,
+    2:     gt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than. If set, value must be greater than this. Only applicable to
+                   numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     ge: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than or equal. If set, value must be greater than or equal to
+                   this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     lt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than. If set, value must be less than this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     le: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than or equal. If set, value must be less than or equal to this.
+                   Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     min_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Minimum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     max_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Maximum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     pattern: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     regex: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    2:         deprecated(
+    1:             "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+               ),
+    1:     ] = None,
+    2:     discriminator: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   Parameter field name for discriminating the type in a tagged union.
+                   """
+               ),
+    1:     ] = None,
+    2:     strict: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   If `True`, strict validation is applied to the field.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     multiple_of: Annotated[
+    2:         Union[float, None],
+    2:         Doc(
+    1:             """
+                   Value must be a multiple of this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     allow_inf_nan: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   Allow `inf`, `-inf`, `nan`. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     max_digits: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of allow digits for strings.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     decimal_places: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of decimal places allowed for numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     examples: Annotated[
+    2:         Optional[List[Any]],
+    2:         Doc(
+    1:             """
+                   Example values for this field.
+                   """
+               ),
+    1:     ] = None,
+    2:     example: Annotated[
+    2:         Optional[Any],
+    2:         deprecated(
+    1:             "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                   "although still supported. Use examples instead."
+               ),
+    1:     ] = _Unset,
+    2:     openapi_examples: Annotated[
+    2:         Optional[Dict[str, Example]],
+    2:         Doc(
+    1:             """
+                   OpenAPI-specific examples.
+       
+                   It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+       
+                   Swagger UI (that provides the `/docs` interface) has better support for the
+                   OpenAPI-specific examples than the JSON Schema `examples`, that's the main
+                   use case for this.
+       
+                   Read more about it in the
+                   [FastAPI docs for Declare Request Example Data](https://fastapi.tiangolo.com/tutorial/schema-extra-example/#using-the-openapi_examples-parameter).
+                   """
+               ),
+    1:     ] = None,
+    2:     deprecated: Annotated[
+    2:         Optional[bool],
+    2:         Doc(
+    1:             """
+                   Mark this parameter field as deprecated.
+       
+                   It will affect the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = None,
+    2:     include_in_schema: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   To include (or not) this parameter field in the generated OpenAPI.
+                   You probably don't need it, but it's available.
+       
+                   This affects the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = True,
+    2:     json_schema_extra: Annotated[
+    2:         Union[Dict[str, Any], None],
+    2:         Doc(
+    1:             """
+                   Any additional JSON schema data.
+                   """
+               ),
+    1:     ] = None,
+    2:     **extra: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Include extra fields used by the JSON Schema.
+                   """
+               ),
+    2:         deprecated(
+    1:             """
+                   The `extra` kwargs is deprecated. Use `json_schema_extra` instead.
+                   """
+               ),
+           ],
+    1: ) -> Any:
+>>>>>>     return params.Query(
+>>>>>>         default=default,
+>>>>>>         default_factory=default_factory,
+>>>>>>         alias=alias,
+>>>>>>         alias_priority=alias_priority,
+>>>>>>         validation_alias=validation_alias,
+>>>>>>         serialization_alias=serialization_alias,
+>>>>>>         title=title,
+>>>>>>         description=description,
+>>>>>>         gt=gt,
+>>>>>>         ge=ge,
+>>>>>>         lt=lt,
+>>>>>>         le=le,
+>>>>>>         min_length=min_length,
+>>>>>>         max_length=max_length,
+>>>>>>         pattern=pattern,
+>>>>>>         regex=regex,
+>>>>>>         discriminator=discriminator,
+>>>>>>         strict=strict,
+>>>>>>         multiple_of=multiple_of,
+>>>>>>         allow_inf_nan=allow_inf_nan,
+>>>>>>         max_digits=max_digits,
+>>>>>>         decimal_places=decimal_places,
+>>>>>>         example=example,
+>>>>>>         examples=examples,
+>>>>>>         openapi_examples=openapi_examples,
+>>>>>>         deprecated=deprecated,
+>>>>>>         include_in_schema=include_in_schema,
+>>>>>>         json_schema_extra=json_schema_extra,
+>>>>>>         **extra,
+           )
+       
+       
+    3: def Header(  # noqa: N802
+    2:     default: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Default value if the parameter field is not set.
+                   """
+               ),
+    1:     ] = Undefined,
+           *,
+    2:     default_factory: Annotated[
+    2:         Union[Callable[[], Any], None],
+    2:         Doc(
+    1:             """
+                   A callable to generate the default value.
+       
+                   This doesn't affect `Path` parameters as the value is always required.
+                   The parameter is available only for compatibility.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     alias: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   An alternative name for the parameter field.
+       
+                   This will be used to extract the data and for the generated OpenAPI.
+                   It is particularly useful when you can't use the name you want because it
+                   is a Python reserved keyword or similar.
+                   """
+               ),
+    1:     ] = None,
+    2:     alias_priority: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Priority of the alias. This affects whether an alias generator is used.
+                   """
+               ),
+    1:     ] = _Unset,
+           # TODO: update when deprecating Pydantic v1, import these types
+           # validation_alias: str | AliasPath | AliasChoices | None
+    2:     validation_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Whitelist' validation step. The parameter field will be the single one
+                   allowed by the alias or set of aliases defined.
+                   """
+               ),
+    1:     ] = None,
+    2:     serialization_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Blacklist' validation step. The vanilla parameter field will be the
+                   single one of the alias' or set of aliases' fields and all the other
+                   fields will be ignored at serialization time.
+                   """
+               ),
+    1:     ] = None,
+    2:     convert_underscores: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   Automatically convert underscores to hyphens in the parameter field name.
+       
+                   Read more about it in the
+                   [FastAPI docs for Header Parameters](https://fastapi.tiangolo.com/tutorial/header-params/#automatic-conversion)
+                   """
+               ),
+    1:     ] = True,
+    2:     title: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable title.
+                   """
+               ),
+    1:     ] = None,
+    2:     description: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable description.
+                   """
+               ),
+    1:     ] = None,
+    2:     gt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than. If set, value must be greater than this. Only applicable to
+                   numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     ge: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than or equal. If set, value must be greater than or equal to
+                   this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     lt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than. If set, value must be less than this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     le: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than or equal. If set, value must be less than or equal to this.
+                   Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     min_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Minimum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     max_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Maximum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     pattern: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     regex: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    2:         deprecated(
+    1:             "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+               ),
+    1:     ] = None,
+    2:     discriminator: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   Parameter field name for discriminating the type in a tagged union.
+                   """
+               ),
+    1:     ] = None,
+    2:     strict: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   If `True`, strict validation is applied to the field.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     multiple_of: Annotated[
+    2:         Union[float, None],
+    2:         Doc(
+    1:             """
+                   Value must be a multiple of this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     allow_inf_nan: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   Allow `inf`, `-inf`, `nan`. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     max_digits: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of allow digits for strings.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     decimal_places: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of decimal places allowed for numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     examples: Annotated[
+    2:         Optional[List[Any]],
+    2:         Doc(
+    1:             """
+                   Example values for this field.
+                   """
+               ),
+    1:     ] = None,
+    2:     example: Annotated[
+    2:         Optional[Any],
+    2:         deprecated(
+    1:             "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                   "although still supported. Use examples instead."
+               ),
+    1:     ] = _Unset,
+    2:     openapi_examples: Annotated[
+    2:         Optional[Dict[str, Example]],
+    2:         Doc(
+    1:             """
+                   OpenAPI-specific examples.
+       
+                   It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+       
+                   Swagger UI (that provides the `/docs` interface) has better support for the
+                   OpenAPI-specific examples than the JSON Schema `examples`, that's the main
+                   use case for this.
+       
+                   Read more about it in the
+                   [FastAPI docs for Declare Request Example Data](https://fastapi.tiangolo.com/tutorial/schema-extra-example/#using-the-openapi_examples-parameter).
+                   """
+               ),
+    1:     ] = None,
+    2:     deprecated: Annotated[
+    2:         Optional[bool],
+    2:         Doc(
+    1:             """
+                   Mark this parameter field as deprecated.
+       
+                   It will affect the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = None,
+    2:     include_in_schema: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   To include (or not) this parameter field in the generated OpenAPI.
+                   You probably don't need it, but it's available.
+       
+                   This affects the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = True,
+    2:     json_schema_extra: Annotated[
+    2:         Union[Dict[str, Any], None],
+    2:         Doc(
+    1:             """
+                   Any additional JSON schema data.
+                   """
+               ),
+    1:     ] = None,
+    2:     **extra: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Include extra fields used by the JSON Schema.
+                   """
+               ),
+    2:         deprecated(
+    1:             """
+                   The `extra` kwargs is deprecated. Use `json_schema_extra` instead.
+                   """
+               ),
+           ],
+    1: ) -> Any:
+>>>>>>     return params.Header(
+>>>>>>         default=default,
+>>>>>>         default_factory=default_factory,
+>>>>>>         alias=alias,
+>>>>>>         alias_priority=alias_priority,
+>>>>>>         validation_alias=validation_alias,
+>>>>>>         serialization_alias=serialization_alias,
+>>>>>>         convert_underscores=convert_underscores,
+>>>>>>         title=title,
+>>>>>>         description=description,
+>>>>>>         gt=gt,
+>>>>>>         ge=ge,
+>>>>>>         lt=lt,
+>>>>>>         le=le,
+>>>>>>         min_length=min_length,
+>>>>>>         max_length=max_length,
+>>>>>>         pattern=pattern,
+>>>>>>         regex=regex,
+>>>>>>         discriminator=discriminator,
+>>>>>>         strict=strict,
+>>>>>>         multiple_of=multiple_of,
+>>>>>>         allow_inf_nan=allow_inf_nan,
+>>>>>>         max_digits=max_digits,
+>>>>>>         decimal_places=decimal_places,
+>>>>>>         example=example,
+>>>>>>         examples=examples,
+>>>>>>         openapi_examples=openapi_examples,
+>>>>>>         deprecated=deprecated,
+>>>>>>         include_in_schema=include_in_schema,
+>>>>>>         json_schema_extra=json_schema_extra,
+>>>>>>         **extra,
+           )
+       
+       
+    3: def Cookie(  # noqa: N802
+    2:     default: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Default value if the parameter field is not set.
+                   """
+               ),
+    1:     ] = Undefined,
+           *,
+    2:     default_factory: Annotated[
+    2:         Union[Callable[[], Any], None],
+    2:         Doc(
+    1:             """
+                   A callable to generate the default value.
+       
+                   This doesn't affect `Path` parameters as the value is always required.
+                   The parameter is available only for compatibility.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     alias: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   An alternative name for the parameter field.
+       
+                   This will be used to extract the data and for the generated OpenAPI.
+                   It is particularly useful when you can't use the name you want because it
+                   is a Python reserved keyword or similar.
+                   """
+               ),
+    1:     ] = None,
+    2:     alias_priority: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Priority of the alias. This affects whether an alias generator is used.
+                   """
+               ),
+    1:     ] = _Unset,
+           # TODO: update when deprecating Pydantic v1, import these types
+           # validation_alias: str | AliasPath | AliasChoices | None
+    2:     validation_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Whitelist' validation step. The parameter field will be the single one
+                   allowed by the alias or set of aliases defined.
+                   """
+               ),
+    1:     ] = None,
+    2:     serialization_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Blacklist' validation step. The vanilla parameter field will be the
+                   single one of the alias' or set of aliases' fields and all the other
+                   fields will be ignored at serialization time.
+                   """
+               ),
+    1:     ] = None,
+    2:     title: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable title.
+                   """
+               ),
+    1:     ] = None,
+    2:     description: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable description.
+                   """
+               ),
+    1:     ] = None,
+    2:     gt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than. If set, value must be greater than this. Only applicable to
+                   numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     ge: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than or equal. If set, value must be greater than or equal to
+                   this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     lt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than. If set, value must be less than this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     le: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than or equal. If set, value must be less than or equal to this.
+                   Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     min_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Minimum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     max_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Maximum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     pattern: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     regex: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    2:         deprecated(
+    1:             "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+               ),
+    1:     ] = None,
+    2:     discriminator: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   Parameter field name for discriminating the type in a tagged union.
+                   """
+               ),
+    1:     ] = None,
+    2:     strict: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   If `True`, strict validation is applied to the field.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     multiple_of: Annotated[
+    2:         Union[float, None],
+    2:         Doc(
+    1:             """
+                   Value must be a multiple of this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     allow_inf_nan: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   Allow `inf`, `-inf`, `nan`. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     max_digits: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of allow digits for strings.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     decimal_places: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of decimal places allowed for numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     examples: Annotated[
+    2:         Optional[List[Any]],
+    2:         Doc(
+    1:             """
+                   Example values for this field.
+                   """
+               ),
+    1:     ] = None,
+    2:     example: Annotated[
+    2:         Optional[Any],
+    2:         deprecated(
+    1:             "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                   "although still supported. Use examples instead."
+               ),
+    1:     ] = _Unset,
+    2:     openapi_examples: Annotated[
+    2:         Optional[Dict[str, Example]],
+    2:         Doc(
+    1:             """
+                   OpenAPI-specific examples.
+       
+                   It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+       
+                   Swagger UI (that provides the `/docs` interface) has better support for the
+                   OpenAPI-specific examples than the JSON Schema `examples`, that's the main
+                   use case for this.
+       
+                   Read more about it in the
+                   [FastAPI docs for Declare Request Example Data](https://fastapi.tiangolo.com/tutorial/schema-extra-example/#using-the-openapi_examples-parameter).
+                   """
+               ),
+    1:     ] = None,
+    2:     deprecated: Annotated[
+    2:         Optional[bool],
+    2:         Doc(
+    1:             """
+                   Mark this parameter field as deprecated.
+       
+                   It will affect the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = None,
+    2:     include_in_schema: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   To include (or not) this parameter field in the generated OpenAPI.
+                   You probably don't need it, but it's available.
+       
+                   This affects the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = True,
+    2:     json_schema_extra: Annotated[
+    2:         Union[Dict[str, Any], None],
+    2:         Doc(
+    1:             """
+                   Any additional JSON schema data.
+                   """
+               ),
+    1:     ] = None,
+    2:     **extra: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Include extra fields used by the JSON Schema.
+                   """
+               ),
+    2:         deprecated(
+    1:             """
+                   The `extra` kwargs is deprecated. Use `json_schema_extra` instead.
+                   """
+               ),
+           ],
+    1: ) -> Any:
+>>>>>>     return params.Cookie(
+>>>>>>         default=default,
+>>>>>>         default_factory=default_factory,
+>>>>>>         alias=alias,
+>>>>>>         alias_priority=alias_priority,
+>>>>>>         validation_alias=validation_alias,
+>>>>>>         serialization_alias=serialization_alias,
+>>>>>>         title=title,
+>>>>>>         description=description,
+>>>>>>         gt=gt,
+>>>>>>         ge=ge,
+>>>>>>         lt=lt,
+>>>>>>         le=le,
+>>>>>>         min_length=min_length,
+>>>>>>         max_length=max_length,
+>>>>>>         pattern=pattern,
+>>>>>>         regex=regex,
+>>>>>>         discriminator=discriminator,
+>>>>>>         strict=strict,
+>>>>>>         multiple_of=multiple_of,
+>>>>>>         allow_inf_nan=allow_inf_nan,
+>>>>>>         max_digits=max_digits,
+>>>>>>         decimal_places=decimal_places,
+>>>>>>         example=example,
+>>>>>>         examples=examples,
+>>>>>>         openapi_examples=openapi_examples,
+>>>>>>         deprecated=deprecated,
+>>>>>>         include_in_schema=include_in_schema,
+>>>>>>         json_schema_extra=json_schema_extra,
+>>>>>>         **extra,
+           )
+       
+       
+    3: def Body(  # noqa: N802
+    2:     default: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Default value if the parameter field is not set.
+                   """
+               ),
+    1:     ] = Undefined,
+           *,
+    2:     default_factory: Annotated[
+    2:         Union[Callable[[], Any], None],
+    2:         Doc(
+    1:             """
+                   A callable to generate the default value.
+       
+                   This doesn't affect `Path` parameters as the value is always required.
+                   The parameter is available only for compatibility.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     embed: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   When `embed` is `True`, the parameter will be expected in a JSON body as a
+                   key instead of being the JSON body itself.
+       
+                   This happens automatically when more than one `Body` parameter is declared.
+       
+                   Read more about it in the
+                   [FastAPI docs for Body - Multiple Parameters](https://fastapi.tiangolo.com/tutorial/body-multiple-params/#embed-a-single-body-parameter).
+                   """
+               ),
+    1:     ] = False,
+    2:     media_type: Annotated[
+    2:         str,
+    2:         Doc(
+    1:             """
+                   The media type of this parameter field. Changing it would affect the
+                   generated OpenAPI, but currently it doesn't affect the parsing of the data.
+                   """
+               ),
+    1:     ] = "application/json",
+    2:     alias: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   An alternative name for the parameter field.
+       
+                   This will be used to extract the data and for the generated OpenAPI.
+                   It is particularly useful when you can't use the name you want because it
+                   is a Python reserved keyword or similar.
+                   """
+               ),
+    1:     ] = None,
+    2:     alias_priority: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Priority of the alias. This affects whether an alias generator is used.
+                   """
+               ),
+    1:     ] = _Unset,
+           # TODO: update when deprecating Pydantic v1, import these types
+           # validation_alias: str | AliasPath | AliasChoices | None
+    2:     validation_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Whitelist' validation step. The parameter field will be the single one
+                   allowed by the alias or set of aliases defined.
+                   """
+               ),
+    1:     ] = None,
+    2:     serialization_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Blacklist' validation step. The vanilla parameter field will be the
+                   single one of the alias' or set of aliases' fields and all the other
+                   fields will be ignored at serialization time.
+                   """
+               ),
+    1:     ] = None,
+    2:     title: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable title.
+                   """
+               ),
+    1:     ] = None,
+    2:     description: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable description.
+                   """
+               ),
+    1:     ] = None,
+    2:     gt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than. If set, value must be greater than this. Only applicable to
+                   numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     ge: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than or equal. If set, value must be greater than or equal to
+                   this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     lt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than. If set, value must be less than this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     le: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than or equal. If set, value must be less than or equal to this.
+                   Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     min_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Minimum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     max_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Maximum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     pattern: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     regex: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    2:         deprecated(
+    1:             "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+               ),
+    1:     ] = None,
+    2:     discriminator: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   Parameter field name for discriminating the type in a tagged union.
+                   """
+               ),
+    1:     ] = None,
+    2:     strict: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   If `True`, strict validation is applied to the field.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     multiple_of: Annotated[
+    2:         Union[float, None],
+    2:         Doc(
+    1:             """
+                   Value must be a multiple of this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     allow_inf_nan: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   Allow `inf`, `-inf`, `nan`. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     max_digits: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of allow digits for strings.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     decimal_places: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of decimal places allowed for numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     examples: Annotated[
+    2:         Optional[List[Any]],
+    2:         Doc(
+    1:             """
+                   Example values for this field.
+                   """
+               ),
+    1:     ] = None,
+    2:     example: Annotated[
+    2:         Optional[Any],
+    2:         deprecated(
+    1:             "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                   "although still supported. Use examples instead."
+               ),
+    1:     ] = _Unset,
+    2:     openapi_examples: Annotated[
+    2:         Optional[Dict[str, Example]],
+    2:         Doc(
+    1:             """
+                   OpenAPI-specific examples.
+       
+                   It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+       
+                   Swagger UI (that provides the `/docs` interface) has better support for the
+                   OpenAPI-specific examples than the JSON Schema `examples`, that's the main
+                   use case for this.
+       
+                   Read more about it in the
+                   [FastAPI docs for Declare Request Example Data](https://fastapi.tiangolo.com/tutorial/schema-extra-example/#using-the-openapi_examples-parameter).
+                   """
+               ),
+    1:     ] = None,
+    2:     deprecated: Annotated[
+    2:         Optional[bool],
+    2:         Doc(
+    1:             """
+                   Mark this parameter field as deprecated.
+       
+                   It will affect the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = None,
+    2:     include_in_schema: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   To include (or not) this parameter field in the generated OpenAPI.
+                   You probably don't need it, but it's available.
+       
+                   This affects the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = True,
+    2:     json_schema_extra: Annotated[
+    2:         Union[Dict[str, Any], None],
+    2:         Doc(
+    1:             """
+                   Any additional JSON schema data.
+                   """
+               ),
+    1:     ] = None,
+    2:     **extra: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Include extra fields used by the JSON Schema.
+                   """
+               ),
+    2:         deprecated(
+    1:             """
+                   The `extra` kwargs is deprecated. Use `json_schema_extra` instead.
+                   """
+               ),
+           ],
+    1: ) -> Any:
+>>>>>>     return params.Body(
+>>>>>>         default=default,
+>>>>>>         default_factory=default_factory,
+>>>>>>         embed=embed,
+>>>>>>         media_type=media_type,
+>>>>>>         alias=alias,
+>>>>>>         alias_priority=alias_priority,
+>>>>>>         validation_alias=validation_alias,
+>>>>>>         serialization_alias=serialization_alias,
+>>>>>>         title=title,
+>>>>>>         description=description,
+>>>>>>         gt=gt,
+>>>>>>         ge=ge,
+>>>>>>         lt=lt,
+>>>>>>         le=le,
+>>>>>>         min_length=min_length,
+>>>>>>         max_length=max_length,
+>>>>>>         pattern=pattern,
+>>>>>>         regex=regex,
+>>>>>>         discriminator=discriminator,
+>>>>>>         strict=strict,
+>>>>>>         multiple_of=multiple_of,
+>>>>>>         allow_inf_nan=allow_inf_nan,
+>>>>>>         max_digits=max_digits,
+>>>>>>         decimal_places=decimal_places,
+>>>>>>         example=example,
+>>>>>>         examples=examples,
+>>>>>>         openapi_examples=openapi_examples,
+>>>>>>         deprecated=deprecated,
+>>>>>>         include_in_schema=include_in_schema,
+>>>>>>         json_schema_extra=json_schema_extra,
+>>>>>>         **extra,
+           )
+       
+       
+    3: def Form(  # noqa: N802
+    2:     default: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Default value if the parameter field is not set.
+                   """
+               ),
+    1:     ] = Undefined,
+           *,
+    2:     default_factory: Annotated[
+    2:         Union[Callable[[], Any], None],
+    2:         Doc(
+    1:             """
+                   A callable to generate the default value.
+       
+                   This doesn't affect `Path` parameters as the value is always required.
+                   The parameter is available only for compatibility.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     media_type: Annotated[
+    2:         str,
+    2:         Doc(
+    1:             """
+                   The media type of this parameter field. Changing it would affect the
+                   generated OpenAPI, but currently it doesn't affect the parsing of the data.
+                   """
+               ),
+    1:     ] = "application/x-www-form-urlencoded",
+    2:     alias: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   An alternative name for the parameter field.
+       
+                   This will be used to extract the data and for the generated OpenAPI.
+                   It is particularly useful when you can't use the name you want because it
+                   is a Python reserved keyword or similar.
+                   """
+               ),
+    1:     ] = None,
+    2:     alias_priority: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Priority of the alias. This affects whether an alias generator is used.
+                   """
+               ),
+    1:     ] = _Unset,
+           # TODO: update when deprecating Pydantic v1, import these types
+           # validation_alias: str | AliasPath | AliasChoices | None
+    2:     validation_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Whitelist' validation step. The parameter field will be the single one
+                   allowed by the alias or set of aliases defined.
+                   """
+               ),
+    1:     ] = None,
+    2:     serialization_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Blacklist' validation step. The vanilla parameter field will be the
+                   single one of the alias' or set of aliases' fields and all the other
+                   fields will be ignored at serialization time.
+                   """
+               ),
+    1:     ] = None,
+    2:     title: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable title.
+                   """
+               ),
+    1:     ] = None,
+    2:     description: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable description.
+                   """
+               ),
+    1:     ] = None,
+    2:     gt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than. If set, value must be greater than this. Only applicable to
+                   numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     ge: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than or equal. If set, value must be greater than or equal to
+                   this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     lt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than. If set, value must be less than this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     le: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than or equal. If set, value must be less than or equal to this.
+                   Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     min_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Minimum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     max_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Maximum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     pattern: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     regex: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    2:         deprecated(
+    1:             "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+               ),
+    1:     ] = None,
+    2:     discriminator: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   Parameter field name for discriminating the type in a tagged union.
+                   """
+               ),
+    1:     ] = None,
+    2:     strict: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   If `True`, strict validation is applied to the field.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     multiple_of: Annotated[
+    2:         Union[float, None],
+    2:         Doc(
+    1:             """
+                   Value must be a multiple of this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     allow_inf_nan: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   Allow `inf`, `-inf`, `nan`. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     max_digits: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of allow digits for strings.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     decimal_places: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of decimal places allowed for numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     examples: Annotated[
+    2:         Optional[List[Any]],
+    2:         Doc(
+    1:             """
+                   Example values for this field.
+                   """
+               ),
+    1:     ] = None,
+    2:     example: Annotated[
+    2:         Optional[Any],
+    2:         deprecated(
+    1:             "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                   "although still supported. Use examples instead."
+               ),
+    1:     ] = _Unset,
+    2:     openapi_examples: Annotated[
+    2:         Optional[Dict[str, Example]],
+    2:         Doc(
+    1:             """
+                   OpenAPI-specific examples.
+       
+                   It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+       
+                   Swagger UI (that provides the `/docs` interface) has better support for the
+                   OpenAPI-specific examples than the JSON Schema `examples`, that's the main
+                   use case for this.
+       
+                   Read more about it in the
+                   [FastAPI docs for Declare Request Example Data](https://fastapi.tiangolo.com/tutorial/schema-extra-example/#using-the-openapi_examples-parameter).
+                   """
+               ),
+    1:     ] = None,
+    2:     deprecated: Annotated[
+    2:         Optional[bool],
+    2:         Doc(
+    1:             """
+                   Mark this parameter field as deprecated.
+       
+                   It will affect the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = None,
+    2:     include_in_schema: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   To include (or not) this parameter field in the generated OpenAPI.
+                   You probably don't need it, but it's available.
+       
+                   This affects the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = True,
+    2:     json_schema_extra: Annotated[
+    2:         Union[Dict[str, Any], None],
+    2:         Doc(
+    1:             """
+                   Any additional JSON schema data.
+                   """
+               ),
+    1:     ] = None,
+    2:     **extra: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Include extra fields used by the JSON Schema.
+                   """
+               ),
+    2:         deprecated(
+    1:             """
+                   The `extra` kwargs is deprecated. Use `json_schema_extra` instead.
+                   """
+               ),
+           ],
+    1: ) -> Any:
+   36:     return params.Form(
+   12:         default=default,
+   12:         default_factory=default_factory,
+   12:         media_type=media_type,
+   12:         alias=alias,
+   12:         alias_priority=alias_priority,
+   12:         validation_alias=validation_alias,
+   12:         serialization_alias=serialization_alias,
+   12:         title=title,
+   12:         description=description,
+   12:         gt=gt,
+   12:         ge=ge,
+   12:         lt=lt,
+   12:         le=le,
+   12:         min_length=min_length,
+   12:         max_length=max_length,
+   12:         pattern=pattern,
+   12:         regex=regex,
+   12:         discriminator=discriminator,
+   12:         strict=strict,
+   12:         multiple_of=multiple_of,
+   12:         allow_inf_nan=allow_inf_nan,
+   12:         max_digits=max_digits,
+   12:         decimal_places=decimal_places,
+   12:         example=example,
+   12:         examples=examples,
+   12:         openapi_examples=openapi_examples,
+   12:         deprecated=deprecated,
+   12:         include_in_schema=include_in_schema,
+   12:         json_schema_extra=json_schema_extra,
+   12:         **extra,
+           )
+       
+       
+    3: def File(  # noqa: N802
+    2:     default: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Default value if the parameter field is not set.
+                   """
+               ),
+    1:     ] = Undefined,
+           *,
+    2:     default_factory: Annotated[
+    2:         Union[Callable[[], Any], None],
+    2:         Doc(
+    1:             """
+                   A callable to generate the default value.
+       
+                   This doesn't affect `Path` parameters as the value is always required.
+                   The parameter is available only for compatibility.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     media_type: Annotated[
+    2:         str,
+    2:         Doc(
+    1:             """
+                   The media type of this parameter field. Changing it would affect the
+                   generated OpenAPI, but currently it doesn't affect the parsing of the data.
+                   """
+               ),
+    1:     ] = "multipart/form-data",
+    2:     alias: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   An alternative name for the parameter field.
+       
+                   This will be used to extract the data and for the generated OpenAPI.
+                   It is particularly useful when you can't use the name you want because it
+                   is a Python reserved keyword or similar.
+                   """
+               ),
+    1:     ] = None,
+    2:     alias_priority: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Priority of the alias. This affects whether an alias generator is used.
+                   """
+               ),
+    1:     ] = _Unset,
+           # TODO: update when deprecating Pydantic v1, import these types
+           # validation_alias: str | AliasPath | AliasChoices | None
+    2:     validation_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Whitelist' validation step. The parameter field will be the single one
+                   allowed by the alias or set of aliases defined.
+                   """
+               ),
+    1:     ] = None,
+    2:     serialization_alias: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   'Blacklist' validation step. The vanilla parameter field will be the
+                   single one of the alias' or set of aliases' fields and all the other
+                   fields will be ignored at serialization time.
+                   """
+               ),
+    1:     ] = None,
+    2:     title: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable title.
+                   """
+               ),
+    1:     ] = None,
+    2:     description: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   Human-readable description.
+                   """
+               ),
+    1:     ] = None,
+    2:     gt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than. If set, value must be greater than this. Only applicable to
+                   numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     ge: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Greater than or equal. If set, value must be greater than or equal to
+                   this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     lt: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than. If set, value must be less than this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     le: Annotated[
+    2:         Optional[float],
+    2:         Doc(
+    1:             """
+                   Less than or equal. If set, value must be less than or equal to this.
+                   Only applicable to numbers.
+                   """
+               ),
+    1:     ] = None,
+    2:     min_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Minimum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     max_length: Annotated[
+    2:         Optional[int],
+    2:         Doc(
+    1:             """
+                   Maximum length for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     pattern: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    1:     ] = None,
+    2:     regex: Annotated[
+    2:         Optional[str],
+    2:         Doc(
+    1:             """
+                   RegEx pattern for strings.
+                   """
+               ),
+    2:         deprecated(
+    1:             "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
+               ),
+    1:     ] = None,
+    2:     discriminator: Annotated[
+    2:         Union[str, None],
+    2:         Doc(
+    1:             """
+                   Parameter field name for discriminating the type in a tagged union.
+                   """
+               ),
+    1:     ] = None,
+    2:     strict: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   If `True`, strict validation is applied to the field.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     multiple_of: Annotated[
+    2:         Union[float, None],
+    2:         Doc(
+    1:             """
+                   Value must be a multiple of this. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     allow_inf_nan: Annotated[
+    2:         Union[bool, None],
+    2:         Doc(
+    1:             """
+                   Allow `inf`, `-inf`, `nan`. Only applicable to numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     max_digits: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of allow digits for strings.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     decimal_places: Annotated[
+    2:         Union[int, None],
+    2:         Doc(
+    1:             """
+                   Maximum number of decimal places allowed for numbers.
+                   """
+               ),
+    1:     ] = _Unset,
+    2:     examples: Annotated[
+    2:         Optional[List[Any]],
+    2:         Doc(
+    1:             """
+                   Example values for this field.
+                   """
+               ),
+    1:     ] = None,
+    2:     example: Annotated[
+    2:         Optional[Any],
+    2:         deprecated(
+    1:             "Deprecated in OpenAPI 3.1.0 that now uses JSON Schema 2020-12, "
+                   "although still supported. Use examples instead."
+               ),
+    1:     ] = _Unset,
+    2:     openapi_examples: Annotated[
+    2:         Optional[Dict[str, Example]],
+    2:         Doc(
+    1:             """
+                   OpenAPI-specific examples.
+       
+                   It will be added to the generated OpenAPI (e.g. visible at `/docs`).
+       
+                   Swagger UI (that provides the `/docs` interface) has better support for the
+                   OpenAPI-specific examples than the JSON Schema `examples`, that's the main
+                   use case for this.
+       
+                   Read more about it in the
+                   [FastAPI docs for Declare Request Example Data](https://fastapi.tiangolo.com/tutorial/schema-extra-example/#using-the-openapi_examples-parameter).
+                   """
+               ),
+    1:     ] = None,
+    2:     deprecated: Annotated[
+    2:         Optional[bool],
+    2:         Doc(
+    1:             """
+                   Mark this parameter field as deprecated.
+       
+                   It will affect the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = None,
+    2:     include_in_schema: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   To include (or not) this parameter field in the generated OpenAPI.
+                   You probably don't need it, but it's available.
+       
+                   This affects the generated OpenAPI (e.g. visible at `/docs`).
+                   """
+               ),
+    1:     ] = True,
+    2:     json_schema_extra: Annotated[
+    2:         Union[Dict[str, Any], None],
+    2:         Doc(
+    1:             """
+                   Any additional JSON schema data.
+                   """
+               ),
+    1:     ] = None,
+    2:     **extra: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   Include extra fields used by the JSON Schema.
+                   """
+               ),
+    2:         deprecated(
+    1:             """
+                   The `extra` kwargs is deprecated. Use `json_schema_extra` instead.
+                   """
+               ),
+           ],
+    1: ) -> Any:
+>>>>>>     return params.File(
+>>>>>>         default=default,
+>>>>>>         default_factory=default_factory,
+>>>>>>         media_type=media_type,
+>>>>>>         alias=alias,
+>>>>>>         alias_priority=alias_priority,
+>>>>>>         validation_alias=validation_alias,
+>>>>>>         serialization_alias=serialization_alias,
+>>>>>>         title=title,
+>>>>>>         description=description,
+>>>>>>         gt=gt,
+>>>>>>         ge=ge,
+>>>>>>         lt=lt,
+>>>>>>         le=le,
+>>>>>>         min_length=min_length,
+>>>>>>         max_length=max_length,
+>>>>>>         pattern=pattern,
+>>>>>>         regex=regex,
+>>>>>>         discriminator=discriminator,
+>>>>>>         strict=strict,
+>>>>>>         multiple_of=multiple_of,
+>>>>>>         allow_inf_nan=allow_inf_nan,
+>>>>>>         max_digits=max_digits,
+>>>>>>         decimal_places=decimal_places,
+>>>>>>         example=example,
+>>>>>>         examples=examples,
+>>>>>>         openapi_examples=openapi_examples,
+>>>>>>         deprecated=deprecated,
+>>>>>>         include_in_schema=include_in_schema,
+>>>>>>         json_schema_extra=json_schema_extra,
+>>>>>>         **extra,
+           )
+       
+       
+    3: def Depends(  # noqa: N802
+    2:     dependency: Annotated[
+    2:         Optional[Callable[..., Any]],
+    2:         Doc(
+    1:             """
+                   A "dependable" callable (like a function).
+       
+                   Don't call it directly, FastAPI will call it for you, just pass the object
+                   directly.
+                   """
+               ),
+           ] = None,
+           *,
+    2:     use_cache: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   By default, after a dependency is called the first time in a request, if
+                   the dependency is declared again for the rest of the request (for example
+                   if the dependency is needed by several dependencies), the value will be
+                   re-used for the rest of the request.
+       
+                   Set `use_cache` to `False` to disable this behavior and ensure the
+                   dependency is called again (if declared more than once) in the same request.
+                   """
+               ),
+    1:     ] = True,
+    1: ) -> Any:
+           """
+           Declare a FastAPI dependency.
+       
+           It takes a single "dependable" callable (like a function).
+       
+           Don't call it directly, FastAPI will call it for you.
+       
+           Read more about it in the
+           [FastAPI docs for Dependencies](https://fastapi.tiangolo.com/tutorial/dependencies/).
+       
+           **Example**
+       
+           ```python
+           from typing import Annotated
+       
+           from fastapi import Depends, FastAPI
+       
+           app = FastAPI()
+       
+       
+           async def common_parameters(q: str | None = None, skip: int = 0, limit: int = 100):
+               return {"q": q, "skip": skip, "limit": limit}
+       
+       
+           @app.get("/items/")
+           async def read_items(commons: Annotated[dict, Depends(common_parameters)]):
+               return commons
+           ```
+           """
+    5:     return params.Depends(dependency=dependency, use_cache=use_cache)
+       
+       
+    3: def Security(  # noqa: N802
+    2:     dependency: Annotated[
+    2:         Optional[Callable[..., Any]],
+    2:         Doc(
+    1:             """
+                   A "dependable" callable (like a function).
+       
+                   Don't call it directly, FastAPI will call it for you, just pass the object
+                   directly.
+                   """
+               ),
+           ] = None,
+           *,
+    2:     scopes: Annotated[
+    2:         Optional[Sequence[str]],
+    2:         Doc(
+    1:             """
+                   OAuth2 scopes required for the *path operation* that uses this Security
+                   dependency.
+       
+                   The term "scope" comes from the OAuth2 specification, it seems to be
+                   intentionaly vague and interpretable. It normally refers to permissions,
+                   in cases to roles.
+       
+                   These scopes are integrated with OpenAPI (and the API docs at `/docs`).
+                   So they are visible in the OpenAPI specification.
+                   )
+                   """
+               ),
+    1:     ] = None,
+    2:     use_cache: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   By default, after a dependency is called the first time in a request, if
+                   the dependency is declared again for the rest of the request (for example
+                   if the dependency is needed by several dependencies), the value will be
+                   re-used for the rest of the request.
+       
+                   Set `use_cache` to `False` to disable this behavior and ensure the
+                   dependency is called again (if declared more than once) in the same request.
+                   """
+               ),
+    1:     ] = True,
+    1: ) -> Any:
+           """
+           Declare a FastAPI Security dependency.
+       
+           The only difference with a regular dependency is that it can declare OAuth2
+           scopes that will be integrated with OpenAPI and the automatic UI docs (by default
+           at `/docs`).
+       
+           It takes a single "dependable" callable (like a function).
+       
+           Don't call it directly, FastAPI will call it for you.
+       
+           Read more about it in the
+           [FastAPI docs for Security](https://fastapi.tiangolo.com/tutorial/security/) and
+           in the
+           [FastAPI docs for OAuth2 scopes](https://fastapi.tiangolo.com/advanced/security/oauth2-scopes/).
+       
+           **Example**
+       
+           ```python
+           from typing import Annotated
+       
+           from fastapi import Depends, FastAPI
+       
+           from .db import User
+           from .security import get_current_active_user
+       
+           app = FastAPI()
+       
+           @app.get("/users/me/items/")
+           async def read_own_items(
+               current_user: Annotated[User, Security(get_current_active_user, scopes=["items"])]
+           ):
+               return [{"item_id": "Foo", "owner": current_user.username}]
+           ```
+           """
+>>>>>>     return params.Security(dependency=dependency, scopes=scopes, use_cache=use_cache)

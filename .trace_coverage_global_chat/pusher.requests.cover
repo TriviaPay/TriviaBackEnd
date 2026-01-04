@@ -1,0 +1,46 @@
+       # -*- coding: utf-8 -*-
+       
+    1: from __future__ import (
+           print_function,
+           unicode_literals,
+           absolute_import,
+           division)
+       
+    1: from pusher.http import process_response
+       
+    1: import requests
+    1: import sys
+    1: import os
+       
+       
+    1: if sys.version_info < (3,):
+>>>>>>     import urllib3.contrib.pyopenssl
+>>>>>>     urllib3.contrib.pyopenssl.inject_into_urllib3()
+       
+    1: CERT_PATH = os.path.dirname(os.path.abspath(__file__)) + '/cacert.pem'
+       
+       
+    2: class RequestsBackend(object):
+    1:     """Adapter for the requests module.
+       
+           :param client:  pusher.Client object
+           :param options: key-value passed into the requests.request constructor
+           """
+    1:     def __init__(self, client, **options):
+    2:         self.client = client
+    2:         self.options = options
+    2:         if self.client.ssl:
+    2:             self.options.update({'verify': CERT_PATH})
+    2:         self.session = requests.Session()
+       
+       
+    1:     def send_request(self, request):
+    4:         resp = self.session.request(
+    1:             request.method,
+    1:             request.url,
+    1:             headers=request.headers,
+    1:             data=request.body,
+    1:             timeout=self.client.timeout,
+    1:             **self.options)
+       
+    1:         return process_response(resp.status_code, resp.text)

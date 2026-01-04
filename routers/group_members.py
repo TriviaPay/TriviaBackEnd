@@ -92,6 +92,30 @@ def increment_group_epoch(db: Session, group: Group) -> None:
     })
 
 
+def _get_group_capacity(group: Group) -> int:
+    return getattr(group, "max_participants", GROUP_MAX_PARTICIPANTS)
+
+
+def _get_group_member_count(db: Session, group: Group, group_id: uuid.UUID) -> int:
+    cached_count = getattr(group, "participant_count", None)
+    if cached_count is not None:
+        return cached_count
+    return db.query(GroupParticipant).filter(
+        GroupParticipant.group_id == group_id,
+        GroupParticipant.is_banned == False
+    ).count()
+
+
+def _set_group_member_count(group: Group, count: int) -> None:
+    if hasattr(group, "participant_count"):
+        group.participant_count = max(count, 0)
+
+
+def _adjust_group_member_count(group: Group, delta: int) -> None:
+    if hasattr(group, "participant_count") and group.participant_count is not None:
+        group.participant_count = max(group.participant_count + delta, 0)
+
+
 @router.get("/{group_id}/members")
 async def list_members(
     group_id: str,
@@ -143,7 +167,7 @@ async def add_members(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid group ID format")
     
-    group = db.query(Group).filter(Group.id == group_uuid).first()
+    group = db.query(Group).filter(Group.id == group_uuid).with_for_update().first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     
@@ -154,58 +178,77 @@ async def add_members(
     check_group_role(db, group_uuid, current_user.account_id, ['owner', 'admin'])
     
     # Check current participant count
-    current_count = db.query(GroupParticipant).filter(
-        GroupParticipant.group_id == group_uuid,
-        GroupParticipant.is_banned == False
-    ).count()
-    
-    if current_count + len(request.user_ids) > GROUP_MAX_PARTICIPANTS:
-        raise HTTPException(status_code=409, detail="GROUP_FULL")
+    current_count = _get_group_member_count(db, group, group_uuid)
+    max_participants = _get_group_capacity(group)
+    user_ids = list(dict.fromkeys(request.user_ids))
     
     # Validate users exist and not already members
     added_users = []
-    for user_id in request.user_ids:
-        # Check if user exists
-        user = db.query(User).filter(User.account_id == user_id).first()
-        if not user:
+    users = db.query(User).filter(User.account_id.in_(user_ids)).all()
+    user_map = {user.account_id: user for user in users}
+
+    existing_participants = db.query(GroupParticipant).filter(
+        GroupParticipant.group_id == group_uuid,
+        GroupParticipant.user_id.in_(user_ids)
+    ).all()
+    existing_map = {participant.user_id: participant for participant in existing_participants}
+
+    bans = db.query(GroupBan).filter(
+        GroupBan.group_id == group_uuid,
+        GroupBan.user_id.in_(user_ids)
+    ).all()
+    banned_ids = {ban.user_id for ban in bans}
+
+    pending_additions = 0
+    for user_id in user_ids:
+        if user_id not in user_map or user_id in banned_ids:
             continue
-        
-        # Check if already a member
-        existing = db.query(GroupParticipant).filter(
-            GroupParticipant.group_id == group_uuid,
-            GroupParticipant.user_id == user_id
-        ).first()
-        
+        existing = existing_map.get(user_id)
+        if existing and not existing.is_banned:
+            continue
+        pending_additions += 1
+
+    if current_count + pending_additions > max_participants:
+        raise HTTPException(status_code=409, detail="GROUP_FULL")
+
+    new_participants = []
+    active_delta = 0
+    now = datetime.utcnow()
+    for user_id in user_ids:
+        if user_id not in user_map:
+            continue
+        if user_id in banned_ids:
+            continue
+
+        existing = existing_map.get(user_id)
         if existing:
             if existing.is_banned:
-                # Unban and reactivate
                 existing.is_banned = False
                 existing.role = 'member'
-                existing.joined_at = datetime.utcnow()
+                existing.joined_at = now
+                active_delta += 1
+                added_users.append(user_id)
             else:
                 continue  # Already a member
-        
-        # Check if banned
-        ban = db.query(GroupBan).filter(
-            GroupBan.group_id == group_uuid,
-            GroupBan.user_id == user_id
-        ).first()
-        if ban:
-            continue  # Skip banned users
-        
-        # Add participant
-        participant = GroupParticipant(
-            group_id=group_uuid,
-            user_id=user_id,
-            role='member',
-            joined_at=datetime.utcnow()
-        )
-        db.add(participant)
-        added_users.append(user_id)
+        else:
+            new_participants.append(
+                GroupParticipant(
+                    group_id=group_uuid,
+                    user_id=user_id,
+                    role='member',
+                    joined_at=now
+                )
+            )
+            added_users.append(user_id)
+            active_delta += 1
+
+    if new_participants:
+        db.add_all(new_participants)
     
     if added_users:
         # Increment epoch (triggers rekey)
         increment_group_epoch(db, group)
+        _set_group_member_count(group, current_count + active_delta)
         
         try:
             db.commit()
@@ -234,7 +277,7 @@ async def remove_member(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid group ID format")
     
-    group = db.query(Group).filter(Group.id == group_uuid).first()
+    group = db.query(Group).filter(Group.id == group_uuid).with_for_update().first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     
@@ -255,6 +298,8 @@ async def remove_member(
     
     # Remove participant
     db.delete(target_participant)
+    if not target_participant.is_banned:
+        _adjust_group_member_count(group, -1)
     
     # Increment epoch (triggers rekey)
     increment_group_epoch(db, group)
@@ -283,7 +328,7 @@ async def leave_group(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid group ID format")
     
-    group = db.query(Group).filter(Group.id == group_uuid).first()
+    group = db.query(Group).filter(Group.id == group_uuid).with_for_update().first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     
@@ -301,6 +346,8 @@ async def leave_group(
     
     # Remove participant
     db.delete(participant)
+    if not participant.is_banned:
+        _adjust_group_member_count(group, -1)
     
     # Increment epoch (triggers rekey)
     increment_group_epoch(db, group)
@@ -329,6 +376,10 @@ async def promote_member(
         group_uuid = uuid.UUID(group_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid group ID format")
+
+    group = db.query(Group).filter(Group.id == group_uuid).with_for_update().first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
     
     # Check permissions
     check_group_role(db, group_uuid, current_user.account_id, ['owner', 'admin'])
@@ -412,7 +463,7 @@ async def ban_user(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid group ID format")
     
-    group = db.query(Group).filter(Group.id == group_uuid).first()
+    group = db.query(Group).filter(Group.id == group_uuid).with_for_update().first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     
@@ -430,7 +481,10 @@ async def ban_user(
     
     # Mark participant as banned
     if target_participant:
+        was_active = not target_participant.is_banned
         target_participant.is_banned = True
+        if was_active:
+            _adjust_group_member_count(group, -1)
     else:
         # Create participant record as banned
         target_participant = GroupParticipant(
@@ -504,7 +558,10 @@ async def unban_user(
     ).first()
     
     if participant:
+        was_banned = participant.is_banned
         participant.is_banned = False
+        if was_banned:
+            _adjust_group_member_count(group, 1)
     
     try:
         db.commit()
@@ -548,4 +605,3 @@ async def mute_group(
         db.rollback()
         logger.error(f"Error muting group: {e}")
         raise HTTPException(status_code=500, detail="Failed to mute group")
-

@@ -1,0 +1,40 @@
+       # util/_has_cy.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       # mypy: ignore-errors
+       
+    1: import os
+    1: import typing
+       
+       
+    1: def _import_cy_extensions():
+           # all cython extension extension modules are treated as optional by the
+           # setup, so to ensure that all are compiled, all should be imported here
+    1:     from ..cyextension import collections
+    1:     from ..cyextension import immutabledict
+    1:     from ..cyextension import processors
+    1:     from ..cyextension import resultproxy
+    1:     from ..cyextension import util
+       
+    1:     return (collections, immutabledict, processors, resultproxy, util)
+       
+       
+    1: _CYEXTENSION_MSG: str
+    1: if not typing.TYPE_CHECKING:
+    1:     if os.environ.get("DISABLE_SQLALCHEMY_CEXT_RUNTIME"):
+>>>>>>         HAS_CYEXTENSION = False
+>>>>>>         _CYEXTENSION_MSG = "DISABLE_SQLALCHEMY_CEXT_RUNTIME is set"
+           else:
+    1:         try:
+    1:             _import_cy_extensions()
+>>>>>>         except ImportError as err:
+>>>>>>             HAS_CYEXTENSION = False
+>>>>>>             _CYEXTENSION_MSG = str(err)
+               else:
+    1:             _CYEXTENSION_MSG = "Loaded"
+    1:             HAS_CYEXTENSION = True
+       else:
+>>>>>>     HAS_CYEXTENSION = False

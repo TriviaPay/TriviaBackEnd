@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
 import logging
 
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/presence", tags=["Presence"])
 
 
 class UpdatePresenceRequest(BaseModel):
-    share_last_seen: Optional[str] = Field(None, pattern="^(all|contacts|nobody)$", example="contacts")
+    share_last_seen: Optional[str] = Field(None, pattern="^(everyone|all|contacts|nobody)$", example="contacts")
     share_online: Optional[bool] = Field(None, example=True)
     read_receipts: Optional[bool] = Field(None, example=True)
     
@@ -43,27 +44,28 @@ async def get_my_presence(
     ).first()
     
     if not presence:
-        # Create default presence
-        presence = UserPresence(
-            user_id=current_user.account_id,
-            privacy_settings={
+        return {
+            "user_id": current_user.account_id,
+            "last_seen_at": None,
+            "device_online": False,
+            "privacy_settings": {
                 "share_last_seen": "contacts",
                 "share_online": True,
                 "read_receipts": True
             }
-        )
-        db.add(presence)
-        db.commit()
-        db.refresh(presence)
+        }
     
     privacy = presence.privacy_settings or {}
+    share_last_seen = privacy.get("share_last_seen", "contacts")
+    if share_last_seen == "all":
+        share_last_seen = "everyone"
     
     return {
         "user_id": current_user.account_id,
         "last_seen_at": presence.last_seen_at.isoformat() if presence.last_seen_at else None,
         "device_online": presence.device_online,
         "privacy_settings": {
-            "share_last_seen": privacy.get("share_last_seen", "contacts"),
+            "share_last_seen": share_last_seen,
             "share_online": privacy.get("share_online", True),
             "read_receipts": privacy.get("read_receipts", True)
         }
@@ -87,21 +89,40 @@ async def update_presence(
     if not presence:
         presence = UserPresence(
             user_id=current_user.account_id,
-            privacy_settings={}
+            privacy_settings={
+                "share_last_seen": "contacts",
+                "share_online": True,
+                "read_receipts": True
+            }
         )
         db.add(presence)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            presence = db.query(UserPresence).filter(
+                UserPresence.user_id == current_user.account_id
+            ).first()
+            if not presence:
+                raise HTTPException(status_code=500, detail="Failed to update presence")
     
-    if presence.privacy_settings is None:
-        presence.privacy_settings = {}
+    privacy = dict(presence.privacy_settings or {
+        "share_last_seen": "contacts",
+        "share_online": True,
+        "read_receipts": True
+    })
     
     if request.share_last_seen is not None:
-        presence.privacy_settings["share_last_seen"] = request.share_last_seen
+        share_last_seen = "everyone" if request.share_last_seen == "all" else request.share_last_seen
+        privacy["share_last_seen"] = share_last_seen
     
     if request.share_online is not None:
-        presence.privacy_settings["share_online"] = request.share_online
+        privacy["share_online"] = request.share_online
     
     if request.read_receipts is not None:
-        presence.privacy_settings["read_receipts"] = request.read_receipts
+        privacy["read_receipts"] = request.read_receipts
+
+    presence.privacy_settings = privacy
     
     try:
         db.commit()
@@ -114,4 +135,3 @@ async def update_presence(
         db.rollback()
         logger.error(f"Error updating presence: {e}")
         raise HTTPException(status_code=500, detail="Failed to update presence")
-

@@ -137,38 +137,38 @@ async def get_free_mode_leaderboard(
     ).all()
     
     # Get user details with profile information
-    from utils.chat_helpers import get_user_chat_profile_data
-    from models import TriviaModeConfig
+    from utils.chat_helpers import get_user_chat_profile_data_bulk
+    
+    user_ids = [entry.account_id for entry in leaderboard_entries]
+    users = {}
+    if user_ids:
+        user_rows = db.query(User).filter(User.account_id.in_(user_ids)).all()
+        users = {user.account_id: user for user in user_rows}
+    profile_map = get_user_chat_profile_data_bulk(list(users.values()), db)
     
     result = []
     for entry in leaderboard_entries:
-        user_obj = db.query(User).filter(User.account_id == entry.account_id).first()
-        if user_obj:
-            # Get profile data
-            profile_data = get_user_chat_profile_data(user_obj, db)
-            
-            # Get achievement badge image URL
-            badge_image_url = None
-            if user_obj.badge_id:
-                mode_config = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user_obj.badge_id).first()
-                if mode_config and mode_config.badge_image_url:
-                    badge_image_url = mode_config.badge_image_url
-            
-            result.append({
-                'position': entry.position,
-                'username': user_obj.username,
-                'user_id': entry.account_id,
-                'gems_awarded': entry.gems_awarded,
-                'completed_at': entry.completed_at.isoformat() if entry.completed_at else None,
-                'profile_pic': profile_data.get('profile_pic_url'),
-                'badge_image_url': badge_image_url,
-                'avatar_url': profile_data.get('avatar_url'),
-                'frame_url': profile_data.get('frame_url'),
-                'subscription_badges': profile_data.get('subscription_badges', []),
-                'date_won': target_date.isoformat(),
-                'level': profile_data.get('level', 1),
-                'level_progress': profile_data.get('level_progress', '0/100')
-            })
+        user_obj = users.get(entry.account_id)
+        if not user_obj:
+            continue
+        profile_data = profile_map.get(entry.account_id, {})
+        badge_data = profile_data.get('badge') or {}
+        
+        result.append({
+            'position': entry.position,
+            'username': user_obj.username,
+            'user_id': entry.account_id,
+            'gems_awarded': entry.gems_awarded,
+            'completed_at': entry.completed_at.isoformat() if entry.completed_at else None,
+            'profile_pic': profile_data.get('profile_pic_url'),
+            'badge_image_url': badge_data.get('image_url'),
+            'avatar_url': profile_data.get('avatar_url'),
+            'frame_url': profile_data.get('frame_url'),
+            'subscription_badges': profile_data.get('subscription_badges', []),
+            'date_won': target_date.isoformat(),
+            'level': profile_data.get('level', 1),
+            'level_progress': profile_data.get('level_progress', '0/100')
+        })
     
     return {
         'draw_date': target_date.isoformat(),
@@ -317,4 +317,3 @@ async def get_free_mode_status(
         'current_date': target_date.isoformat(),
         'fill_in_answer': answers  # User's submitted answers for each question
     }
-

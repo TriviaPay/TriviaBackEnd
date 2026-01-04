@@ -1,0 +1,136 @@
+       # This file is dual licensed under the terms of the Apache License, Version
+       # 2.0, and the BSD License. See the LICENSE file in the root of this repository
+       # for complete details.
+       
+    1: from __future__ import annotations
+       
+    1: from cryptography import utils
+    1: from cryptography.hazmat.decrepit.ciphers.algorithms import (
+           ARC4 as ARC4,
+       )
+    1: from cryptography.hazmat.decrepit.ciphers.algorithms import (
+           CAST5 as CAST5,
+       )
+    1: from cryptography.hazmat.decrepit.ciphers.algorithms import (
+           IDEA as IDEA,
+       )
+    1: from cryptography.hazmat.decrepit.ciphers.algorithms import (
+           SEED as SEED,
+       )
+    1: from cryptography.hazmat.decrepit.ciphers.algorithms import (
+           Blowfish as Blowfish,
+       )
+    1: from cryptography.hazmat.decrepit.ciphers.algorithms import (
+           TripleDES as TripleDES,
+       )
+    1: from cryptography.hazmat.primitives._cipheralgorithm import _verify_key_size
+    1: from cryptography.hazmat.primitives.ciphers import (
+           BlockCipherAlgorithm,
+           CipherAlgorithm,
+       )
+       
+       
+    2: class AES(BlockCipherAlgorithm):
+    1:     name = "AES"
+    1:     block_size = 128
+           # 512 added to support AES-256-XTS, which uses 512-bit keys
+    1:     key_sizes = frozenset([128, 192, 256, 512])
+       
+    1:     def __init__(self, key: utils.Buffer):
+>>>>>>         self.key = _verify_key_size(self, key)
+       
+    1:     @property
+    1:     def key_size(self) -> int:
+>>>>>>         return len(self.key) * 8
+       
+       
+    2: class AES128(BlockCipherAlgorithm):
+    1:     name = "AES"
+    1:     block_size = 128
+    1:     key_sizes = frozenset([128])
+    1:     key_size = 128
+       
+    1:     def __init__(self, key: utils.Buffer):
+>>>>>>         self.key = _verify_key_size(self, key)
+       
+       
+    2: class AES256(BlockCipherAlgorithm):
+    1:     name = "AES"
+    1:     block_size = 128
+    1:     key_sizes = frozenset([256])
+    1:     key_size = 256
+       
+    1:     def __init__(self, key: utils.Buffer):
+>>>>>>         self.key = _verify_key_size(self, key)
+       
+       
+    2: class Camellia(BlockCipherAlgorithm):
+    1:     name = "camellia"
+    1:     block_size = 128
+    1:     key_sizes = frozenset([128, 192, 256])
+       
+    1:     def __init__(self, key: utils.Buffer):
+>>>>>>         self.key = _verify_key_size(self, key)
+       
+    1:     @property
+    1:     def key_size(self) -> int:
+>>>>>>         return len(self.key) * 8
+       
+       
+    2: utils.deprecated(
+    1:     ARC4,
+    1:     __name__,
+    1:     "ARC4 has been moved to "
+           "cryptography.hazmat.decrepit.ciphers.algorithms.ARC4 and "
+           "will be removed from "
+           "cryptography.hazmat.primitives.ciphers.algorithms in 48.0.0.",
+    1:     utils.DeprecatedIn43,
+    1:     name="ARC4",
+       )
+       
+       
+    2: utils.deprecated(
+    1:     TripleDES,
+    1:     __name__,
+    1:     "TripleDES has been moved to "
+           "cryptography.hazmat.decrepit.ciphers.algorithms.TripleDES and "
+           "will be removed from "
+           "cryptography.hazmat.primitives.ciphers.algorithms in 48.0.0.",
+    1:     utils.DeprecatedIn43,
+    1:     name="TripleDES",
+       )
+       
+       
+    2: class ChaCha20(CipherAlgorithm):
+    1:     name = "ChaCha20"
+    1:     key_sizes = frozenset([256])
+       
+    1:     def __init__(self, key: utils.Buffer, nonce: utils.Buffer):
+>>>>>>         self.key = _verify_key_size(self, key)
+>>>>>>         utils._check_byteslike("nonce", nonce)
+       
+>>>>>>         if len(nonce) != 16:
+>>>>>>             raise ValueError("nonce must be 128-bits (16 bytes)")
+       
+>>>>>>         self._nonce = nonce
+       
+    1:     @property
+    1:     def nonce(self) -> utils.Buffer:
+>>>>>>         return self._nonce
+       
+    1:     @property
+    1:     def key_size(self) -> int:
+>>>>>>         return len(self.key) * 8
+       
+       
+    2: class SM4(BlockCipherAlgorithm):
+    1:     name = "SM4"
+    1:     block_size = 128
+    1:     key_sizes = frozenset([128])
+       
+    1:     def __init__(self, key: bytes):
+>>>>>>         self.key = _verify_key_size(self, key)
+       
+    1:     @property
+    1:     def key_size(self) -> int:
+>>>>>>         return len(self.key) * 8

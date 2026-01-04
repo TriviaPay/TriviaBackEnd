@@ -1,0 +1,137 @@
+       # This file is dual licensed under the terms of the Apache License, Version
+       # 2.0, and the BSD License. See the LICENSE file in the root of this repository
+       # for complete details.
+       
+    1: from __future__ import annotations
+       
+    1: import enum
+    1: import sys
+    1: import types
+    1: import typing
+    1: import warnings
+    1: from collections.abc import Callable, Sequence
+       
+       
+       # We use a UserWarning subclass, instead of DeprecationWarning, because CPython
+       # decided deprecation warnings should be invisible by default.
+    2: class CryptographyDeprecationWarning(UserWarning):
+    1:     pass
+       
+       
+       # Several APIs were deprecated with no specific end-of-life date because of the
+       # ubiquity of their use. They should not be removed until we agree on when that
+       # cycle ends.
+    1: DeprecatedIn36 = CryptographyDeprecationWarning
+    1: DeprecatedIn40 = CryptographyDeprecationWarning
+    1: DeprecatedIn41 = CryptographyDeprecationWarning
+    1: DeprecatedIn42 = CryptographyDeprecationWarning
+    1: DeprecatedIn43 = CryptographyDeprecationWarning
+       
+       
+       # If you're wondering why we don't use `Buffer`, it's because `Buffer` would
+       # be more accurately named: Bufferable. It means something which has an
+       # `__buffer__`. Which means you can't actually treat the result as a buffer
+       # (and do things like take a `len()`).
+    1: if sys.version_info >= (3, 9):
+    1:     Buffer = typing.Union[bytes, bytearray, memoryview]
+       else:
+>>>>>>     Buffer = typing.ByteString
+       
+       
+    1: def _check_bytes(name: str, value: bytes) -> None:
+>>>>>>     if not isinstance(value, bytes):
+>>>>>>         raise TypeError(f"{name} must be bytes")
+       
+       
+    1: def _check_byteslike(name: str, value: Buffer) -> None:
+>>>>>>     try:
+>>>>>>         memoryview(value)
+>>>>>>     except TypeError:
+>>>>>>         raise TypeError(f"{name} must be bytes-like")
+       
+       
+    1: def int_to_bytes(integer: int, length: int | None = None) -> bytes:
+>>>>>>     if length == 0:
+>>>>>>         raise ValueError("length argument can't be 0")
+>>>>>>     return integer.to_bytes(
+>>>>>>         length or (integer.bit_length() + 7) // 8 or 1, "big"
+           )
+       
+       
+    2: class InterfaceNotImplemented(Exception):
+    1:     pass
+       
+       
+    2: class _DeprecatedValue:
+    1:     def __init__(self, value: object, message: str, warning_class):
+    2:         self.value = value
+    2:         self.message = message
+    2:         self.warning_class = warning_class
+       
+       
+    2: class _ModuleWithDeprecations(types.ModuleType):
+    1:     def __init__(self, module: types.ModuleType):
+    1:         super().__init__(module.__name__)
+    1:         self.__dict__["_module"] = module
+       
+    1:     def __getattr__(self, attr: str) -> object:
+    3:         obj = getattr(self._module, attr)
+    3:         if isinstance(obj, _DeprecatedValue):
+>>>>>>             warnings.warn(obj.message, obj.warning_class, stacklevel=2)
+>>>>>>             obj = obj.value
+    3:         return obj
+       
+    1:     def __setattr__(self, attr: str, value: object) -> None:
+    2:         setattr(self._module, attr, value)
+       
+    1:     def __delattr__(self, attr: str) -> None:
+>>>>>>         obj = getattr(self._module, attr)
+>>>>>>         if isinstance(obj, _DeprecatedValue):
+>>>>>>             warnings.warn(obj.message, obj.warning_class, stacklevel=2)
+       
+>>>>>>         delattr(self._module, attr)
+       
+    1:     def __dir__(self) -> Sequence[str]:
+>>>>>>         return ["_module", *dir(self._module)]
+       
+       
+    1: def deprecated(
+           value: object,
+           module_name: str,
+           message: str,
+           warning_class: type[Warning],
+           name: str | None = None,
+       ) -> _DeprecatedValue:
+    2:     module = sys.modules[module_name]
+    2:     if not isinstance(module, _ModuleWithDeprecations):
+    1:         sys.modules[module_name] = module = _ModuleWithDeprecations(module)
+    2:     dv = _DeprecatedValue(value, message, warning_class)
+           # Maintain backwards compatibility with `name is None` for pyOpenSSL.
+    2:     if name is not None:
+    2:         setattr(module, name, dv)
+    2:     return dv
+       
+       
+    1: def cached_property(func: Callable) -> property:
+>>>>>>     cached_name = f"_cached_{func}"
+>>>>>>     sentinel = object()
+       
+>>>>>>     def inner(instance: object):
+>>>>>>         cache = getattr(instance, cached_name, sentinel)
+>>>>>>         if cache is not sentinel:
+>>>>>>             return cache
+>>>>>>         result = func(instance)
+>>>>>>         setattr(instance, cached_name, result)
+>>>>>>         return result
+       
+>>>>>>     return property(inner)
+       
+       
+       # Python 3.10 changed representation of enums. We use well-defined object
+       # representation and string representation from Python 3.9.
+    2: class Enum(enum.Enum):
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<{self.__class__.__name__}.{self._name_}: {self._value_!r}>"
+       
+    1:     def __str__(self) -> str:
+>>>>>>         return f"{self.__class__.__name__}.{self._name_}"

@@ -1,16 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Header, Request
-from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Dict, Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from sqlalchemy.orm import Session
 import logging
-import json
-from fastapi.openapi.models import Response
-from fastapi import responses
-import base64
+import os
+import time
 
 from db import get_db
 # from auth import verify_access_token, refresh_auth0_token
 from models import User
-from routers.dependencies import get_current_user
 from descope.descope_client import DescopeClient
 from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, DESCOPE_JWT_LEEWAY_FALLBACK
 
@@ -18,6 +16,39 @@ router = APIRouter(prefix="/auth", tags=["Refresh"])
 
 # Create Descope client with management key for session operations
 descope_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
+_SESSION_CACHE: Dict[str, Tuple[dict, float]] = {}
+_SESSION_CACHE_TTL_SECONDS = int(os.getenv("DESCOPE_SESSION_CACHE_TTL_SECONDS", "30"))
+_DESCOPE_VALIDATE_TIMEOUT_SECONDS = float(os.getenv("DESCOPE_VALIDATE_TIMEOUT_SECONDS", "5"))
+_DESCOPE_VALIDATE_MAX_WORKERS = int(os.getenv("DESCOPE_VALIDATE_MAX_WORKERS", "4"))
+_DESCOPE_EXECUTOR = ThreadPoolExecutor(max_workers=_DESCOPE_VALIDATE_MAX_WORKERS)
+
+
+def _get_cached_session(token: str) -> Optional[dict]:
+    cached = _SESSION_CACHE.get(token)
+    if not cached:
+        return None
+    session, expires_at = cached
+    if expires_at > time.time():
+        return session
+    _SESSION_CACHE.pop(token, None)
+    return None
+
+
+def _set_cached_session(token: str, session: dict) -> None:
+    if _SESSION_CACHE_TTL_SECONDS <= 0:
+        return
+    _SESSION_CACHE[token] = (session, time.time() + _SESSION_CACHE_TTL_SECONDS)
+    if len(_SESSION_CACHE) > 2000:
+        _SESSION_CACHE.clear()
+
+
+def _validate_session_with_timeout(client: DescopeClient, token: str) -> dict:
+    future = _DESCOPE_EXECUTOR.submit(client.validate_session, token)
+    try:
+        return future.result(timeout=_DESCOPE_VALIDATE_TIMEOUT_SECONDS)
+    except FutureTimeoutError as exc:
+        future.cancel()
+        raise HTTPException(status_code=504, detail="Session validation timed out") from exc
 
 # The refresh endpoint is disabled after migration to Descope.
 # Descope does not use refresh tokens in the same way as Auth0.
@@ -77,7 +108,10 @@ async def refresh_session(request: Request, db: Session = Depends(get_db)):
         try:
             # Use Descope's session refresh API
             # First, validate the current session to get user info
-            session = descope_client.validate_session(token)
+            session = _get_cached_session(token)
+            if session is None:
+                session = _validate_session_with_timeout(descope_client, token)
+                _set_cached_session(token, session)
             
             # Extract user ID directly from session (not nested under 'user')
             user_id = session.get('userId') or session.get('sub')
@@ -107,16 +141,7 @@ async def refresh_session(request: Request, db: Session = Depends(get_db)):
             # Check if user exists in our database
             user = db.query(User).filter(User.descope_user_id == user_id).first()
             if not user:
-                # Create user if not exists
-                user = User(
-                    descope_user_id=user_id,
-                    email=user_info.get('loginIds', [None])[0] if user_info.get('loginIds') else None,
-                    username=user_info.get('name') or user_info.get('displayName') or user_info.get('loginIds', [None])[0],
-                    display_name=user_info.get('displayName') or user_info.get('name') or user_info.get('loginIds', [None])[0],
-                )
-                db.add(user)
-                db.commit()
-                db.refresh(user)
+                raise HTTPException(status_code=404, detail="User not found; please login")
             
             # Return session information
             return {
@@ -139,7 +164,10 @@ async def refresh_session(request: Request, db: Session = Depends(get_db)):
                         management_key=DESCOPE_MANAGEMENT_KEY,
                         jwt_validation_leeway=DESCOPE_JWT_LEEWAY_FALLBACK
                     )
-                    session = high_leeway_client.validate_session(token)
+                    session = _get_cached_session(token)
+                    if session is None:
+                        session = _validate_session_with_timeout(high_leeway_client, token)
+                        _set_cached_session(token, session)
                     
                     # Extract user info directly from session
                     user_id = session.get('userId') or session.get('sub')

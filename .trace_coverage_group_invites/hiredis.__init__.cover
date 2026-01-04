@@ -1,0 +1,11 @@
+    1: from hiredis.hiredis import Reader, HiredisError, pack_command, ProtocolError, ReplyError, PushNotification
+    1: from hiredis.version import __version__
+       
+    1: __all__ = [
+         "Reader",
+         "HiredisError",
+         "pack_command",
+         "ProtocolError",
+         "PushNotification",
+         "ReplyError",
+         "__version__"]

@@ -1,0 +1,410 @@
+    1: import importlib
+    1: import uuid
+    1: from datetime import datetime, timedelta
+       
+    1: import pytest
+    1: from fastapi import FastAPI
+    1: from fastapi.testclient import TestClient
+    1: from sqlalchemy import (
+           BigInteger,
+           Boolean,
+           Column,
+           DateTime,
+           ForeignKey,
+           Integer,
+           String,
+       )
+    1: from sqlalchemy.dialects.postgresql import UUID
+       
+    1: import models
+    1: from db import get_db
+    1: from models import Base, User
+    1: from routers.dependencies import get_current_user
+       
+       
+    1: def _define_group_models():
+    1:     if not hasattr(models, "E2EEDevice"):
+    2:         class E2EEDevice(Base):
+    1:             __tablename__ = "e2ee_devices"
+       
+    1:             device_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    1:             user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    1:             device_name = Column(String, nullable=False, default="device")
+    1:             status = Column(String, nullable=False, default="active")
+    1:             created_at = Column(DateTime, default=datetime.utcnow)
+       
+    1:         models.E2EEDevice = E2EEDevice
+       
+    1:     if not hasattr(models, "Group"):
+    2:         class Group(Base):
+    1:             __tablename__ = "groups"
+       
+    1:             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    1:             title = Column(String, nullable=False)
+    1:             created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    1:             created_at = Column(DateTime, default=datetime.utcnow)
+    1:             updated_at = Column(DateTime, default=datetime.utcnow)
+    1:             max_participants = Column(Integer, default=100, nullable=False)
+    1:             group_epoch = Column(Integer, default=0, nullable=False)
+    1:             is_closed = Column(Boolean, default=False, nullable=False)
+       
+    1:         models.Group = Group
+       
+    1:     if not hasattr(models, "GroupParticipant"):
+    2:         class GroupParticipant(Base):
+    1:             __tablename__ = "group_participants"
+       
+    1:             id = Column(Integer, primary_key=True)
+    1:             group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
+    1:             user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    1:             role = Column(String, nullable=False, default="member")
+    1:             joined_at = Column(DateTime, default=datetime.utcnow)
+    1:             is_banned = Column(Boolean, default=False, nullable=False)
+       
+    1:         models.GroupParticipant = GroupParticipant
+       
+    1:     if not hasattr(models, "GroupInvite"):
+    2:         class GroupInvite(Base):
+    1:             __tablename__ = "group_invites"
+       
+    1:             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    1:             group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
+    1:             created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    1:             type = Column(String, nullable=False)
+    1:             code = Column(String, nullable=False, unique=True, index=True)
+    1:             expires_at = Column(DateTime, nullable=True, index=True)
+    1:             max_uses = Column(Integer, nullable=True)
+    1:             uses = Column(Integer, default=0, nullable=False)
+    1:             created_at = Column(DateTime, default=datetime.utcnow)
+    1:             target_user_id = Column(BigInteger, nullable=True)
+       
+    1:         models.GroupInvite = GroupInvite
+       
+    1:     if not hasattr(models, "GroupBan"):
+    2:         class GroupBan(Base):
+    1:             __tablename__ = "group_bans"
+       
+    1:             group_id = Column(UUID(as_uuid=True), primary_key=True)
+    1:             user_id = Column(BigInteger, primary_key=True)
+    1:             banned_by = Column(BigInteger, nullable=True)
+    1:             reason = Column(String, nullable=True)
+    1:             banned_at = Column(DateTime, default=datetime.utcnow)
+       
+    1:         models.GroupBan = GroupBan
+       
+       
+    1: _define_group_models()
+       
+    1: group_invites = importlib.import_module("routers.group_invites")
+    1: group_invites = importlib.reload(group_invites)
+       
+    1: Group = models.Group
+    1: GroupInvite = models.GroupInvite
+    1: GroupParticipant = models.GroupParticipant
+    1: GroupBan = models.GroupBan
+       
+       
+    1: @pytest.fixture
+    1: def users(test_db):
+   11:     first = test_db.query(User).first()
+   11:     second = test_db.query(User).filter(User.account_id != first.account_id).first()
+   11:     return first, second
+       
+       
+    1: def _make_client(test_db, user, monkeypatch):
+   12:     app = FastAPI()
+   12:     app.include_router(group_invites.router)
+       
+   12:     def override_get_db():
+   12:         yield test_db
+       
+   12:     app.dependency_overrides[get_db] = override_get_db
+   24:     app.dependency_overrides[get_current_user] = lambda: user
+       
+   12:     monkeypatch.setattr(group_invites, "GROUPS_ENABLED", True)
+   16:     monkeypatch.setattr(group_invites, "check_group_role", lambda *args, **kwargs: None)
+       
+   12:     def _increment_group_epoch(db, group):
+    1:         group.group_epoch += 1
+       
+   12:     monkeypatch.setattr(group_invites, "increment_group_epoch", _increment_group_epoch)
+       
+   12:     return TestClient(app)
+       
+       
+    1: def _create_group(test_db, owner_id):
+   22:     group = Group(
+   11:         title="Test group",
+   11:         created_by=owner_id,
+   11:         is_closed=False,
+   11:         group_epoch=0,
+   11:         max_participants=10,
+           )
+   11:     test_db.add(group)
+   11:     test_db.commit()
+   11:     return group
+       
+       
+    1: def test_create_invite_requires_target_for_direct(test_db, users, monkeypatch):
+    1:     user, _ = users
+    1:     group = _create_group(test_db, user.account_id)
+       
+    1:     with _make_client(test_db, user, monkeypatch) as client:
+    2:         response = client.post(
+    1:             f"/groups/{group.id}/invites",
+    1:             json={"type": "direct", "expires_at": None},
+               )
+       
+    1:     assert response.status_code == 400
+    1:     assert response.json()["detail"] == "TARGET_USER_REQUIRED"
+       
+       
+    1: def test_create_invite_expiry_in_past(test_db, users, monkeypatch):
+    1:     user, _ = users
+    1:     group = _create_group(test_db, user.account_id)
+    1:     past = (datetime.utcnow() - timedelta(days=1)).isoformat()
+       
+    1:     with _make_client(test_db, user, monkeypatch) as client:
+    2:         response = client.post(
+    1:             f"/groups/{group.id}/invites",
+    1:             json={"type": "link", "expires_at": past},
+               )
+       
+    1:     assert response.status_code == 400
+    1:     assert response.json()["detail"] == "EXPIRY_IN_PAST"
+       
+       
+    1: def test_create_invite_retries_on_duplicate_code(test_db, users, monkeypatch):
+    1:     user, _ = users
+    1:     group = _create_group(test_db, user.account_id)
+    2:     existing = GroupInvite(
+    1:         group_id=group.id,
+    1:         created_by=user.account_id,
+    1:         type="link",
+    1:         code="DUPLICATE",
+    1:         expires_at=datetime.utcnow() + timedelta(hours=1),
+    1:         uses=0,
+           )
+    1:     test_db.add(existing)
+    1:     test_db.commit()
+       
+    1:     codes = iter(["DUPLICATE", "UNIQUECODE"])
+    3:     monkeypatch.setattr(group_invites, "generate_invite_code", lambda: next(codes))
+       
+    1:     with _make_client(test_db, user, monkeypatch) as client:
+    2:         response = client.post(
+    1:             f"/groups/{group.id}/invites",
+    1:             json={"type": "link"},
+               )
+       
+    1:     assert response.status_code == 200
+    1:     assert response.json()["code"] == "UNIQUECODE"
+       
+       
+    1: def test_list_invites_filters_expired_and_maxed(test_db, users, monkeypatch):
+    1:     user, _ = users
+    1:     group = _create_group(test_db, user.account_id)
+    1:     now = datetime.utcnow()
+       
+    2:     test_db.add_all([
+    2:         GroupInvite(
+    1:             group_id=group.id,
+    1:             created_by=user.account_id,
+    1:             type="link",
+    1:             code="ACTIVE",
+    1:             expires_at=now + timedelta(hours=1),
+    1:             max_uses=2,
+    1:             uses=1,
+               ),
+    2:         GroupInvite(
+    1:             group_id=group.id,
+    1:             created_by=user.account_id,
+    1:             type="link",
+    1:             code="EXPIRED",
+    1:             expires_at=now - timedelta(hours=1),
+    1:             max_uses=2,
+    1:             uses=0,
+               ),
+    2:         GroupInvite(
+    1:             group_id=group.id,
+    1:             created_by=user.account_id,
+    1:             type="link",
+    1:             code="MAXED",
+    1:             expires_at=now + timedelta(hours=1),
+    1:             max_uses=1,
+    1:             uses=1,
+               ),
+           ])
+    1:     test_db.commit()
+       
+    1:     with _make_client(test_db, user, monkeypatch) as client:
+    1:         response = client.get(f"/groups/{group.id}/invites")
+       
+    1:     assert response.status_code == 200
+    3:     codes = {invite["code"] for invite in response.json()["invites"]}
+    1:     assert codes == {"ACTIVE"}
+       
+       
+    1: def test_join_group_direct_target_and_success(test_db, users, monkeypatch):
+    1:     owner, target = users
+    1:     group = _create_group(test_db, owner.account_id)
+    2:     invite = GroupInvite(
+    1:         group_id=group.id,
+    1:         created_by=owner.account_id,
+    1:         type="direct",
+    1:         code="DIRECTCODE",
+    1:         expires_at=datetime.utcnow() + timedelta(hours=1),
+    1:         uses=0,
+    1:         target_user_id=target.account_id,
+           )
+    1:     test_db.add(invite)
+    1:     test_db.commit()
+       
+    1:     with _make_client(test_db, owner, monkeypatch) as client:
+    1:         response = client.post("/groups/join", json={"code": "DIRECTCODE"})
+    1:     assert response.status_code == 403
+    1:     assert response.json()["detail"] == "NOT_INVITED"
+       
+    1:     with _make_client(test_db, target, monkeypatch) as client:
+    1:         response = client.post("/groups/join", json={"code": "DIRECTCODE"})
+       
+    1:     assert response.status_code == 200
+    1:     payload = response.json()
+    1:     assert payload["group_id"] == str(group.id)
+    1:     assert payload["new_epoch"] == 1
+       
+    1:     invite = test_db.query(GroupInvite).filter(GroupInvite.code == "DIRECTCODE").first()
+    1:     assert invite.uses == 1
+       
+       
+    1: def test_join_group_banned(test_db, users, monkeypatch):
+    1:     user, _ = users
+    1:     group = _create_group(test_db, user.account_id)
+    2:     invite = GroupInvite(
+    1:         group_id=group.id,
+    1:         created_by=user.account_id,
+    1:         type="link",
+    1:         code="BANCODE",
+    1:         expires_at=datetime.utcnow() + timedelta(hours=1),
+    1:         uses=0,
+           )
+    1:     test_db.add_all([invite, GroupBan(group_id=group.id, user_id=user.account_id)])
+    1:     test_db.commit()
+       
+    1:     with _make_client(test_db, user, monkeypatch) as client:
+    1:         response = client.post("/groups/join", json={"code": "BANCODE"})
+       
+    1:     assert response.status_code == 403
+    1:     assert response.json()["detail"] == "BANNED"
+       
+       
+    1: def test_join_group_already_member(test_db, users, monkeypatch):
+    1:     user, _ = users
+    1:     group = _create_group(test_db, user.account_id)
+    2:     invite = GroupInvite(
+    1:         group_id=group.id,
+    1:         created_by=user.account_id,
+    1:         type="link",
+    1:         code="MEMBERCODE",
+    1:         expires_at=datetime.utcnow() + timedelta(hours=1),
+    1:         uses=0,
+           )
+    2:     test_db.add_all([
+    1:         invite,
+    1:         GroupParticipant(group_id=group.id, user_id=user.account_id, role="member"),
+           ])
+    1:     test_db.commit()
+       
+    1:     with _make_client(test_db, user, monkeypatch) as client:
+    1:         response = client.post("/groups/join", json={"code": "MEMBERCODE"})
+       
+    1:     assert response.status_code == 200
+    1:     assert response.json()["message"] == "Already a member"
+       
+       
+    1: def test_join_group_expired_invite(test_db, users, monkeypatch):
+    1:     user, _ = users
+    1:     group = _create_group(test_db, user.account_id)
+    2:     invite = GroupInvite(
+    1:         group_id=group.id,
+    1:         created_by=user.account_id,
+    1:         type="link",
+    1:         code="EXPIREDCODE",
+    1:         expires_at=datetime.utcnow() - timedelta(minutes=1),
+    1:         uses=0,
+           )
+    1:     test_db.add(invite)
+    1:     test_db.commit()
+       
+    1:     with _make_client(test_db, user, monkeypatch) as client:
+    1:         response = client.post("/groups/join", json={"code": "EXPIREDCODE"})
+       
+    1:     assert response.status_code == 410
+       
+       
+    1: def test_join_group_max_uses(test_db, users, monkeypatch):
+    1:     user, _ = users
+    1:     group = _create_group(test_db, user.account_id)
+    2:     invite = GroupInvite(
+    1:         group_id=group.id,
+    1:         created_by=user.account_id,
+    1:         type="link",
+    1:         code="MAXEDCODE",
+    1:         expires_at=datetime.utcnow() + timedelta(hours=1),
+    1:         max_uses=1,
+    1:         uses=1,
+           )
+    1:     test_db.add(invite)
+    1:     test_db.commit()
+       
+    1:     with _make_client(test_db, user, monkeypatch) as client:
+    1:         response = client.post("/groups/join", json={"code": "MAXEDCODE"})
+       
+    1:     assert response.status_code == 409
+    1:     assert response.json()["detail"] == "MAX_USES"
+       
+       
+    1: def test_join_group_group_full(test_db, users, monkeypatch):
+    1:     owner, member = users
+    1:     monkeypatch.setattr(group_invites, "GROUP_MAX_PARTICIPANTS", 1)
+    1:     group = _create_group(test_db, owner.account_id)
+    1:     group.max_participants = 1
+    1:     test_db.add(GroupParticipant(group_id=group.id, user_id=owner.account_id, role="owner"))
+    2:     invite = GroupInvite(
+    1:         group_id=group.id,
+    1:         created_by=owner.account_id,
+    1:         type="link",
+    1:         code="FULLCODE",
+    1:         expires_at=datetime.utcnow() + timedelta(hours=1),
+    1:         uses=0,
+           )
+    1:     test_db.add(invite)
+    1:     test_db.commit()
+       
+    1:     with _make_client(test_db, member, monkeypatch) as client:
+    1:         response = client.post("/groups/join", json={"code": "FULLCODE"})
+       
+    1:     assert response.status_code == 409
+    1:     assert response.json()["detail"] == "GROUP_FULL"
+       
+       
+    1: def test_join_group_closed(test_db, users, monkeypatch):
+    1:     user, _ = users
+    1:     group = _create_group(test_db, user.account_id)
+    1:     group.is_closed = True
+    2:     invite = GroupInvite(
+    1:         group_id=group.id,
+    1:         created_by=user.account_id,
+    1:         type="link",
+    1:         code="CLOSEDCODE",
+    1:         expires_at=datetime.utcnow() + timedelta(hours=1),
+    1:         uses=0,
+           )
+    1:     test_db.add(invite)
+    1:     test_db.commit()
+       
+    1:     with _make_client(test_db, user, monkeypatch) as client:
+    1:         response = client.post("/groups/join", json={"code": "CLOSEDCODE"})
+       
+    1:     assert response.status_code == 403
+    1:     assert response.json()["detail"] == "Group is closed"

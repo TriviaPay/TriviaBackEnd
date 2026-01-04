@@ -1,0 +1,246 @@
+       # event/legacy.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """Routines to handle adaption of legacy call signatures,
+       generation of deprecation notes and docstrings.
+       
+       """
+    1: from __future__ import annotations
+       
+    1: import typing
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import List
+    1: from typing import Optional
+    1: from typing import Tuple
+    1: from typing import Type
+       
+    1: from .registry import _ET
+    1: from .registry import _ListenerFnType
+    1: from .. import util
+    1: from ..util.compat import FullArgSpec
+       
+    1: if typing.TYPE_CHECKING:
+>>>>>>     from .attr import _ClsLevelDispatch
+>>>>>>     from .base import _HasEventsDispatch
+       
+       
+    1: _LegacySignatureType = Tuple[str, List[str], Optional[Callable[..., Any]]]
+       
+       
+    1: def _legacy_signature(
+           since: str,
+           argnames: List[str],
+           converter: Optional[Callable[..., Any]] = None,
+       ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+           """legacy sig decorator
+       
+       
+           :param since: string version for deprecation warning
+           :param argnames: list of strings, which is *all* arguments that the legacy
+            version accepted, including arguments that are still there
+           :param converter: lambda that will accept tuple of this full arg signature
+            and return tuple of new arg signature.
+       
+           """
+       
+    6:     def leg(fn: Callable[..., Any]) -> Callable[..., Any]:
+    6:         if not hasattr(fn, "_legacy_signatures"):
+    6:             fn._legacy_signatures = []  # type: ignore[attr-defined]
+    6:         fn._legacy_signatures.append((since, argnames, converter))  # type: ignore[attr-defined] # noqa: E501
+    6:         return fn
+       
+    6:     return leg
+       
+       
+    1: def _wrap_fn_for_legacy(
+           dispatch_collection: _ClsLevelDispatch[_ET],
+           fn: _ListenerFnType,
+           argspec: FullArgSpec,
+       ) -> _ListenerFnType:
+>>>>>>     for since, argnames, conv in dispatch_collection.legacy_signatures:
+>>>>>>         if argnames[-1] == "**kw":
+>>>>>>             has_kw = True
+>>>>>>             argnames = argnames[0:-1]
+               else:
+>>>>>>             has_kw = False
+       
+>>>>>>         if len(argnames) == len(argspec.args) and has_kw is bool(
+>>>>>>             argspec.varkw
+               ):
+>>>>>>             formatted_def = "def %s(%s%s)" % (
+>>>>>>                 dispatch_collection.name,
+>>>>>>                 ", ".join(dispatch_collection.arg_names),
+>>>>>>                 ", **kw" if has_kw else "",
+                   )
+>>>>>>             warning_txt = (
+>>>>>>                 'The argument signature for the "%s.%s" event listener '
+                       "has changed as of version %s, and conversion for "
+                       "the old argument signature will be removed in a "
+                       'future release.  The new signature is "%s"'
+>>>>>>                 % (
+>>>>>>                     dispatch_collection.clsname,
+>>>>>>                     dispatch_collection.name,
+>>>>>>                     since,
+>>>>>>                     formatted_def,
+                       )
+                   )
+       
+>>>>>>             if conv is not None:
+>>>>>>                 assert not has_kw
+       
+>>>>>>                 def wrap_leg(*args: Any, **kw: Any) -> Any:
+>>>>>>                     util.warn_deprecated(warning_txt, version=since)
+>>>>>>                     assert conv is not None
+>>>>>>                     return fn(*conv(*args))
+       
+                   else:
+       
+>>>>>>                 def wrap_leg(*args: Any, **kw: Any) -> Any:
+>>>>>>                     util.warn_deprecated(warning_txt, version=since)
+>>>>>>                     argdict = dict(zip(dispatch_collection.arg_names, args))
+>>>>>>                     args_from_dict = [argdict[name] for name in argnames]
+>>>>>>                     if has_kw:
+>>>>>>                         return fn(*args_from_dict, **kw)
+                           else:
+>>>>>>                         return fn(*args_from_dict)
+       
+>>>>>>             return wrap_leg
+           else:
+>>>>>>         return fn
+       
+       
+    1: def _indent(text: str, indent: str) -> str:
+ 1602:     return "\n".join(indent + line for line in text.split("\n"))
+       
+       
+    1: def _standard_listen_example(
+           dispatch_collection: _ClsLevelDispatch[_ET],
+           sample_target: Any,
+           fn: _ListenerFnType,
+       ) -> str:
+  208:     example_kw_arg = _indent(
+  500:         "\n".join(
+  188:             "%(arg)s = kw['%(arg)s']" % {"arg": arg}
+  292:             for arg in dispatch_collection.arg_names[0:2]
+               ),
+  104:         "    ",
+           )
+  104:     if dispatch_collection.legacy_signatures:
+   24:         current_since = max(
+    6:             since
+   12:             for since, args, conv in dispatch_collection.legacy_signatures
+               )
+           else:
+   98:         current_since = None
+  104:     text = (
+  104:         "from sqlalchemy import event\n\n\n"
+               "@event.listens_for(%(sample_target)s, '%(event_name)s')\n"
+               "def receive_%(event_name)s("
+               "%(named_event_arguments)s%(has_kw_arguments)s):\n"
+               "    \"listen for the '%(event_name)s' event\"\n"
+               "\n    # ... (event handling logic) ...\n"
+           )
+       
+  208:     text %= {
+               "current_since": (
+  104:             " (arguments as of %s)" % current_since if current_since else ""
+               ),
+  104:         "event_name": fn.__name__,
+  104:         "has_kw_arguments": ", **kw" if dispatch_collection.has_kw else "",
+  104:         "named_event_arguments": ", ".join(dispatch_collection.arg_names),
+  104:         "example_kw_arg": example_kw_arg,
+  104:         "sample_target": sample_target,
+           }
+  104:     return text
+       
+       
+    1: def _legacy_listen_examples(
+           dispatch_collection: _ClsLevelDispatch[_ET],
+           sample_target: str,
+           fn: _ListenerFnType,
+       ) -> str:
+    6:     text = ""
+   12:     for since, args, conv in dispatch_collection.legacy_signatures:
+   12:         text += (
+   12:             "\n# DEPRECATED calling style (pre-%(since)s, "
+                   "will be removed in a future release)\n"
+                   "@event.listens_for(%(sample_target)s, '%(event_name)s')\n"
+                   "def receive_%(event_name)s("
+                   "%(named_event_arguments)s%(has_kw_arguments)s):\n"
+                   "    \"listen for the '%(event_name)s' event\"\n"
+                   "\n    # ... (event handling logic) ...\n"
+    6:             % {
+    6:                 "since": since,
+    6:                 "event_name": fn.__name__,
+                       "has_kw_arguments": (
+    6:                     " **kw" if dispatch_collection.has_kw else ""
+                       ),
+    6:                 "named_event_arguments": ", ".join(args),
+    6:                 "sample_target": sample_target,
+                   }
+               )
+    6:     return text
+       
+       
+    1: def _version_signature_changes(
+           parent_dispatch_cls: Type[_HasEventsDispatch[_ET]],
+           dispatch_collection: _ClsLevelDispatch[_ET],
+       ) -> str:
+    6:     since, args, conv = dispatch_collection.legacy_signatures[0]
+    6:     return (
+   12:         "\n.. versionchanged:: %(since)s\n"
+               "    The :meth:`.%(clsname)s.%(event_name)s` event now accepts the \n"
+               "    arguments %(named_event_arguments)s%(has_kw_arguments)s.\n"
+               "    Support for listener functions which accept the previous \n"
+               '    argument signature(s) listed above as "deprecated" will be \n'
+               "    removed in a future release."
+    6:         % {
+    6:             "since": since,
+    6:             "clsname": parent_dispatch_cls.__name__,
+    6:             "event_name": dispatch_collection.name,
+   35:             "named_event_arguments": ", ".join(
+   34:                 ":paramref:`.%(clsname)s.%(event_name)s.%(param_name)s`"
+   17:                 % {
+   17:                     "clsname": parent_dispatch_cls.__name__,
+   17:                     "event_name": dispatch_collection.name,
+   17:                     "param_name": param_name,
+                       }
+   23:                 for param_name in dispatch_collection.arg_names
+                   ),
+    6:             "has_kw_arguments": ", **kw" if dispatch_collection.has_kw else "",
+               }
+           )
+       
+       
+    1: def _augment_fn_docs(
+           dispatch_collection: _ClsLevelDispatch[_ET],
+           parent_dispatch_cls: Type[_HasEventsDispatch[_ET]],
+           fn: _ListenerFnType,
+       ) -> str:
+  104:     header = (
+  104:         ".. container:: event_signatures\n\n"
+               "     Example argument forms::\n"
+               "\n"
+           )
+       
+  104:     sample_target = getattr(parent_dispatch_cls, "_target_class_doc", "obj")
+  208:     text = header + _indent(
+  104:         _standard_listen_example(dispatch_collection, sample_target, fn),
+  104:         " " * 8,
+           )
+  104:     if dispatch_collection.legacy_signatures:
+   12:         text += _indent(
+    6:             _legacy_listen_examples(dispatch_collection, sample_target, fn),
+    6:             " " * 8,
+               )
+       
+   12:         text += _version_signature_changes(
+    6:             parent_dispatch_cls, dispatch_collection
+               )
+       
+  104:     return util.inject_docstring_text(fn.__doc__, text, 1)

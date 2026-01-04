@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text, select, union_all
+from sqlalchemy.exc import IntegrityError
 from datetime import date, timedelta, datetime
 import os
 import pytz
-from db import get_db
-from rewards_logic import reset_monthly_subscriptions, reset_weekly_daily_rewards
+import secrets
+import hashlib
+import asyncio
+from db import get_db, get_db_context
+from rewards_logic import reset_monthly_subscriptions, reset_weekly_daily_rewards, calculate_prize_pool
 # Legacy perform_draw removed - use mode-specific draws instead
 import logging
 from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metrics, get_detailed_monthly_reset_metrics
@@ -14,14 +18,15 @@ from updated_scheduler import get_detailed_draw_metrics, get_detailed_reset_metr
 from models import (
     GlobalChatMessage, User, OneSignalPlayer,
     # TriviaUserDaily removed - legacy table
-    TriviaFreeModeWinners, TriviaBronzeModeWinners, TriviaSilverModeWinners, Notification
+    TriviaFreeModeWinners, TriviaBronzeModeWinners, TriviaSilverModeWinners, Notification,
+    TriviaUserFreeModeDaily, TriviaUserBronzeModeDaily, TriviaUserSilverModeDaily
 )
 from utils.trivia_mode_service import get_mode_config
 from utils.free_mode_rewards import (
     get_eligible_participants_free_mode, rank_participants_by_completion,
     calculate_reward_distribution, distribute_rewards_to_winners, cleanup_old_leaderboard
 )
-from utils.trivia_mode_service import get_mode_config, get_active_draw_date
+from utils.trivia_mode_service import get_active_draw_date
 from utils.pusher_client import publish_chat_message_sync
 from utils.chat_helpers import get_user_chat_profile_data
 from utils.onesignal_client import send_push_notification_async
@@ -29,6 +34,29 @@ from utils.notification_storage import create_notifications_batch
 from config import GLOBAL_CHAT_ENABLED, ONESIGNAL_ENABLED
 
 router = APIRouter(prefix="/internal", tags=["Internal"])
+
+def _is_authorized(secret: str) -> bool:
+    return secrets.compare_digest(secret or "", os.getenv("INTERNAL_SECRET", ""))
+
+
+def _advisory_lock_key(value: str) -> int:
+    digest = hashlib.sha256(value.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % (2**63 - 1)
+
+
+def _try_advisory_lock(db: Session, key: int) -> bool:
+    try:
+        return bool(db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": key}).scalar())
+    except Exception as exc:
+        logging.error(f"Failed to acquire advisory lock: {exc}")
+        return False
+
+
+def _release_advisory_lock(db: Session, key: int) -> None:
+    try:
+        db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+    except Exception as exc:
+        logging.warning(f"Failed to release advisory lock: {exc}")
 
 
 def get_today_in_app_timezone() -> date:
@@ -159,10 +187,20 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
     )
     
     try:
+        existing = db.query(GlobalChatMessage).filter(
+            GlobalChatMessage.client_message_id == system_message.client_message_id
+        ).first()
+        if existing:
+            logging.info(f"Winner announcement already exists for {draw_date}, skipping")
+            return
         db.add(system_message)
         db.commit()
         db.refresh(system_message)
         logging.info(f"✅ Winner announcement message saved to database with ID {system_message.id}")
+    except IntegrityError:
+        db.rollback()
+        logging.info(f"Winner announcement already exists for {draw_date}, skipping")
+        return
     except Exception as db_error:
         logging.error(f"❌ Failed to save winner announcement to database: {str(db_error)}", exc_info=True)
         db.rollback()
@@ -176,7 +214,8 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
     profile_data = get_user_chat_profile_data(system_user, db) if system_user else {
         "profile_pic_url": None,
         "avatar_url": None,
-        "frame_url": None
+        "frame_url": None,
+        "badge": None
     }
     
     # Publish to Pusher
@@ -191,7 +230,7 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
                 "profile_pic": profile_data["profile_pic_url"],
                 "avatar_url": profile_data["avatar_url"],
                 "frame_url": profile_data["frame_url"],
-                "badge": profile_data["badge"],
+                "badge": profile_data.get("badge"),
                 "message": message,
                 "created_at": system_message.created_at.isoformat(),
                 "message_type": "system"
@@ -200,13 +239,131 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
     except Exception as e:
         logging.error(f"Failed to publish winner announcement to Pusher: {e}")
 
+
+def _build_trivia_reminder_players_query(
+    db: Session,
+    active_draw_date: date,
+    only_incomplete_users: bool
+):
+    correct_user_ids_subq = None
+    if only_incomplete_users:
+        free_q = select(TriviaUserFreeModeDaily.account_id).where(
+            TriviaUserFreeModeDaily.date == active_draw_date,
+            TriviaUserFreeModeDaily.third_question_completed_at.isnot(None)
+        )
+        bronze_q = select(TriviaUserBronzeModeDaily.account_id).where(
+            TriviaUserBronzeModeDaily.date == active_draw_date,
+            TriviaUserBronzeModeDaily.is_correct.is_(True)
+        )
+        silver_q = select(TriviaUserSilverModeDaily.account_id).where(
+            TriviaUserSilverModeDaily.date == active_draw_date,
+            TriviaUserSilverModeDaily.is_correct.is_(True)
+        )
+        correct_user_ids_subq = union_all(free_q, bronze_q, silver_q).subquery()
+
+    players_q = db.query(
+        OneSignalPlayer.player_id,
+        OneSignalPlayer.user_id
+    ).join(
+        User, User.account_id == OneSignalPlayer.user_id
+    ).filter(
+        OneSignalPlayer.is_valid.is_(True),
+        User.notification_on.is_(True)
+    )
+
+    if only_incomplete_users and correct_user_ids_subq is not None:
+        players_q = players_q.filter(
+            ~OneSignalPlayer.user_id.in_(select(correct_user_ids_subq.c.account_id))
+        )
+
+    return players_q
+
+
+def _send_trivia_reminder_job(
+    active_draw_date: date,
+    heading: str,
+    content: str,
+    only_incomplete_users: bool
+) -> None:
+    data = {
+        "type": "trivia_reminder",
+        "draw_date": active_draw_date.isoformat(),
+    }
+    BATCH_SIZE = 2000
+    failed_batches = 0
+    total_sent = 0
+    user_ids = set()
+
+    def _send_batch(batch_ids):
+        async def _run():
+            return await send_push_notification_async(
+                player_ids=batch_ids,
+                heading=heading,
+                content=content,
+                data=data,
+                is_in_app_notification=False,
+            )
+        return asyncio.run(_run())
+
+    with get_db_context() as db:
+        players_q = _build_trivia_reminder_players_query(
+            db, active_draw_date, only_incomplete_users
+        )
+
+        batch = []
+        for player_id, user_id in players_q.yield_per(1000):
+            user_ids.add(user_id)
+            batch.append(player_id)
+            if len(batch) >= BATCH_SIZE:
+                ok = _send_batch(batch)
+                if ok:
+                    total_sent += len(batch)
+                else:
+                    failed_batches += 1
+                    logging.warning(f"⚠️ Failed to send trivia reminder to batch of {len(batch)} players")
+                batch = []
+
+        if batch:
+            ok = _send_batch(batch)
+            if ok:
+                total_sent += len(batch)
+            else:
+                failed_batches += 1
+                logging.warning(f"⚠️ Failed to send trivia reminder to batch of {len(batch)} players")
+
+        user_ids_list = list(user_ids)
+        if user_ids_list:
+            CHUNK_SIZE = 1000
+            for i in range(0, len(user_ids_list), CHUNK_SIZE):
+                chunk = user_ids_list[i:i + CHUNK_SIZE]
+                create_notifications_batch(
+                    db=db,
+                    user_ids=chunk,
+                    title=heading,
+                    body=content,
+                    notification_type="trivia_reminder",
+                    data=data
+                )
+
+        if total_sent > 0:
+            logging.info(
+                f"✅ Trivia reminder push sent to {total_sent} players "
+                f"(only_incomplete_users={only_incomplete_users})"
+            )
+        else:
+            logging.error(
+                f"❌ Trivia reminder push FAILED: sent to 0 players "
+                f"(failed_batches={failed_batches}, only_incomplete_users={only_incomplete_users}). "
+                f"Check OneSignal credentials and API configuration."
+            )
+
 # Legacy /daily-draw endpoint removed - use mode-specific draws instead:
 # - /internal/free-mode-draw
 # - /internal/mode-draw/{mode_id}
 
 
 @router.post("/free-mode-draw")
-async def internal_free_mode_draw(
+def internal_free_mode_draw(
     secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
     db: Session = Depends(get_db)
 ):
@@ -220,13 +377,22 @@ async def internal_free_mode_draw(
     
     Returns clean response with winner details.
     """
-    if secret != os.getenv("INTERNAL_SECRET"):
+    if not _is_authorized(secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
+    lock_key = None
     try:
         # Determine which draw date to use (yesterday's draw)
         from utils.trivia_mode_service import get_active_draw_date
         draw_date = get_active_draw_date() - timedelta(days=1)
+
+        lock_key = _advisory_lock_key(f"free_mode:{draw_date.isoformat()}")
+        if not _try_advisory_lock(db, lock_key):
+            return {
+                "status": "already_running",
+                "draw_date": draw_date.isoformat(),
+                "message": "Draw already running"
+            }
         
         logging.info(f"🎯 Starting free mode draw for {draw_date} via internal endpoint")
         
@@ -297,17 +463,21 @@ async def internal_free_mode_draw(
         
         logging.info(f"✅ Free mode draw completed: {len(winners)} winners, {distribution_result['total_gems_awarded']} gems awarded")
         
-        # Get winner details with emails
+        # Get winner details with emails (bulk fetch)
         winners_data = []
-        for winner in winners:
-            user = db.query(User).filter(User.account_id == winner['account_id']).first()
-            if user:
-                winners_data.append({
-                    "position": winner.get('position'),
-                    "username": winner.get('username'),
-                    "email": user.email if user.email else None,
-                    "gems_awarded": winner.get('gems_awarded', 0)
-                })
+        winner_ids = [winner['account_id'] for winner in winners]
+        if winner_ids:
+            users = db.query(User).filter(User.account_id.in_(winner_ids)).all()
+            users_by_id = {user.account_id: user for user in users}
+            for winner in winners:
+                user = users_by_id.get(winner['account_id'])
+                if user:
+                    winners_data.append({
+                        "position": winner.get('position'),
+                        "username": winner.get('username'),
+                        "email": user.email if user.email else None,
+                        "gems_awarded": winner.get('gems_awarded', 0)
+                    })
         
         # Return clean, simplified response
         return {
@@ -326,10 +496,13 @@ async def internal_free_mode_draw(
             status_code=500,
             detail=f"Error in free mode draw: {str(e)}"
         )
+    finally:
+        if lock_key is not None:
+            _release_advisory_lock(db, lock_key)
 
 
 @router.post("/mode-draw/{mode_id}")
-async def internal_mode_draw(
+def internal_mode_draw(
     mode_id: str,
     secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
     db: Session = Depends(get_db)
@@ -343,9 +516,10 @@ async def internal_mode_draw(
         
     Returns clean response with winner details.
     """
-    if secret != os.getenv("INTERNAL_SECRET"):
+    if not _is_authorized(secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
+    lock_key = None
     try:
         from utils.trivia_mode_service import get_active_draw_date
         from utils.mode_draw_service import execute_mode_draw
@@ -363,6 +537,14 @@ async def internal_mode_draw(
         # Determine which draw date to use (yesterday's draw)
         draw_date = get_active_draw_date() - timedelta(days=1)
         
+        lock_key = _advisory_lock_key(f"{mode_id}:{draw_date.isoformat()}")
+        if not _try_advisory_lock(db, lock_key):
+            return {
+                "status": "already_running",
+                "draw_date": draw_date.isoformat(),
+                "message": "Draw already running"
+            }
+
         logging.info(f"🎯 Starting {mode_id} draw for {draw_date} via internal endpoint")
         
         # Check if draw already performed (mode-specific)
@@ -435,10 +617,15 @@ async def internal_mode_draw(
             else:
                 distribution_result = {'total_winners': len(winners)}
             
-            # Get winner details with emails
+            # Get winner details with emails (bulk fetch)
             winners_data = []
+            winner_ids = [winner['account_id'] for winner in winners]
+            users_by_id = {}
+            if winner_ids:
+                users = db.query(User).filter(User.account_id.in_(winner_ids)).all()
+                users_by_id = {user.account_id: user for user in users}
             for winner in winners:
-                user = db.query(User).filter(User.account_id == winner['account_id']).first()
+                user = users_by_id.get(winner['account_id'])
                 if user:
                     winner_data = {
                         "position": winner.get('position'),
@@ -476,6 +663,9 @@ async def internal_mode_draw(
             status_code=500,
             detail=f"Error in {mode_id} draw: {str(e)}"
         )
+    finally:
+        if lock_key is not None:
+            _release_advisory_lock(db, lock_key)
 
 
 class TriviaReminderRequest(BaseModel):
@@ -501,9 +691,10 @@ class TriviaReminderRequest(BaseModel):
 
 
 @router.post("/trivia-reminder")
-async def send_trivia_reminder(
+def send_trivia_reminder(
     request: TriviaReminderRequest,
     secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
@@ -515,7 +706,7 @@ async def send_trivia_reminder(
         * Only users who have NOT answered correctly today (default).
     - This is an app-level notification, not tied to chat.
     """
-    if secret != os.getenv("INTERNAL_SECRET"):
+    if not _is_authorized(secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     if not ONESIGNAL_ENABLED:
@@ -537,30 +728,14 @@ async def send_trivia_reminder(
         active_draw_date = get_active_draw_date()
         logging.info(f"📣 Trivia reminder triggered for draw date: {active_draw_date}")
 
-        # Legacy TriviaUserDaily check removed - use mode-specific tables instead
-        # For now, skip the incomplete users filter since we don't have legacy table
-        correct_user_ids = set()
-        logging.info(
-            f"📊 Trivia reminder: Legacy eligibility check removed (TriviaUserDaily table deleted)"
+        players_q = _build_trivia_reminder_players_query(
+            db, active_draw_date, request.only_incomplete_users
         )
+        players_subq = players_q.subquery()
+        total_targeted = db.query(func.count()).select_from(players_subq).scalar() or 0
+        total_users = db.query(func.count(func.distinct(players_subq.c.user_id))).scalar() or 0
 
-        # Base query: all valid OneSignal players
-        players_q = db.query(OneSignalPlayer).filter(OneSignalPlayer.is_valid == True)
-
-        if request.only_incomplete_users and correct_user_ids:
-            # Exclude users who have already answered correctly
-            players_q = players_q.filter(~OneSignalPlayer.user_id.in_(correct_user_ids))
-
-        players = players_q.all()
-        player_ids = [p.player_id for p in players]
-        
-        # Log which users are being targeted
-        unique_user_ids = list(set([p.user_id for p in players]))
-        logging.info(f"📋 Targeting {len(unique_user_ids)} unique users with {len(player_ids)} OneSignal players for trivia reminder")
-        if unique_user_ids:
-            logging.info(f"📋 Sample targeted user_ids: {unique_user_ids[:5]}..." if len(unique_user_ids) > 5 else f"📋 Targeted user_ids: {unique_user_ids}")
-
-        if not player_ids:
+        if total_targeted == 0:
             logging.warning(
                 f"⚠️ No OneSignal players found for trivia reminder on {active_draw_date} "
                 f"(only_incomplete_users={request.only_incomplete_users})"
@@ -572,121 +747,21 @@ async def send_trivia_reminder(
                 "only_incomplete_users": request.only_incomplete_users,
             }
 
-        # Batch player IDs (OneSignal supports up to ~2000 per request)
-        BATCH_SIZE = 2000
-        total_sent = 0
+        background_tasks.add_task(
+            _send_trivia_reminder_job,
+            active_draw_date,
+            request.heading,
+            request.message,
+            request.only_incomplete_users
+        )
 
-        heading = request.heading
-        content = request.message
-        data = {
-            "type": "trivia_reminder",
+        return {
+            "status": "queued",
+            "targeted_players": total_targeted,
+            "targeted_users": total_users,
             "draw_date": active_draw_date.isoformat(),
+            "only_incomplete_users": request.only_incomplete_users,
         }
-
-        # IMPORTANT: This is an app-level reminder, not chat.
-        # We DO NOT use the 30-second "active user" suppression here.
-        # All targeted users get a normal push notification, even if they're active.
-
-        failed_batches = 0
-        for i in range(0, len(player_ids), BATCH_SIZE):
-            batch = player_ids[i : i + BATCH_SIZE]
-            # Normal system push (not in-app), so is_in_app_notification=False
-            ok = await send_push_notification_async(
-                player_ids=batch,
-                heading=heading,
-                content=content,
-                data=data,
-                is_in_app_notification=False,
-            )
-            if ok:
-                total_sent += len(batch)
-            else:
-                failed_batches += 1
-                logging.warning(f"⚠️ Failed to send trivia reminder to batch of {len(batch)} players")
-
-        # Store notifications in database for all targeted users
-        # Get unique user_ids (in case same user has multiple OneSignal players)
-        user_ids = list(set([p.user_id for p in players]))
-        if user_ids:
-            logging.info(f"📝 Storing notifications for {len(user_ids)} unique users. Sample user_ids: {user_ids[:5]}..." if len(user_ids) > 5 else f"📝 Storing notifications for user_ids: {user_ids}")
-            notifications_created = create_notifications_batch(
-                db=db,
-                user_ids=user_ids,
-                title=heading,
-                body=content,
-                notification_type="trivia_reminder",
-                data=data
-            )
-            logging.info(f"📝 Stored {notifications_created} trivia reminder notifications in database for {len(user_ids)} users")
-            
-            # Verify notifications were actually created
-            verification_count = db.query(Notification).filter(
-                Notification.type == "trivia_reminder",
-                Notification.user_id.in_(user_ids[:5])  # Check first 5
-            ).count()
-            logging.info(f"🔍 Verification: Found {verification_count} trivia_reminder notifications in DB for sample users (checked {min(5, len(user_ids))} user_ids)")
-            
-            # Additional verification: Check if any notifications exist at all for this type
-            total_trivia_reminders = db.query(func.count(Notification.id)).filter(
-                Notification.type == "trivia_reminder"
-            ).scalar() or 0
-            logging.info(f"🔍 Total trivia_reminder notifications in database: {total_trivia_reminders}")
-            
-            # Sample a few user_ids to verify they match User.account_id
-            if user_ids:
-                sample_user_id = user_ids[0]
-                user_exists = db.query(User).filter(User.account_id == sample_user_id).first()
-                if user_exists:
-                    user_notifications = db.query(func.count(Notification.id)).filter(
-                        Notification.user_id == sample_user_id,
-                        Notification.type == "trivia_reminder"
-                    ).scalar() or 0
-                    logging.info(f"🔍 Sample user_id {sample_user_id}: User exists, has {user_notifications} trivia_reminder notifications")
-                else:
-                    logging.warning(f"⚠️ Sample user_id {sample_user_id}: User NOT FOUND in users table!")
-
-        # Only log success if we actually sent to some players
-        if total_sent > 0:
-            logging.info(
-                f"✅ Trivia reminder push sent to {total_sent} players "
-                f"(targeted={len(player_ids)}, only_incomplete_users={request.only_incomplete_users})"
-            )
-        else:
-            logging.error(
-                f"❌ Trivia reminder push FAILED: sent to 0 players "
-                f"(targeted={len(player_ids)}, failed_batches={failed_batches}, only_incomplete_users={request.only_incomplete_users}). "
-                f"Check OneSignal credentials and API configuration."
-            )
-
-        # Return appropriate status based on whether pushes were sent
-        if total_sent == 0:
-            return {
-                "status": "failed",
-                "sent_to": 0,
-                "targeted_players": len(player_ids),
-                "failed_batches": failed_batches,
-                "draw_date": active_draw_date.isoformat(),
-                "only_incomplete_users": request.only_incomplete_users,
-                "error": "Failed to send push notifications. Check OneSignal credentials and API configuration."
-            }
-        elif total_sent < len(player_ids):
-            return {
-                "status": "partial_success",
-                "sent_to": total_sent,
-                "targeted_players": len(player_ids),
-                "failed_batches": failed_batches,
-                "draw_date": active_draw_date.isoformat(),
-                "only_incomplete_users": request.only_incomplete_users,
-                "warning": f"Only {total_sent} out of {len(player_ids)} notifications were sent successfully."
-            }
-        else:
-            return {
-                "status": "success",
-                "sent_to": total_sent,
-                "targeted_players": len(player_ids),
-                "draw_date": active_draw_date.isoformat(),
-                "only_incomplete_users": request.only_incomplete_users,
-            }
     except HTTPException:
         # Pass through HTTP errors unchanged
         raise
@@ -698,12 +773,12 @@ async def send_trivia_reminder(
 # Use mode-specific question management instead
 
 @router.post("/monthly-reset")
-async def internal_monthly_reset(
+def internal_monthly_reset(
     secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
     db: Session = Depends(get_db)
 ):
     """Internal endpoint for monthly subscription reset triggered by external cron"""
-    if secret != os.getenv("INTERNAL_SECRET"):
+    if not _is_authorized(secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
@@ -727,12 +802,12 @@ async def internal_monthly_reset(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/weekly-rewards-reset")
-async def internal_weekly_rewards_reset(
+def internal_weekly_rewards_reset(
     secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
     db: Session = Depends(get_db)
 ):
     """Internal endpoint for weekly daily rewards reset triggered by external cron"""
-    if secret != os.getenv("INTERNAL_SECRET"):
+    if not _is_authorized(secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
@@ -751,8 +826,33 @@ async def internal_weekly_rewards_reset(
         logging.error(f"Error in weekly rewards reset: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/daily-revenue-update")
+def internal_daily_revenue_update(
+    secret: str = Header(..., alias="X-Secret", description="Secret key for internal calls"),
+    db: Session = Depends(get_db)
+):
+    """Internal endpoint for daily company revenue updates triggered by external cron"""
+    if not _is_authorized(secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    try:
+        draw_date = get_today_in_app_timezone()
+        calculate_prize_pool(db, draw_date, commit_revenue=True)
+        
+        logging.info(f"Daily company revenue update completed via external cron for {draw_date}")
+        return {
+            "status": "success",
+            "message": "Company revenue updated",
+            "triggered_by": "external_cron",
+            "draw_date": draw_date.isoformat(),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"Error in daily revenue update: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/health")
-async def internal_health():
+def internal_health():
     """Health check for external cron services"""
     return {
         "status": "healthy",

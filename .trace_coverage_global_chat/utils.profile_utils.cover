@@ -1,0 +1,21 @@
+    1: from db import get_db
+       # Letter model removed - letters table deleted
+    1: import logging
+       
+    1: def get_letter_profile_pic(username: str, db=None) -> str:
+           """
+           Get profile picture URL based on first letter of username.
+           
+           Note: Letters table has been removed. This function now returns None.
+           Use custom profile pictures or avatars instead.
+           
+           Args:
+               username (str): The username to get a profile picture for
+               db (Session, optional): Database session (no longer used, kept for compatibility)
+               
+           Returns:
+               str: None (letters table removed)
+           """
+           # Letters table has been removed - return None
+           # Profile pictures should use custom uploads or avatars instead
+>>>>>>     return None 

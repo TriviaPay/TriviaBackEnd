@@ -45,6 +45,7 @@ class AvatarResponse(CosmeticBase):
     """Schema for avatar response"""
     id: str
     created_at: datetime
+    price_usd: Optional[float] = None
     url: Optional[str] = None
     mime_type: Optional[str] = None
     
@@ -59,6 +60,7 @@ class FrameResponse(CosmeticBase):
     """Schema for frame response"""
     id: str
     created_at: datetime
+    price_usd: Optional[float] = None
     url: Optional[str] = None
     mime_type: Optional[str] = None
     
@@ -96,24 +98,31 @@ class SelectResponse(BaseModel):
 # ======== Avatar Endpoints ========
 
 @router.get("/avatars", response_model=List[AvatarResponse])
-async def get_all_avatars(
+def get_all_avatars(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    include_urls: bool = Query(True, description="Include presigned URLs")
 ):
     """
     Get all available avatars, ordered by most recently added first
     """
     avatars = db.query(Avatar).order_by(desc(Avatar.created_at)).offset(skip).limit(limit).all()
     out: List[AvatarResponse] = []
+    presign_cache: Dict[tuple[str, str], Optional[str]] = {}
     for av in avatars:
         signed = None
         bucket = getattr(av, "bucket", None)
         object_key = getattr(av, "object_key", None)
-        if bucket and object_key:
+        if include_urls and bucket and object_key:
             try:
-                signed = presign_get(bucket, object_key, expires=900)
+                cache_key = (bucket, object_key)
+                if cache_key in presign_cache:
+                    signed = presign_cache[cache_key]
+                else:
+                    signed = presign_get(bucket, object_key, expires=900)
+                    presign_cache[cache_key] = signed
                 if not signed:
                     logging.warning(f"presign_get returned None for avatar {av.id} with bucket={bucket}, key={object_key}")
             except Exception as e:
@@ -134,9 +143,10 @@ async def get_all_avatars(
     return out
 
 @router.get("/avatars/owned", response_model=List[UserCosmeticResponse])
-async def get_user_avatars(
+def get_user_avatars(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    include_urls: bool = Query(True, description="Include presigned URLs")
 ):
     """
     Get all avatars owned by the current user
@@ -146,13 +156,19 @@ async def get_user_avatars(
         UserAvatar, UserAvatar.avatar_id == Avatar.id
     ).filter(UserAvatar.user_id == user.account_id).order_by(desc(UserAvatar.purchase_date)).all()
     out: List[UserCosmeticResponse] = []
+    presign_cache: Dict[tuple[str, str], Optional[str]] = {}
     for av, purchased_at in rows:
         signed = None
         bucket = getattr(av, "bucket", None)
         object_key = getattr(av, "object_key", None)
-        if bucket and object_key:
+        if include_urls and bucket and object_key:
             try:
-                signed = presign_get(bucket, object_key, expires=900)
+                cache_key = (bucket, object_key)
+                if cache_key in presign_cache:
+                    signed = presign_cache[cache_key]
+                else:
+                    signed = presign_get(bucket, object_key, expires=900)
+                    presign_cache[cache_key] = signed
                 if not signed:
                     logging.warning(f"presign_get returned None for avatar {av.id} with bucket={bucket}, key={object_key}")
             except Exception as e:
@@ -210,6 +226,13 @@ async def buy_avatar(
                 detail=f"Avatar '{avatar.name}' cannot be purchased with gems"
             )
         
+        # Lock user row to prevent concurrent gem updates
+        user = db.query(User).filter(
+            User.account_id == current_user.account_id
+        ).with_for_update().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
         # Check if user has enough gems
         if user.gems < avatar.price_gems:
             raise HTTPException(
@@ -242,9 +265,6 @@ async def buy_avatar(
         except IntegrityError:
             # Idempotent buy: ownership already exists (from unique constraint)
             db.rollback()
-            # Refund gems
-            user.gems += avatar.price_gems
-            db.commit()
             # Get existing ownership
             existing = db.query(UserAvatar).filter(
                 UserAvatar.user_id == user.account_id,
@@ -354,22 +374,29 @@ async def select_avatar(
 # ======== Frame Endpoints ========
 
 @router.get("/frames", response_model=List[FrameResponse])
-async def get_all_frames(
+def get_all_frames(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    include_urls: bool = Query(True, description="Include presigned URLs")
 ):
     """
     Get all available frames, ordered by most recently added first
     """
     frames = db.query(Frame).order_by(desc(Frame.created_at)).offset(skip).limit(limit).all()
     out: List[FrameResponse] = []
+    presign_cache: Dict[tuple[str, str], Optional[str]] = {}
     for fr in frames:
         signed = None
-        if getattr(fr, "bucket", None) and getattr(fr, "object_key", None):
+        if include_urls and getattr(fr, "bucket", None) and getattr(fr, "object_key", None):
             try:
-                signed = presign_get(fr.bucket, fr.object_key, expires=900)
+                cache_key = (fr.bucket, fr.object_key)
+                if cache_key in presign_cache:
+                    signed = presign_cache[cache_key]
+                else:
+                    signed = presign_get(fr.bucket, fr.object_key, expires=900)
+                    presign_cache[cache_key] = signed
             except Exception as e:
                 logging.warning(f"Failed to presign frame {fr.id}: {e}")
         out.append(FrameResponse(
@@ -386,9 +413,10 @@ async def get_all_frames(
     return out
 
 @router.get("/frames/owned", response_model=List[UserCosmeticResponse])
-async def get_user_frames(
+def get_user_frames(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    include_urls: bool = Query(True, description="Include presigned URLs")
 ):
     """
     Get all frames owned by the current user
@@ -398,11 +426,17 @@ async def get_user_frames(
         UserFrame, UserFrame.frame_id == Frame.id
     ).filter(UserFrame.user_id == user.account_id).order_by(desc(UserFrame.purchase_date)).all()
     out: List[UserCosmeticResponse] = []
+    presign_cache: Dict[tuple[str, str], Optional[str]] = {}
     for fr, purchased_at in rows:
         signed = None
-        if getattr(fr, "bucket", None) and getattr(fr, "object_key", None):
+        if include_urls and getattr(fr, "bucket", None) and getattr(fr, "object_key", None):
             try:
-                signed = presign_get(fr.bucket, fr.object_key, expires=900)
+                cache_key = (fr.bucket, fr.object_key)
+                if cache_key in presign_cache:
+                    signed = presign_cache[cache_key]
+                else:
+                    signed = presign_get(fr.bucket, fr.object_key, expires=900)
+                    presign_cache[cache_key] = signed
             except Exception as e:
                 logging.warning(f"Failed to presign frame {fr.id}: {e}")
         out.append(UserCosmeticResponse(
@@ -456,6 +490,13 @@ async def buy_frame(
                 detail=f"Frame '{frame.name}' cannot be purchased with gems"
             )
         
+        # Lock user row to prevent concurrent gem updates
+        user = db.query(User).filter(
+            User.account_id == current_user.account_id
+        ).with_for_update().first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
         # Check if user has enough gems
         if user.gems < frame.price_gems:
             raise HTTPException(
@@ -488,9 +529,6 @@ async def buy_frame(
         except IntegrityError:
             # Idempotent buy: ownership already exists (from unique constraint)
             db.rollback()
-            # Refund gems
-            user.gems += frame.price_gems
-            db.commit()
             # Get existing ownership
             existing = db.query(UserFrame).filter(
                 UserFrame.user_id == user.account_id,

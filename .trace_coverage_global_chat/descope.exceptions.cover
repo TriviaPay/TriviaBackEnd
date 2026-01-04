@@ -1,0 +1,53 @@
+    1: from typing import Optional
+       
+    1: ERROR_TYPE_INVALID_ARGUMENT = "invalid argument"
+    1: ERROR_TYPE_SERVER_ERROR = "server error"
+    1: ERROR_TYPE_INVALID_PUBLIC_KEY = "invalid public key"
+    1: ERROR_TYPE_INVALID_TOKEN = "invalid token"
+    1: ERROR_TYPE_API_RATE_LIMIT = "API rate limit exceeded"
+       
+    1: API_RATE_LIMIT_RETRY_AFTER_HEADER = "Retry-After"
+       
+       
+    2: class AuthException(Exception):
+    2:     def __init__(
+               self,
+    1:         status_code: Optional[int] = None,
+    1:         error_type: Optional[str] = None,
+    1:         error_message: Optional[str] = None,
+               **kwargs,
+           ):
+>>>>>>         self.status_code = status_code
+>>>>>>         self.error_type = error_type
+>>>>>>         self.error_message = error_message
+       
+    1:     def __repr__(self):
+>>>>>>         return f"Error {self.__dict__}"
+       
+    1:     def __str__(self):
+>>>>>>         return str(self.__dict__)
+       
+       
+    2: class RateLimitException(Exception):
+    2:     def __init__(
+               self,
+    1:         status_code: Optional[int] = None,
+    1:         error_type: Optional[str] = None,
+    1:         error_description: Optional[str] = None,
+    1:         error_message: Optional[str] = None,
+    1:         rate_limit_parameters: Optional[dict] = None,
+               **kwargs,
+           ):
+>>>>>>         self.status_code = status_code
+>>>>>>         self.error_type = error_type
+>>>>>>         self.error_description = error_description
+>>>>>>         self.error_message = error_message
+>>>>>>         self.rate_limit_parameters = (
+>>>>>>             {} if rate_limit_parameters is None else rate_limit_parameters
+               )
+       
+    1:     def __repr__(self):
+>>>>>>         return f"Error {self.__dict__}"
+       
+    1:     def __str__(self):
+>>>>>>         return str(self.__dict__)

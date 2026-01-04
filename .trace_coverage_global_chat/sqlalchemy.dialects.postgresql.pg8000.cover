@@ -1,0 +1,662 @@
+       # dialects/postgresql/pg8000.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors <see AUTHORS
+       # file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       # mypy: ignore-errors
+       
+    1: r"""
+       .. dialect:: postgresql+pg8000
+           :name: pg8000
+           :dbapi: pg8000
+           :connectstring: postgresql+pg8000://user:password@host:port/dbname[?key=value&key=value...]
+           :url: https://pypi.org/project/pg8000/
+       
+       .. versionchanged:: 1.4  The pg8000 dialect has been updated for version
+          1.16.6 and higher, and is again part of SQLAlchemy's continuous integration
+          with full feature support.
+       
+       .. _pg8000_unicode:
+       
+       Unicode
+       -------
+       
+       pg8000 will encode / decode string values between it and the server using the
+       PostgreSQL ``client_encoding`` parameter; by default this is the value in
+       the ``postgresql.conf`` file, which often defaults to ``SQL_ASCII``.
+       Typically, this can be changed to ``utf-8``, as a more useful default::
+       
+           #client_encoding = sql_ascii # actually, defaults to database
+                                        # encoding
+           client_encoding = utf8
+       
+       The ``client_encoding`` can be overridden for a session by executing the SQL:
+       
+       SET CLIENT_ENCODING TO 'utf8';
+       
+       SQLAlchemy will execute this SQL on all new connections based on the value
+       passed to :func:`_sa.create_engine` using the ``client_encoding`` parameter::
+       
+           engine = create_engine(
+               "postgresql+pg8000://user:pass@host/dbname", client_encoding='utf8')
+       
+       .. _pg8000_ssl:
+       
+       SSL Connections
+       ---------------
+       
+       pg8000 accepts a Python ``SSLContext`` object which may be specified using the
+       :paramref:`_sa.create_engine.connect_args` dictionary::
+       
+           import ssl
+           ssl_context = ssl.create_default_context()
+           engine = sa.create_engine(
+               "postgresql+pg8000://scott:tiger@192.168.0.199/test",
+               connect_args={"ssl_context": ssl_context},
+           )
+       
+       If the server uses an automatically-generated certificate that is self-signed
+       or does not match the host name (as seen from the client), it may also be
+       necessary to disable hostname checking::
+       
+           import ssl
+           ssl_context = ssl.create_default_context()
+           ssl_context.check_hostname = False
+           ssl_context.verify_mode = ssl.CERT_NONE
+           engine = sa.create_engine(
+               "postgresql+pg8000://scott:tiger@192.168.0.199/test",
+               connect_args={"ssl_context": ssl_context},
+           )
+       
+       .. _pg8000_isolation_level:
+       
+       pg8000 Transaction Isolation Level
+       -------------------------------------
+       
+       The pg8000 dialect offers the same isolation level settings as that
+       of the :ref:`psycopg2 <psycopg2_isolation_level>` dialect:
+       
+       * ``READ COMMITTED``
+       * ``READ UNCOMMITTED``
+       * ``REPEATABLE READ``
+       * ``SERIALIZABLE``
+       * ``AUTOCOMMIT``
+       
+       .. seealso::
+       
+           :ref:`postgresql_isolation_level`
+       
+           :ref:`psycopg2_isolation_level`
+       
+       
+       """  # noqa
+    1: import decimal
+    1: import re
+       
+    1: from . import ranges
+    1: from .array import ARRAY as PGARRAY
+    1: from .base import _DECIMAL_TYPES
+    1: from .base import _FLOAT_TYPES
+    1: from .base import _INT_TYPES
+    1: from .base import ENUM
+    1: from .base import INTERVAL
+    1: from .base import PGCompiler
+    1: from .base import PGDialect
+    1: from .base import PGExecutionContext
+    1: from .base import PGIdentifierPreparer
+    1: from .json import JSON
+    1: from .json import JSONB
+    1: from .json import JSONPathType
+    1: from .pg_catalog import _SpaceVector
+    1: from .pg_catalog import OIDVECTOR
+    1: from .types import CITEXT
+    1: from ... import exc
+    1: from ... import util
+    1: from ...engine import processors
+    1: from ...sql import sqltypes
+    1: from ...sql.elements import quoted_name
+       
+       
+    2: class _PGString(sqltypes.String):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGNumeric(sqltypes.Numeric):
+    1:     render_bind_cast = True
+       
+    1:     def result_processor(self, dialect, coltype):
+>>>>>>         if self.asdecimal:
+>>>>>>             if coltype in _FLOAT_TYPES:
+>>>>>>                 return processors.to_decimal_processor_factory(
+>>>>>>                     decimal.Decimal, self._effective_decimal_return_scale
+                       )
+>>>>>>             elif coltype in _DECIMAL_TYPES or coltype in _INT_TYPES:
+                       # pg8000 returns Decimal natively for 1700
+>>>>>>                 return None
+                   else:
+>>>>>>                 raise exc.InvalidRequestError(
+>>>>>>                     "Unknown PG numeric type: %d" % coltype
+                       )
+               else:
+>>>>>>             if coltype in _FLOAT_TYPES:
+                       # pg8000 returns float natively for 701
+>>>>>>                 return None
+>>>>>>             elif coltype in _DECIMAL_TYPES or coltype in _INT_TYPES:
+>>>>>>                 return processors.to_float
+                   else:
+>>>>>>                 raise exc.InvalidRequestError(
+>>>>>>                     "Unknown PG numeric type: %d" % coltype
+                       )
+       
+       
+    2: class _PGFloat(_PGNumeric, sqltypes.Float):
+    1:     __visit_name__ = "float"
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGNumericNoBind(_PGNumeric):
+    1:     def bind_processor(self, dialect):
+>>>>>>         return None
+       
+       
+    2: class _PGJSON(JSON):
+    1:     render_bind_cast = True
+       
+    1:     def result_processor(self, dialect, coltype):
+>>>>>>         return None
+       
+       
+    2: class _PGJSONB(JSONB):
+    1:     render_bind_cast = True
+       
+    1:     def result_processor(self, dialect, coltype):
+>>>>>>         return None
+       
+       
+    2: class _PGJSONIndexType(sqltypes.JSON.JSONIndexType):
+    1:     def get_dbapi_type(self, dbapi):
+>>>>>>         raise NotImplementedError("should not be here")
+       
+       
+    2: class _PGJSONIntIndexType(sqltypes.JSON.JSONIntIndexType):
+    1:     __visit_name__ = "json_int_index"
+       
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGJSONStrIndexType(sqltypes.JSON.JSONStrIndexType):
+    1:     __visit_name__ = "json_str_index"
+       
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGJSONPathType(JSONPathType):
+    1:     pass
+       
+           # DBAPI type 1009
+       
+       
+    2: class _PGEnum(ENUM):
+    1:     def get_dbapi_type(self, dbapi):
+>>>>>>         return dbapi.UNKNOWN
+       
+       
+    2: class _PGInterval(INTERVAL):
+    1:     render_bind_cast = True
+       
+    1:     def get_dbapi_type(self, dbapi):
+>>>>>>         return dbapi.INTERVAL
+       
+    1:     @classmethod
+    1:     def adapt_emulated_to_native(cls, interval, **kw):
+>>>>>>         return _PGInterval(precision=interval.second_precision)
+       
+       
+    2: class _PGTimeStamp(sqltypes.DateTime):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGDate(sqltypes.Date):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGTime(sqltypes.Time):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGInteger(sqltypes.Integer):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGSmallInteger(sqltypes.SmallInteger):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGNullType(sqltypes.NullType):
+    1:     pass
+       
+       
+    2: class _PGBigInteger(sqltypes.BigInteger):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGBoolean(sqltypes.Boolean):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGARRAY(PGARRAY):
+    1:     render_bind_cast = True
+       
+       
+    2: class _PGOIDVECTOR(_SpaceVector, OIDVECTOR):
+    1:     pass
+       
+       
+    2: class _Pg8000Range(ranges.AbstractSingleRangeImpl):
+    1:     def bind_processor(self, dialect):
+>>>>>>         pg8000_Range = dialect.dbapi.Range
+       
+>>>>>>         def to_range(value):
+>>>>>>             if isinstance(value, ranges.Range):
+>>>>>>                 value = pg8000_Range(
+>>>>>>                     value.lower, value.upper, value.bounds, value.empty
+                       )
+>>>>>>             return value
+       
+>>>>>>         return to_range
+       
+    1:     def result_processor(self, dialect, coltype):
+>>>>>>         def to_range(value):
+>>>>>>             if value is not None:
+>>>>>>                 value = ranges.Range(
+>>>>>>                     value.lower,
+>>>>>>                     value.upper,
+>>>>>>                     bounds=value.bounds,
+>>>>>>                     empty=value.is_empty,
+                       )
+>>>>>>             return value
+       
+>>>>>>         return to_range
+       
+       
+    2: class _Pg8000MultiRange(ranges.AbstractMultiRangeImpl):
+    1:     def bind_processor(self, dialect):
+>>>>>>         pg8000_Range = dialect.dbapi.Range
+       
+>>>>>>         def to_multirange(value):
+>>>>>>             if isinstance(value, list):
+>>>>>>                 mr = []
+>>>>>>                 for v in value:
+>>>>>>                     if isinstance(v, ranges.Range):
+>>>>>>                         mr.append(
+>>>>>>                             pg8000_Range(v.lower, v.upper, v.bounds, v.empty)
+                               )
+                           else:
+>>>>>>                         mr.append(v)
+>>>>>>                 return mr
+                   else:
+>>>>>>                 return value
+       
+>>>>>>         return to_multirange
+       
+    1:     def result_processor(self, dialect, coltype):
+>>>>>>         def to_multirange(value):
+>>>>>>             if value is None:
+>>>>>>                 return None
+                   else:
+>>>>>>                 return ranges.MultiRange(
+>>>>>>                     ranges.Range(
+>>>>>>                         v.lower, v.upper, bounds=v.bounds, empty=v.is_empty
+                           )
+>>>>>>                     for v in value
+                       )
+       
+>>>>>>         return to_multirange
+       
+       
+    1: _server_side_id = util.counter()
+       
+       
+    2: class PGExecutionContext_pg8000(PGExecutionContext):
+    1:     def create_server_side_cursor(self):
+>>>>>>         ident = "c_%s_%s" % (hex(id(self))[2:], hex(_server_side_id())[2:])
+>>>>>>         return ServerSideCursor(self._dbapi_connection.cursor(), ident)
+       
+    1:     def pre_exec(self):
+    4:         if not self.compiled:
+    3:             return
+       
+       
+    2: class ServerSideCursor:
+    1:     server_side = True
+       
+    1:     def __init__(self, cursor, ident):
+>>>>>>         self.ident = ident
+>>>>>>         self.cursor = cursor
+       
+    1:     @property
+    1:     def connection(self):
+>>>>>>         return self.cursor.connection
+       
+    1:     @property
+    1:     def rowcount(self):
+>>>>>>         return self.cursor.rowcount
+       
+    1:     @property
+    1:     def description(self):
+>>>>>>         return self.cursor.description
+       
+    1:     def execute(self, operation, args=(), stream=None):
+>>>>>>         op = "DECLARE " + self.ident + " NO SCROLL CURSOR FOR " + operation
+>>>>>>         self.cursor.execute(op, args, stream=stream)
+>>>>>>         return self
+       
+    1:     def executemany(self, operation, param_sets):
+>>>>>>         self.cursor.executemany(operation, param_sets)
+>>>>>>         return self
+       
+    1:     def fetchone(self):
+>>>>>>         self.cursor.execute("FETCH FORWARD 1 FROM " + self.ident)
+>>>>>>         return self.cursor.fetchone()
+       
+    1:     def fetchmany(self, num=None):
+>>>>>>         if num is None:
+>>>>>>             return self.fetchall()
+               else:
+>>>>>>             self.cursor.execute(
+>>>>>>                 "FETCH FORWARD " + str(int(num)) + " FROM " + self.ident
+                   )
+>>>>>>             return self.cursor.fetchall()
+       
+    1:     def fetchall(self):
+>>>>>>         self.cursor.execute("FETCH FORWARD ALL FROM " + self.ident)
+>>>>>>         return self.cursor.fetchall()
+       
+    1:     def close(self):
+>>>>>>         self.cursor.execute("CLOSE " + self.ident)
+>>>>>>         self.cursor.close()
+       
+    1:     def setinputsizes(self, *sizes):
+>>>>>>         self.cursor.setinputsizes(*sizes)
+       
+    1:     def setoutputsize(self, size, column=None):
+>>>>>>         pass
+       
+       
+    2: class PGCompiler_pg8000(PGCompiler):
+    1:     def visit_mod_binary(self, binary, operator, **kw):
+>>>>>>         return (
+>>>>>>             self.process(binary.left, **kw)
+>>>>>>             + " %% "
+>>>>>>             + self.process(binary.right, **kw)
+               )
+       
+       
+    2: class PGIdentifierPreparer_pg8000(PGIdentifierPreparer):
+    1:     def __init__(self, *args, **kwargs):
+    1:         PGIdentifierPreparer.__init__(self, *args, **kwargs)
+    1:         self._double_percents = False
+       
+       
+    2: class PGDialect_pg8000(PGDialect):
+    1:     driver = "pg8000"
+    1:     supports_statement_cache = True
+       
+    1:     supports_unicode_statements = True
+       
+    1:     supports_unicode_binds = True
+       
+    1:     default_paramstyle = "format"
+    1:     supports_sane_multi_rowcount = True
+    1:     execution_ctx_cls = PGExecutionContext_pg8000
+    1:     statement_compiler = PGCompiler_pg8000
+    1:     preparer = PGIdentifierPreparer_pg8000
+    1:     supports_server_side_cursors = True
+       
+    1:     render_bind_cast = True
+       
+           # reversed as of pg8000 1.16.6.  1.16.5 and lower
+           # are no longer compatible
+    1:     description_encoding = None
+           # description_encoding = "use_encoding"
+       
+    2:     colspecs = util.update_copy(
+    1:         PGDialect.colspecs,
+    1:         {
+    1:             sqltypes.String: _PGString,
+    1:             sqltypes.Numeric: _PGNumericNoBind,
+    1:             sqltypes.Float: _PGFloat,
+    1:             sqltypes.JSON: _PGJSON,
+    1:             sqltypes.Boolean: _PGBoolean,
+    1:             sqltypes.NullType: _PGNullType,
+    1:             JSONB: _PGJSONB,
+    1:             CITEXT: CITEXT,
+    1:             sqltypes.JSON.JSONPathType: _PGJSONPathType,
+    1:             sqltypes.JSON.JSONIndexType: _PGJSONIndexType,
+    1:             sqltypes.JSON.JSONIntIndexType: _PGJSONIntIndexType,
+    1:             sqltypes.JSON.JSONStrIndexType: _PGJSONStrIndexType,
+    1:             sqltypes.Interval: _PGInterval,
+    1:             INTERVAL: _PGInterval,
+    1:             sqltypes.DateTime: _PGTimeStamp,
+    1:             sqltypes.DateTime: _PGTimeStamp,
+    1:             sqltypes.Date: _PGDate,
+    1:             sqltypes.Time: _PGTime,
+    1:             sqltypes.Integer: _PGInteger,
+    1:             sqltypes.SmallInteger: _PGSmallInteger,
+    1:             sqltypes.BigInteger: _PGBigInteger,
+    1:             sqltypes.Enum: _PGEnum,
+    1:             sqltypes.ARRAY: _PGARRAY,
+    1:             OIDVECTOR: _PGOIDVECTOR,
+    1:             ranges.INT4RANGE: _Pg8000Range,
+    1:             ranges.INT8RANGE: _Pg8000Range,
+    1:             ranges.NUMRANGE: _Pg8000Range,
+    1:             ranges.DATERANGE: _Pg8000Range,
+    1:             ranges.TSRANGE: _Pg8000Range,
+    1:             ranges.TSTZRANGE: _Pg8000Range,
+    1:             ranges.INT4MULTIRANGE: _Pg8000MultiRange,
+    1:             ranges.INT8MULTIRANGE: _Pg8000MultiRange,
+    1:             ranges.NUMMULTIRANGE: _Pg8000MultiRange,
+    1:             ranges.DATEMULTIRANGE: _Pg8000MultiRange,
+    1:             ranges.TSMULTIRANGE: _Pg8000MultiRange,
+    1:             ranges.TSTZMULTIRANGE: _Pg8000MultiRange,
+               },
+           )
+       
+    1:     def __init__(self, client_encoding=None, **kwargs):
+    1:         PGDialect.__init__(self, **kwargs)
+    1:         self.client_encoding = client_encoding
+       
+    1:         if self._dbapi_version < (1, 16, 6):
+>>>>>>             raise NotImplementedError("pg8000 1.16.6 or greater is required")
+       
+    1:         if self._native_inet_types:
+>>>>>>             raise NotImplementedError(
+>>>>>>                 "The pg8000 dialect does not fully implement "
+                       "ipaddress type handling; INET is supported by default, "
+                       "CIDR is not"
+                   )
+       
+    1:     @util.memoized_property
+    1:     def _dbapi_version(self):
+    1:         if self.dbapi and hasattr(self.dbapi, "__version__"):
+    2:             return tuple(
+    6:                 [
+    3:                     int(x)
+    5:                     for x in re.findall(
+    1:                         r"(\d+)(?:[-\.]?|$)", self.dbapi.__version__
+                           )
+                       ]
+                   )
+               else:
+>>>>>>             return (99, 99, 99)
+       
+    1:     @classmethod
+    1:     def import_dbapi(cls):
+    1:         return __import__("pg8000")
+       
+    1:     def create_connect_args(self, url):
+    1:         opts = url.translate_connect_args(username="user")
+    1:         if "port" in opts:
+    1:             opts["port"] = int(opts["port"])
+    1:         opts.update(url.query)
+    1:         return ([], opts)
+       
+    1:     def is_disconnect(self, e, connection, cursor):
+>>>>>>         if isinstance(e, self.dbapi.InterfaceError) and "network error" in str(
+>>>>>>             e
+               ):
+                   # new as of pg8000 1.19.0 for broken connections
+>>>>>>             return True
+       
+               # connection was closed normally
+>>>>>>         return "connection is closed" in str(e)
+       
+    1:     def get_isolation_level_values(self, dbapi_connection):
+>>>>>>         return (
+                   "AUTOCOMMIT",
+                   "READ COMMITTED",
+                   "READ UNCOMMITTED",
+                   "REPEATABLE READ",
+                   "SERIALIZABLE",
+               )
+       
+    1:     def set_isolation_level(self, dbapi_connection, level):
+>>>>>>         level = level.replace("_", " ")
+       
+>>>>>>         if level == "AUTOCOMMIT":
+>>>>>>             dbapi_connection.autocommit = True
+               else:
+>>>>>>             dbapi_connection.autocommit = False
+>>>>>>             cursor = dbapi_connection.cursor()
+>>>>>>             cursor.execute(
+>>>>>>                 "SET SESSION CHARACTERISTICS AS TRANSACTION "
+>>>>>>                 f"ISOLATION LEVEL {level}"
+                   )
+>>>>>>             cursor.execute("COMMIT")
+>>>>>>             cursor.close()
+       
+    1:     def set_readonly(self, connection, value):
+>>>>>>         cursor = connection.cursor()
+>>>>>>         try:
+>>>>>>             cursor.execute(
+>>>>>>                 "SET SESSION CHARACTERISTICS AS TRANSACTION %s"
+>>>>>>                 % ("READ ONLY" if value else "READ WRITE")
+                   )
+>>>>>>             cursor.execute("COMMIT")
+               finally:
+>>>>>>             cursor.close()
+       
+    1:     def get_readonly(self, connection):
+>>>>>>         cursor = connection.cursor()
+>>>>>>         try:
+>>>>>>             cursor.execute("show transaction_read_only")
+>>>>>>             val = cursor.fetchone()[0]
+               finally:
+>>>>>>             cursor.close()
+       
+>>>>>>         return val == "on"
+       
+    1:     def set_deferrable(self, connection, value):
+>>>>>>         cursor = connection.cursor()
+>>>>>>         try:
+>>>>>>             cursor.execute(
+>>>>>>                 "SET SESSION CHARACTERISTICS AS TRANSACTION %s"
+>>>>>>                 % ("DEFERRABLE" if value else "NOT DEFERRABLE")
+                   )
+>>>>>>             cursor.execute("COMMIT")
+               finally:
+>>>>>>             cursor.close()
+       
+    1:     def get_deferrable(self, connection):
+>>>>>>         cursor = connection.cursor()
+>>>>>>         try:
+>>>>>>             cursor.execute("show transaction_deferrable")
+>>>>>>             val = cursor.fetchone()[0]
+               finally:
+>>>>>>             cursor.close()
+       
+>>>>>>         return val == "on"
+       
+    1:     def _set_client_encoding(self, dbapi_connection, client_encoding):
+>>>>>>         cursor = dbapi_connection.cursor()
+>>>>>>         cursor.execute(
+>>>>>>             f"""SET CLIENT_ENCODING TO '{
+>>>>>>                 client_encoding.replace("'", "''")
+                   }'"""
+               )
+>>>>>>         cursor.execute("COMMIT")
+>>>>>>         cursor.close()
+       
+    1:     def do_begin_twophase(self, connection, xid):
+>>>>>>         connection.connection.tpc_begin((0, xid, ""))
+       
+    1:     def do_prepare_twophase(self, connection, xid):
+>>>>>>         connection.connection.tpc_prepare()
+       
+    1:     def do_rollback_twophase(
+               self, connection, xid, is_prepared=True, recover=False
+           ):
+>>>>>>         connection.connection.tpc_rollback((0, xid, ""))
+       
+    1:     def do_commit_twophase(
+               self, connection, xid, is_prepared=True, recover=False
+           ):
+>>>>>>         connection.connection.tpc_commit((0, xid, ""))
+       
+    1:     def do_recover_twophase(self, connection):
+>>>>>>         return [row[1] for row in connection.connection.tpc_recover()]
+       
+    1:     def on_connect(self):
+    1:         fns = []
+       
+    1:         def on_connect(conn):
+    1:             conn.py_types[quoted_name] = conn.py_types[str]
+       
+    1:         fns.append(on_connect)
+       
+    1:         if self.client_encoding is not None:
+       
+>>>>>>             def on_connect(conn):
+>>>>>>                 self._set_client_encoding(conn, self.client_encoding)
+       
+>>>>>>             fns.append(on_connect)
+       
+    1:         if self._native_inet_types is False:
+       
+>>>>>>             def on_connect(conn):
+                       # inet
+>>>>>>                 conn.register_in_adapter(869, lambda s: s)
+       
+                       # cidr
+>>>>>>                 conn.register_in_adapter(650, lambda s: s)
+       
+>>>>>>             fns.append(on_connect)
+       
+    1:         if self._json_deserializer:
+       
+>>>>>>             def on_connect(conn):
+                       # json
+>>>>>>                 conn.register_in_adapter(114, self._json_deserializer)
+       
+                       # jsonb
+>>>>>>                 conn.register_in_adapter(3802, self._json_deserializer)
+       
+>>>>>>             fns.append(on_connect)
+       
+    1:         if len(fns) > 0:
+       
+    1:             def on_connect(conn):
+    2:                 for fn in fns:
+    1:                     fn(conn)
+       
+    1:             return on_connect
+               else:
+>>>>>>             return None
+       
+    1:     @util.memoized_property
+    1:     def _dialect_specific_select_one(self):
+>>>>>>         return ";"
+       
+       
+    1: dialect = PGDialect_pg8000

@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime, date
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, text
 import uuid
 import os
 from db import get_db
@@ -29,13 +29,31 @@ from config import (
 from utils.referrals import get_unique_referral_code
 from utils.user_level_service import get_level_progress
 from utils.trivia_mode_service import get_active_draw_date, get_today_in_app_timezone
-from utils.subscription_service import check_mode_access
+from utils.subscription_service import check_mode_access, get_modes_access_status
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
 client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOPE_MANAGEMENT_KEY, jwt_validation_leeway=DESCOPE_JWT_LEEWAY)
 
+# Cache schema check to avoid per-request DDL.
+_gender_column_checked = False
+
 # ======== Helper Functions ========
+
+def _ensure_gender_column(db: Session) -> None:
+    global _gender_column_checked
+    if _gender_column_checked:
+        return
+    connection = None
+    try:
+        connection = db.bind.connect()
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR"))
+    except Exception as e:
+        logging.error(f"Failed to ensure gender column exists: {e}")
+    finally:
+        if connection is not None:
+            connection.close()
+        _gender_column_checked = True
 
 def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
     """
@@ -129,85 +147,80 @@ def get_subscription_badges(user: User, db: Session) -> List[Dict[str, Any]]:
     """
     subscription_badges = []
     
-    # Check for active bronze ($5) subscription
-    bronze_subscription = db.query(UserSubscription).join(SubscriptionPlan).filter(
+    active_subscriptions = db.query(
+        SubscriptionPlan.unit_amount_minor,
+        SubscriptionPlan.price_usd
+    ).join(UserSubscription).filter(
         and_(
             UserSubscription.user_id == user.account_id,
             UserSubscription.status == 'active',
+            UserSubscription.current_period_end > datetime.utcnow(),
             or_(
-                SubscriptionPlan.unit_amount_minor == 500,  # $5.00 in cents
-                SubscriptionPlan.price_usd == 5.0
-            ),
-            UserSubscription.current_period_end > datetime.utcnow()
+                SubscriptionPlan.unit_amount_minor.in_([500, 1000]),
+                SubscriptionPlan.price_usd.in_([5.0, 10.0])
+            )
         )
-    ).first()
-    
-    if bronze_subscription:
-        # Get bronze badge from trivia_mode_config - try multiple possible mode_id patterns or match by name
-        bronze_badge = None
-        # First try exact matches
+    ).all()
+
+    has_bronze = any(
+        unit_amount_minor == 500 or price_usd == 5.0
+        for unit_amount_minor, price_usd in active_subscriptions
+    )
+    has_silver = any(
+        unit_amount_minor == 1000 or price_usd == 10.0
+        for unit_amount_minor, price_usd in active_subscriptions
+    )
+
+    badge_map = {}
+    if has_bronze or has_silver:
+        badge_candidates = ['bronze', 'bronze_badge', 'brone_badge', 'brone', 'silver', 'silver_badge']
+        badges = db.query(TriviaModeConfig).filter(
+            TriviaModeConfig.mode_id.in_(badge_candidates),
+            TriviaModeConfig.badge_image_url.isnot(None)
+        ).all()
+        badge_map = {badge.mode_id: badge for badge in badges}
+
+    bronze_badge = None
+    if has_bronze:
         for mode_id in ['bronze', 'bronze_badge', 'brone_badge', 'brone']:
-            bronze_badge = db.query(TriviaModeConfig).filter(
-                TriviaModeConfig.mode_id == mode_id,
-                TriviaModeConfig.badge_image_url.isnot(None)
-            ).first()
+            bronze_badge = badge_map.get(mode_id)
             if bronze_badge:
                 break
-        # If not found, try case-insensitive name match
         if not bronze_badge:
             bronze_badge = db.query(TriviaModeConfig).filter(
                 TriviaModeConfig.mode_name.ilike('%bronze%'),
                 TriviaModeConfig.badge_image_url.isnot(None)
             ).first()
-        
-        if bronze_badge and bronze_badge.badge_image_url:
-            subscription_badges.append({
-                "id": bronze_badge.mode_id,
-                "name": bronze_badge.mode_name,
-                "image_url": bronze_badge.badge_image_url,
-                "subscription_type": "bronze",
-                "price": 5.0
-            })
-    
-    # Check for active silver ($10) subscription
-    silver_subscription = db.query(UserSubscription).join(SubscriptionPlan).filter(
-        and_(
-            UserSubscription.user_id == user.account_id,
-            UserSubscription.status == 'active',
-            or_(
-                SubscriptionPlan.unit_amount_minor == 1000,  # $10.00 in cents
-                SubscriptionPlan.price_usd == 10.0
-            ),
-            UserSubscription.current_period_end > datetime.utcnow()
-        )
-    ).first()
-    
-    if silver_subscription:
-        # Get silver badge from trivia_mode_config - try multiple possible mode_id patterns or match by name
-        silver_badge = None
-        # First try exact matches
+
+    if bronze_badge and bronze_badge.badge_image_url:
+        subscription_badges.append({
+            "id": bronze_badge.mode_id,
+            "name": bronze_badge.mode_name,
+            "image_url": bronze_badge.badge_image_url,
+            "subscription_type": "bronze",
+            "price": 5.0
+        })
+
+    silver_badge = None
+    if has_silver:
         for mode_id in ['silver', 'silver_badge']:
-            silver_badge = db.query(TriviaModeConfig).filter(
-                TriviaModeConfig.mode_id == mode_id,
-                TriviaModeConfig.badge_image_url.isnot(None)
-            ).first()
+            silver_badge = badge_map.get(mode_id)
             if silver_badge:
                 break
-        # If not found, try case-insensitive name match
         if not silver_badge:
             silver_badge = db.query(TriviaModeConfig).filter(
                 TriviaModeConfig.mode_name.ilike('%silver%'),
                 TriviaModeConfig.badge_image_url.isnot(None)
             ).first()
-        
-        if silver_badge and silver_badge.badge_image_url:
-            subscription_badges.append({
-                "id": silver_badge.mode_id,
-                "name": silver_badge.mode_name,
-                "image_url": silver_badge.badge_image_url,
-                "subscription_type": "silver",
-                "price": 10.0
-            })
+
+    if silver_badge and silver_badge.badge_image_url:
+        subscription_badges.append({
+            "id": silver_badge.mode_id,
+            "name": silver_badge.mode_name,
+            "image_url": silver_badge.badge_image_url,
+            "subscription_type": "silver",
+            "price": 10.0
+        })
     
     return subscription_badges
 
@@ -307,11 +320,7 @@ async def update_extended_profile(
             user.country_code = profile.country_code
         
         if profile.gender is not None:
-            # Add gender field if it doesn't exist
-            if not hasattr(user, 'gender'):
-                connection = db.bind.connect()
-                connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR")
-                connection.close()
+            _ensure_gender_column(db)
             user.gender = profile.gender
         
         # Update address fields if provided
@@ -839,10 +848,10 @@ async def get_all_modes_status(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Check access for each mode
-    free_mode_access = check_mode_access(db, user, 'free_mode')
-    bronze_mode_access = check_mode_access(db, user, 'bronze')
-    silver_mode_access = check_mode_access(db, user, 'silver')
+    access_map = get_modes_access_status(db, user, ['free_mode', 'bronze', 'silver'])
+    free_mode_access = access_map.get('free_mode', {})
+    bronze_mode_access = access_map.get('bronze', {})
+    silver_mode_access = access_map.get('silver', {})
     
     return {
         'free_mode': {

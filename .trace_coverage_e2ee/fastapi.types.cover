@@ -1,0 +1,10 @@
+    1: import types
+    1: from enum import Enum
+    1: from typing import Any, Callable, Dict, Set, Type, TypeVar, Union
+       
+    1: from pydantic import BaseModel
+       
+    1: DecoratedCallable = TypeVar("DecoratedCallable", bound=Callable[..., Any])
+    1: UnionType = getattr(types, "UnionType", Union)
+    1: ModelNameMap = Dict[Union[Type[BaseModel], Type[Enum]], str]
+    1: IncEx = Union[Set[int], Set[str], Dict[int, Any], Dict[str, Any]]

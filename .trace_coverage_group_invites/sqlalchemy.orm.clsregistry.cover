@@ -1,0 +1,570 @@
+       # orm/clsregistry.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """Routines to handle the string class registry used by declarative.
+       
+       This system allows specification of classes and expressions used in
+       :func:`_orm.relationship` using strings.
+       
+       """
+       
+    1: from __future__ import annotations
+       
+    1: import re
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import cast
+    1: from typing import Dict
+    1: from typing import Generator
+    1: from typing import Iterable
+    1: from typing import List
+    1: from typing import Mapping
+    1: from typing import MutableMapping
+    1: from typing import NoReturn
+    1: from typing import Optional
+    1: from typing import Set
+    1: from typing import Tuple
+    1: from typing import Type
+    1: from typing import TYPE_CHECKING
+    1: from typing import TypeVar
+    1: from typing import Union
+    1: import weakref
+       
+    1: from . import attributes
+    1: from . import interfaces
+    1: from .descriptor_props import SynonymProperty
+    1: from .properties import ColumnProperty
+    1: from .util import class_mapper
+    1: from .. import exc
+    1: from .. import inspection
+    1: from .. import util
+    1: from ..sql.schema import _get_table_key
+    1: from ..util.typing import CallableReference
+       
+    1: if TYPE_CHECKING:
+>>>>>>     from .relationships import RelationshipProperty
+>>>>>>     from ..sql.schema import MetaData
+>>>>>>     from ..sql.schema import Table
+       
+    1: _T = TypeVar("_T", bound=Any)
+       
+    1: _ClsRegistryType = MutableMapping[str, Union[type, "ClsRegistryToken"]]
+       
+       # strong references to registries which we place in
+       # the _decl_class_registry, which is usually weak referencing.
+       # the internal registries here link to classes with weakrefs and remove
+       # themselves when all references to contained classes are removed.
+    1: _registries: Set[ClsRegistryToken] = set()
+       
+       
+    1: def add_class(
+           classname: str, cls: Type[_T], decl_class_registry: _ClsRegistryType
+       ) -> None:
+           """Add a class to the _decl_class_registry associated with the
+           given declarative class.
+       
+           """
+   50:     if classname in decl_class_registry:
+               # class already exists.
+>>>>>>         existing = decl_class_registry[classname]
+>>>>>>         if not isinstance(existing, _MultipleClassMarker):
+>>>>>>             existing = decl_class_registry[classname] = _MultipleClassMarker(
+>>>>>>                 [cls, cast("Type[Any]", existing)]
+                   )
+           else:
+   50:         decl_class_registry[classname] = cls
+       
+   50:     try:
+   99:         root_module = cast(
+   50:             _ModuleMarker, decl_class_registry["_sa_module_registry"]
+               )
+    1:     except KeyError:
+    1:         decl_class_registry["_sa_module_registry"] = root_module = (
+    1:             _ModuleMarker("_sa_module_registry", None)
+               )
+       
+   50:     tokens = cls.__module__.split(".")
+       
+           # build up a tree like this:
+           # modulename:  myapp.snacks.nuts
+           #
+           # myapp->snack->nuts->(classes)
+           # snack->nuts->(classes)
+           # nuts->(classes)
+           #
+           # this allows partial token paths to be used.
+  100:     while tokens:
+   50:         token = tokens.pop(0)
+   50:         module = root_module.get_module(token)
+   50:         for token in tokens:
+>>>>>>             module = module.get_module(token)
+       
+   50:         try:
+   50:             module.add_class(classname, cls)
+>>>>>>         except AttributeError as ae:
+>>>>>>             if not isinstance(module, _ModuleMarker):
+>>>>>>                 raise exc.InvalidRequestError(
+>>>>>>                     f'name "{classname}" matches both a '
+                           "class name and a module name"
+>>>>>>                 ) from ae
+                   else:
+>>>>>>                 raise
+       
+       
+    1: def remove_class(
+           classname: str, cls: Type[Any], decl_class_registry: _ClsRegistryType
+       ) -> None:
+>>>>>>     if classname in decl_class_registry:
+>>>>>>         existing = decl_class_registry[classname]
+>>>>>>         if isinstance(existing, _MultipleClassMarker):
+>>>>>>             existing.remove_item(cls)
+               else:
+>>>>>>             del decl_class_registry[classname]
+       
+>>>>>>     try:
+>>>>>>         root_module = cast(
+>>>>>>             _ModuleMarker, decl_class_registry["_sa_module_registry"]
+               )
+>>>>>>     except KeyError:
+>>>>>>         return
+       
+>>>>>>     tokens = cls.__module__.split(".")
+       
+>>>>>>     while tokens:
+>>>>>>         token = tokens.pop(0)
+>>>>>>         module = root_module.get_module(token)
+>>>>>>         for token in tokens:
+>>>>>>             module = module.get_module(token)
+>>>>>>         try:
+>>>>>>             module.remove_class(classname, cls)
+>>>>>>         except AttributeError:
+>>>>>>             if not isinstance(module, _ModuleMarker):
+>>>>>>                 pass
+                   else:
+>>>>>>                 raise
+       
+       
+    1: def _key_is_empty(
+           key: str,
+           decl_class_registry: _ClsRegistryType,
+           test: Callable[[Any], bool],
+       ) -> bool:
+           """test if a key is empty of a certain object.
+       
+           used for unit tests against the registry to see if garbage collection
+           is working.
+       
+           "test" is a callable that will be passed an object should return True
+           if the given object is the one we were looking for.
+       
+           We can't pass the actual object itself b.c. this is for testing garbage
+           collection; the caller will have to have removed references to the
+           object itself.
+       
+           """
+>>>>>>     if key not in decl_class_registry:
+>>>>>>         return True
+       
+>>>>>>     thing = decl_class_registry[key]
+>>>>>>     if isinstance(thing, _MultipleClassMarker):
+>>>>>>         for sub_thing in thing.contents:
+>>>>>>             if test(sub_thing):
+>>>>>>                 return False
+               else:
+>>>>>>             raise NotImplementedError("unknown codepath")
+           else:
+>>>>>>         return not test(thing)
+       
+       
+    2: class ClsRegistryToken:
+    1:     """an object that can be in the registry._class_registry as a value."""
+       
+    1:     __slots__ = ()
+       
+       
+    2: class _MultipleClassMarker(ClsRegistryToken):
+    1:     """refers to multiple classes of the same name
+           within _decl_class_registry.
+       
+           """
+       
+    1:     __slots__ = "on_remove", "contents", "__weakref__"
+       
+    1:     contents: Set[weakref.ref[Type[Any]]]
+    1:     on_remove: CallableReference[Optional[Callable[[], None]]]
+       
+    1:     def __init__(
+               self,
+               classes: Iterable[Type[Any]],
+               on_remove: Optional[Callable[[], None]] = None,
+           ):
+   50:         self.on_remove = on_remove
+  200:         self.contents = {
+  100:             weakref.ref(item, self._remove_item) for item in classes
+               }
+   50:         _registries.add(self)
+       
+    1:     def remove_item(self, cls: Type[Any]) -> None:
+>>>>>>         self._remove_item(weakref.ref(cls))
+       
+    1:     def __iter__(self) -> Generator[Optional[Type[Any]], None, None]:
+>>>>>>         return (ref() for ref in self.contents)
+       
+    1:     def attempt_get(self, path: List[str], key: str) -> Type[Any]:
+>>>>>>         if len(self.contents) > 1:
+>>>>>>             raise exc.InvalidRequestError(
+>>>>>>                 'Multiple classes found for path "%s" '
+                       "in the registry of this declarative "
+                       "base. Please use a fully module-qualified path."
+>>>>>>                 % (".".join(path + [key]))
+                   )
+               else:
+>>>>>>             ref = list(self.contents)[0]
+>>>>>>             cls = ref()
+>>>>>>             if cls is None:
+>>>>>>                 raise NameError(key)
+>>>>>>             return cls
+       
+    1:     def _remove_item(self, ref: weakref.ref[Type[Any]]) -> None:
+>>>>>>         self.contents.discard(ref)
+>>>>>>         if not self.contents:
+>>>>>>             _registries.discard(self)
+>>>>>>             if self.on_remove:
+>>>>>>                 self.on_remove()
+       
+    1:     def add_item(self, item: Type[Any]) -> None:
+               # protect against class registration race condition against
+               # asynchronous garbage collection calling _remove_item,
+               # [ticket:3208] and [ticket:10782]
+>>>>>>         modules = {
+>>>>>>             cls.__module__
+>>>>>>             for cls in [ref() for ref in list(self.contents)]
+>>>>>>             if cls is not None
+               }
+>>>>>>         if item.__module__ in modules:
+>>>>>>             util.warn(
+>>>>>>                 "This declarative base already contains a class with the "
+                       "same class name and module name as %s.%s, and will "
+                       "be replaced in the string-lookup table."
+>>>>>>                 % (item.__module__, item.__name__)
+                   )
+>>>>>>         self.contents.add(weakref.ref(item, self._remove_item))
+       
+       
+    2: class _ModuleMarker(ClsRegistryToken):
+    1:     """Refers to a module name within
+           _decl_class_registry.
+       
+           """
+       
+    1:     __slots__ = "parent", "name", "contents", "mod_ns", "path", "__weakref__"
+       
+    1:     parent: Optional[_ModuleMarker]
+    1:     contents: Dict[str, Union[_ModuleMarker, _MultipleClassMarker]]
+    1:     mod_ns: _ModNS
+    1:     path: List[str]
+       
+    1:     def __init__(self, name: str, parent: Optional[_ModuleMarker]):
+    3:         self.parent = parent
+    3:         self.name = name
+    3:         self.contents = {}
+    3:         self.mod_ns = _ModNS(self)
+    3:         if self.parent:
+    2:             self.path = self.parent.path + [self.name]
+               else:
+    1:             self.path = []
+    3:         _registries.add(self)
+       
+    1:     def __contains__(self, name: str) -> bool:
+>>>>>>         return name in self.contents
+       
+    1:     def __getitem__(self, name: str) -> ClsRegistryToken:
+>>>>>>         return self.contents[name]
+       
+    1:     def _remove_item(self, name: str) -> None:
+>>>>>>         self.contents.pop(name, None)
+>>>>>>         if not self.contents and self.parent is not None:
+>>>>>>             self.parent._remove_item(self.name)
+>>>>>>             _registries.discard(self)
+       
+    1:     def resolve_attr(self, key: str) -> Union[_ModNS, Type[Any]]:
+>>>>>>         return self.mod_ns.__getattr__(key)
+       
+    1:     def get_module(self, name: str) -> _ModuleMarker:
+   50:         if name not in self.contents:
+    2:             marker = _ModuleMarker(name, self)
+    2:             self.contents[name] = marker
+               else:
+   48:             marker = cast(_ModuleMarker, self.contents[name])
+   50:         return marker
+       
+    1:     def add_class(self, name: str, cls: Type[Any]) -> None:
+   50:         if name in self.contents:
+>>>>>>             existing = cast(_MultipleClassMarker, self.contents[name])
+>>>>>>             try:
+>>>>>>                 existing.add_item(cls)
+>>>>>>             except AttributeError as ae:
+>>>>>>                 if not isinstance(existing, _MultipleClassMarker):
+>>>>>>                     raise exc.InvalidRequestError(
+>>>>>>                         f'name "{name}" matches both a '
+                               "class name and a module name"
+>>>>>>                     ) from ae
+                       else:
+>>>>>>                     raise
+               else:
+  100:             existing = self.contents[name] = _MultipleClassMarker(
+   50:                 [cls], on_remove=lambda: self._remove_item(name)
+                   )
+       
+    1:     def remove_class(self, name: str, cls: Type[Any]) -> None:
+>>>>>>         if name in self.contents:
+>>>>>>             existing = cast(_MultipleClassMarker, self.contents[name])
+>>>>>>             existing.remove_item(cls)
+       
+       
+    2: class _ModNS:
+    1:     __slots__ = ("__parent",)
+       
+    1:     __parent: _ModuleMarker
+       
+    1:     def __init__(self, parent: _ModuleMarker):
+    3:         self.__parent = parent
+       
+    1:     def __getattr__(self, key: str) -> Union[_ModNS, Type[Any]]:
+>>>>>>         try:
+>>>>>>             value = self.__parent.contents[key]
+>>>>>>         except KeyError:
+>>>>>>             pass
+               else:
+>>>>>>             if value is not None:
+>>>>>>                 if isinstance(value, _ModuleMarker):
+>>>>>>                     return value.mod_ns
+                       else:
+>>>>>>                     assert isinstance(value, _MultipleClassMarker)
+>>>>>>                     return value.attempt_get(self.__parent.path, key)
+>>>>>>         raise NameError(
+>>>>>>             "Module %r has no mapped classes "
+>>>>>>             "registered under the name %r" % (self.__parent.name, key)
+               )
+       
+       
+    2: class _GetColumns:
+    1:     __slots__ = ("cls",)
+       
+    1:     cls: Type[Any]
+       
+    1:     def __init__(self, cls: Type[Any]):
+   57:         self.cls = cls
+       
+    1:     def __getattr__(self, key: str) -> Any:
+    1:         mp = class_mapper(self.cls, configure=False)
+    1:         if mp:
+    1:             if key not in mp.all_orm_descriptors:
+>>>>>>                 raise AttributeError(
+>>>>>>                     "Class %r does not have a mapped column named %r"
+>>>>>>                     % (self.cls, key)
+                       )
+       
+    1:             desc = mp.all_orm_descriptors[key]
+    1:             if desc.extension_type is interfaces.NotExtension.NOT_EXTENSION:
+    1:                 assert isinstance(desc, attributes.QueryableAttribute)
+    1:                 prop = desc.property
+    1:                 if isinstance(prop, SynonymProperty):
+>>>>>>                     key = prop.name
+    1:                 elif not isinstance(prop, ColumnProperty):
+>>>>>>                     raise exc.InvalidRequestError(
+>>>>>>                         "Property %r is not an instance of"
+                               " ColumnProperty (i.e. does not correspond"
+>>>>>>                         " directly to a Column)." % key
+                           )
+    1:         return getattr(self.cls, key)
+       
+       
+    2: inspection._inspects(_GetColumns)(
+    1:     lambda target: inspection.inspect(target.cls)
+       )
+       
+       
+    2: class _GetTable:
+    1:     __slots__ = "key", "metadata"
+       
+    1:     key: str
+    1:     metadata: MetaData
+       
+    1:     def __init__(self, key: str, metadata: MetaData):
+>>>>>>         self.key = key
+>>>>>>         self.metadata = metadata
+       
+    1:     def __getattr__(self, key: str) -> Table:
+>>>>>>         return self.metadata.tables[_get_table_key(key, self.key)]
+       
+       
+    1: def _determine_container(key: str, value: Any) -> _GetColumns:
+   57:     if isinstance(value, _MultipleClassMarker):
+>>>>>>         value = value.attempt_get([], key)
+   57:     return _GetColumns(value)
+       
+       
+    2: class _class_resolver:
+    1:     __slots__ = (
+               "cls",
+               "prop",
+               "arg",
+               "fallback",
+               "_dict",
+               "_resolvers",
+               "favor_tables",
+           )
+       
+    1:     cls: Type[Any]
+    1:     prop: RelationshipProperty[Any]
+    1:     fallback: Mapping[str, Any]
+    1:     arg: str
+    1:     favor_tables: bool
+    1:     _resolvers: Tuple[Callable[[str], Any], ...]
+       
+    1:     def __init__(
+               self,
+               cls: Type[Any],
+               prop: RelationshipProperty[Any],
+               fallback: Mapping[str, Any],
+               arg: str,
+               favor_tables: bool = False,
+           ):
+   57:         self.cls = cls
+   57:         self.prop = prop
+   57:         self.arg = arg
+   57:         self.fallback = fallback
+   57:         self._dict = util.PopulateDict(self._access_cls)
+   57:         self._resolvers = ()
+   57:         self.favor_tables = favor_tables
+       
+    1:     def _access_cls(self, key: str) -> Any:
+   57:         cls = self.cls
+       
+   57:         manager = attributes.manager_of_class(cls)
+   57:         decl_base = manager.registry
+   57:         assert decl_base is not None
+   57:         decl_class_registry = decl_base._class_registry
+   57:         metadata = decl_base.metadata
+       
+   57:         if self.favor_tables:
+>>>>>>             if key in metadata.tables:
+>>>>>>                 return metadata.tables[key]
+>>>>>>             elif key in metadata._schemas:
+>>>>>>                 return _GetTable(key, getattr(cls, "metadata", metadata))
+       
+   57:         if key in decl_class_registry:
+   57:             return _determine_container(key, decl_class_registry[key])
+       
+>>>>>>         if not self.favor_tables:
+>>>>>>             if key in metadata.tables:
+>>>>>>                 return metadata.tables[key]
+>>>>>>             elif key in metadata._schemas:
+>>>>>>                 return _GetTable(key, getattr(cls, "metadata", metadata))
+       
+>>>>>>         if "_sa_module_registry" in decl_class_registry and key in cast(
+>>>>>>             _ModuleMarker, decl_class_registry["_sa_module_registry"]
+               ):
+>>>>>>             registry = cast(
+>>>>>>                 _ModuleMarker, decl_class_registry["_sa_module_registry"]
+                   )
+>>>>>>             return registry.resolve_attr(key)
+>>>>>>         elif self._resolvers:
+>>>>>>             for resolv in self._resolvers:
+>>>>>>                 value = resolv(key)
+>>>>>>                 if value is not None:
+>>>>>>                     return value
+       
+>>>>>>         return self.fallback[key]
+       
+    1:     def _raise_for_name(self, name: str, err: Exception) -> NoReturn:
+>>>>>>         generic_match = re.match(r"(.+)\[(.+)\]", name)
+       
+>>>>>>         if generic_match:
+>>>>>>             clsarg = generic_match.group(2).strip("'")
+>>>>>>             raise exc.InvalidRequestError(
+>>>>>>                 f"When initializing mapper {self.prop.parent}, "
+>>>>>>                 f'expression "relationship({self.arg!r})" seems to be '
+                       "using a generic class as the argument to relationship(); "
+                       "please state the generic argument "
+                       "using an annotation, e.g. "
+>>>>>>                 f'"{self.prop.key}: Mapped[{generic_match.group(1)}'
+>>>>>>                 f"['{clsarg}']] = relationship()\""
+>>>>>>             ) from err
+               else:
+>>>>>>             raise exc.InvalidRequestError(
+>>>>>>                 "When initializing mapper %s, expression %r failed to "
+                       "locate a name (%r). If this is a class name, consider "
+                       "adding this relationship() to the %r class after "
+                       "both dependent classes have been defined."
+>>>>>>                 % (self.prop.parent, self.arg, name, self.cls)
+>>>>>>             ) from err
+       
+    1:     def _resolve_name(self) -> Union[Table, Type[Any], _ModNS]:
+   56:         name = self.arg
+   56:         d = self._dict
+   56:         rval = None
+   56:         try:
+  112:             for token in name.split("."):
+   56:                 if rval is None:
+   56:                     rval = d[token]
+                       else:
+>>>>>>                     rval = getattr(rval, token)
+>>>>>>         except KeyError as err:
+>>>>>>             self._raise_for_name(name, err)
+>>>>>>         except NameError as n:
+>>>>>>             self._raise_for_name(n.args[0], n)
+               else:
+   56:             if isinstance(rval, _GetColumns):
+   56:                 return rval.cls
+                   else:
+>>>>>>                 if TYPE_CHECKING:
+>>>>>>                     assert isinstance(rval, (type, Table, _ModNS))
+>>>>>>                 return rval
+       
+    1:     def __call__(self) -> Any:
+    1:         try:
+    1:             x = eval(self.arg, globals(), self._dict)
+       
+    1:             if isinstance(x, _GetColumns):
+>>>>>>                 return x.cls
+                   else:
+    1:                 return x
+>>>>>>         except NameError as n:
+>>>>>>             self._raise_for_name(n.args[0], n)
+       
+       
+    1: _fallback_dict: Mapping[str, Any] = None  # type: ignore
+       
+       
+    1: def _resolver(cls: Type[Any], prop: RelationshipProperty[Any]) -> Tuple[
+           Callable[[str], Callable[[], Union[Type[Any], Table, _ModNS]]],
+           Callable[[str, bool], _class_resolver],
+       ]:
+           global _fallback_dict
+       
+   97:     if _fallback_dict is None:
+    1:         import sqlalchemy
+    1:         from . import foreign
+    1:         from . import remote
+       
+    2:         _fallback_dict = util.immutabledict(sqlalchemy.__dict__).union(
+    1:             {"foreign": foreign, "remote": remote}
+               )
+       
+   97:     def resolve_arg(arg: str, favor_tables: bool = False) -> _class_resolver:
+    2:         return _class_resolver(
+    1:             cls, prop, _fallback_dict, arg, favor_tables=favor_tables
+               )
+       
+   97:     def resolve_name(
+               arg: str,
+           ) -> Callable[[], Union[Type[Any], Table, _ModNS]]:
+   56:         return _class_resolver(cls, prop, _fallback_dict, arg)._resolve_name
+       
+   97:     return resolve_name, resolve_arg

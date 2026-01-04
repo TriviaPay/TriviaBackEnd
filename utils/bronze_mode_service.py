@@ -36,40 +36,38 @@ def get_eligible_participants_bronze_mode(
     """
     logger.info(f"Getting eligible participants for bronze mode draw date: {draw_date}")
     
-    # Get all users who submitted an answer for this date
-    user_attempts = db.query(TriviaUserBronzeModeDaily).filter(
+    # Get active $5 subscribers once, then filter attempts by that set
+    active_sub_ids = db.query(UserSubscription.user_id).join(SubscriptionPlan).filter(
+        and_(
+            UserSubscription.status == 'active',
+            or_(
+                SubscriptionPlan.unit_amount_minor == 500,  # $5.00 in cents
+                SubscriptionPlan.price_usd == 5.0  # Fallback to deprecated field
+            ),
+            UserSubscription.current_period_end > datetime.utcnow()
+        )
+    ).subquery()
+    
+    rows = db.query(
+        TriviaUserBronzeModeDaily.account_id,
+        User.username,
+        TriviaUserBronzeModeDaily.submitted_at
+    ).join(
+        User, User.account_id == TriviaUserBronzeModeDaily.account_id
+    ).filter(
         TriviaUserBronzeModeDaily.date == draw_date,
-        TriviaUserBronzeModeDaily.submitted_at.isnot(None)  # Must have submitted
+        TriviaUserBronzeModeDaily.submitted_at.isnot(None),
+        TriviaUserBronzeModeDaily.account_id.in_(active_sub_ids)
     ).all()
     
-    eligible_participants = []
-    for attempt in user_attempts:
-        # Verify user has active $5 subscription
-        # Check both unit_amount_minor (500 cents = $5) and price_usd (deprecated but may still be used)
-        active_subscription = db.query(UserSubscription).join(SubscriptionPlan).filter(
-            and_(
-                UserSubscription.user_id == attempt.account_id,
-                UserSubscription.status == 'active',
-                or_(
-                    SubscriptionPlan.unit_amount_minor == 500,  # $5.00 in cents
-                    SubscriptionPlan.price_usd == 5.0  # Fallback to deprecated field
-                ),
-                UserSubscription.current_period_end > datetime.utcnow()
-            )
-        ).first()
-        
-        if not active_subscription:
-            logger.warning(f"User {attempt.account_id} submitted but no active $5 subscription")
-            continue
-        
-        # Get user details
-        user = db.query(User).filter(User.account_id == attempt.account_id).first()
-        if user and attempt.submitted_at:
-            eligible_participants.append({
-                'account_id': attempt.account_id,
-                'username': user.username,
-                'submitted_at': attempt.submitted_at
-            })
+    eligible_participants = [
+        {
+            'account_id': row.account_id,
+            'username': row.username,
+            'submitted_at': row.submitted_at
+        }
+        for row in rows
+    ]
     
     logger.info(f"Found {len(eligible_participants)} eligible participants for bronze mode draw on {draw_date}")
     return eligible_participants
@@ -231,4 +229,3 @@ def cleanup_old_leaderboard_bronze_mode(
         logger.info(f"Cleaned up {deleted_count} old bronze mode leaderboard entries for {previous_draw_date}")
     
     return deleted_count
-

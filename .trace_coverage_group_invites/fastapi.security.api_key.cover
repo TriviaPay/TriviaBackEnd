@@ -1,0 +1,301 @@
+    1: from typing import Optional
+       
+    1: from fastapi.openapi.models import APIKey, APIKeyIn
+    1: from fastapi.security.base import SecurityBase
+    1: from starlette.exceptions import HTTPException
+    1: from starlette.requests import Request
+    1: from starlette.status import HTTP_403_FORBIDDEN
+    1: from typing_extensions import Annotated, Doc  # type: ignore [attr-defined]
+       
+       
+    2: class APIKeyBase(SecurityBase):
+    1:     pass
+       
+       
+    2: class APIKeyQuery(APIKeyBase):
+    1:     """
+           API key authentication using a query parameter.
+       
+           This defines the name of the query parameter that should be provided in the request
+           with the API key and integrates that into the OpenAPI documentation. It extracts
+           the key value sent in the query parameter automatically and provides it as the
+           dependency result. But it doesn't define how to send that API key to the client.
+       
+           ## Usage
+       
+           Create an instance object and use that object as the dependency in `Depends()`.
+       
+           The dependency result will be a string containing the key value.
+       
+           ## Example
+       
+           ```python
+           from fastapi import Depends, FastAPI
+           from fastapi.security import APIKeyQuery
+       
+           app = FastAPI()
+       
+           query_scheme = APIKeyQuery(name="api_key")
+       
+       
+           @app.get("/items/")
+           async def read_items(api_key: str = Depends(query_scheme)):
+               return {"api_key": api_key}
+           ```
+           """
+       
+    2:     def __init__(
+               self,
+               *,
+    2:         name: Annotated[
+    2:             str,
+    1:             Doc("Query parameter name."),
+               ],
+    2:         scheme_name: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme name.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         description: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme description.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         auto_error: Annotated[
+    2:             bool,
+    2:             Doc(
+    1:                 """
+                       By default, if the query parameter is not provided, `APIKeyQuery` will
+                       automatically cancel the request and sebd the client an error.
+       
+                       If `auto_error` is set to `False`, when the query parameter is not
+                       available, instead of erroring out, the dependency result will be
+                       `None`.
+       
+                       This is useful when you want to have optional authentication.
+       
+                       It is also useful when you want to have authentication that can be
+                       provided in one of multiple optional ways (for example, in a query
+                       parameter or in an HTTP Bearer token).
+                       """
+                   ),
+    1:         ] = True,
+           ):
+>>>>>>         self.model: APIKey = APIKey(
+>>>>>>             **{"in": APIKeyIn.query},  # type: ignore[arg-type]
+>>>>>>             name=name,
+>>>>>>             description=description,
+               )
+>>>>>>         self.scheme_name = scheme_name or self.__class__.__name__
+>>>>>>         self.auto_error = auto_error
+       
+    1:     async def __call__(self, request: Request) -> Optional[str]:
+>>>>>>         api_key = request.query_params.get(self.model.name)
+>>>>>>         if not api_key:
+>>>>>>             if self.auto_error:
+>>>>>>                 raise HTTPException(
+>>>>>>                     status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
+                       )
+                   else:
+>>>>>>                 return None
+>>>>>>         return api_key
+       
+       
+    2: class APIKeyHeader(APIKeyBase):
+    1:     """
+           API key authentication using a header.
+       
+           This defines the name of the header that should be provided in the request with
+           the API key and integrates that into the OpenAPI documentation. It extracts
+           the key value sent in the header automatically and provides it as the dependency
+           result. But it doesn't define how to send that key to the client.
+       
+           ## Usage
+       
+           Create an instance object and use that object as the dependency in `Depends()`.
+       
+           The dependency result will be a string containing the key value.
+       
+           ## Example
+       
+           ```python
+           from fastapi import Depends, FastAPI
+           from fastapi.security import APIKeyHeader
+       
+           app = FastAPI()
+       
+           header_scheme = APIKeyHeader(name="x-key")
+       
+       
+           @app.get("/items/")
+           async def read_items(key: str = Depends(header_scheme)):
+               return {"key": key}
+           ```
+           """
+       
+    2:     def __init__(
+               self,
+               *,
+    1:         name: Annotated[str, Doc("Header name.")],
+    2:         scheme_name: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme name.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         description: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme description.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         auto_error: Annotated[
+    2:             bool,
+    2:             Doc(
+    1:                 """
+                       By default, if the header is not provided, `APIKeyHeader` will
+                       automatically cancel the request and send the client an error.
+       
+                       If `auto_error` is set to `False`, when the header is not available,
+                       instead of erroring out, the dependency result will be `None`.
+       
+                       This is useful when you want to have optional authentication.
+       
+                       It is also useful when you want to have authentication that can be
+                       provided in one of multiple optional ways (for example, in a header or
+                       in an HTTP Bearer token).
+                       """
+                   ),
+    1:         ] = True,
+           ):
+>>>>>>         self.model: APIKey = APIKey(
+>>>>>>             **{"in": APIKeyIn.header},  # type: ignore[arg-type]
+>>>>>>             name=name,
+>>>>>>             description=description,
+               )
+>>>>>>         self.scheme_name = scheme_name or self.__class__.__name__
+>>>>>>         self.auto_error = auto_error
+       
+    1:     async def __call__(self, request: Request) -> Optional[str]:
+>>>>>>         api_key = request.headers.get(self.model.name)
+>>>>>>         if not api_key:
+>>>>>>             if self.auto_error:
+>>>>>>                 raise HTTPException(
+>>>>>>                     status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
+                       )
+                   else:
+>>>>>>                 return None
+>>>>>>         return api_key
+       
+       
+    2: class APIKeyCookie(APIKeyBase):
+    1:     """
+           API key authentication using a cookie.
+       
+           This defines the name of the cookie that should be provided in the request with
+           the API key and integrates that into the OpenAPI documentation. It extracts
+           the key value sent in the cookie automatically and provides it as the dependency
+           result. But it doesn't define how to set that cookie.
+       
+           ## Usage
+       
+           Create an instance object and use that object as the dependency in `Depends()`.
+       
+           The dependency result will be a string containing the key value.
+       
+           ## Example
+       
+           ```python
+           from fastapi import Depends, FastAPI
+           from fastapi.security import APIKeyCookie
+       
+           app = FastAPI()
+       
+           cookie_scheme = APIKeyCookie(name="session")
+       
+       
+           @app.get("/items/")
+           async def read_items(session: str = Depends(cookie_scheme)):
+               return {"session": session}
+           ```
+           """
+       
+    2:     def __init__(
+               self,
+               *,
+    1:         name: Annotated[str, Doc("Cookie name.")],
+    2:         scheme_name: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme name.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         description: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme description.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         auto_error: Annotated[
+    2:             bool,
+    2:             Doc(
+    1:                 """
+                       By default, if the cookie is not provided, `APIKeyCookie` will
+                       automatically cancel the request and send the client an error.
+       
+                       If `auto_error` is set to `False`, when the cookie is not available,
+                       instead of erroring out, the dependency result will be `None`.
+       
+                       This is useful when you want to have optional authentication.
+       
+                       It is also useful when you want to have authentication that can be
+                       provided in one of multiple optional ways (for example, in a cookie or
+                       in an HTTP Bearer token).
+                       """
+                   ),
+    1:         ] = True,
+           ):
+>>>>>>         self.model: APIKey = APIKey(
+>>>>>>             **{"in": APIKeyIn.cookie},  # type: ignore[arg-type]
+>>>>>>             name=name,
+>>>>>>             description=description,
+               )
+>>>>>>         self.scheme_name = scheme_name or self.__class__.__name__
+>>>>>>         self.auto_error = auto_error
+       
+    1:     async def __call__(self, request: Request) -> Optional[str]:
+>>>>>>         api_key = request.cookies.get(self.model.name)
+>>>>>>         if not api_key:
+>>>>>>             if self.auto_error:
+>>>>>>                 raise HTTPException(
+>>>>>>                     status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
+                       )
+                   else:
+>>>>>>                 return None
+>>>>>>         return api_key

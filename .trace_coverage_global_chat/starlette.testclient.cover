@@ -1,0 +1,814 @@
+    1: from __future__ import annotations
+       
+    1: import contextlib
+    1: import inspect
+    1: import io
+    1: import json
+    1: import math
+    1: import queue
+    1: import sys
+    1: import typing
+    1: import warnings
+    1: from concurrent.futures import Future
+    1: from functools import cached_property
+    1: from types import GeneratorType
+    1: from urllib.parse import unquote, urljoin
+       
+    1: import anyio
+    1: import anyio.abc
+    1: import anyio.from_thread
+    1: from anyio.abc import ObjectReceiveStream, ObjectSendStream
+    1: from anyio.streams.stapled import StapledObjectStream
+       
+    1: from starlette._utils import is_async_callable
+    1: from starlette.types import ASGIApp, Message, Receive, Scope, Send
+    1: from starlette.websockets import WebSocketDisconnect
+       
+    1: if sys.version_info >= (3, 10):  # pragma: no cover
+>>>>>>     from typing import TypeGuard
+       else:  # pragma: no cover
+    1:     from typing_extensions import TypeGuard
+       
+    1: try:
+    1:     import httpx
+>>>>>> except ModuleNotFoundError:  # pragma: no cover
+>>>>>>     raise RuntimeError(
+>>>>>>         "The starlette.testclient module requires the httpx package to be installed.\n"
+               "You can install this with:\n"
+               "    $ pip install httpx\n"
+           )
+    2: _PortalFactoryType = typing.Callable[
+    1:     [], typing.ContextManager[anyio.abc.BlockingPortal]
+       ]
+       
+    1: ASGIInstance = typing.Callable[[Receive, Send], typing.Awaitable[None]]
+    1: ASGI2App = typing.Callable[[Scope], ASGIInstance]
+    1: ASGI3App = typing.Callable[[Scope, Receive, Send], typing.Awaitable[None]]
+       
+       
+    1: _RequestData = typing.Mapping[str, typing.Union[str, typing.Iterable[str]]]
+       
+       
+    1: def _is_asgi3(app: ASGI2App | ASGI3App) -> TypeGuard[ASGI3App]:
+   13:     if inspect.isclass(app):
+>>>>>>         return hasattr(app, "__await__")
+   13:     return is_async_callable(app)
+       
+       
+    2: class _WrapASGI2:
+    1:     """
+           Provide an ASGI3 interface onto an ASGI2 app.
+           """
+       
+    1:     def __init__(self, app: ASGI2App) -> None:
+>>>>>>         self.app = app
+       
+    1:     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+>>>>>>         instance = self.app(scope)
+>>>>>>         await instance(receive, send)
+       
+       
+    2: class _AsyncBackend(typing.TypedDict):
+    1:     backend: str
+    1:     backend_options: dict[str, typing.Any]
+       
+       
+    2: class _Upgrade(Exception):
+    1:     def __init__(self, session: WebSocketTestSession) -> None:
+>>>>>>         self.session = session
+       
+       
+    2: class WebSocketTestSession:
+    1:     def __init__(
+               self,
+               app: ASGI3App,
+               scope: Scope,
+               portal_factory: _PortalFactoryType,
+           ) -> None:
+>>>>>>         self.app = app
+>>>>>>         self.scope = scope
+>>>>>>         self.accepted_subprotocol = None
+>>>>>>         self.portal_factory = portal_factory
+>>>>>>         self._receive_queue: queue.Queue[Message] = queue.Queue()
+>>>>>>         self._send_queue: queue.Queue[Message | BaseException] = queue.Queue()
+>>>>>>         self.extra_headers = None
+       
+    1:     def __enter__(self) -> WebSocketTestSession:
+>>>>>>         self.exit_stack = contextlib.ExitStack()
+>>>>>>         self.portal = self.exit_stack.enter_context(self.portal_factory())
+       
+>>>>>>         try:
+>>>>>>             _: Future[None] = self.portal.start_task_soon(self._run)
+>>>>>>             self.send({"type": "websocket.connect"})
+>>>>>>             message = self.receive()
+>>>>>>             self._raise_on_close(message)
+>>>>>>         except Exception:
+>>>>>>             self.exit_stack.close()
+>>>>>>             raise
+>>>>>>         self.accepted_subprotocol = message.get("subprotocol", None)
+>>>>>>         self.extra_headers = message.get("headers", None)
+>>>>>>         return self
+       
+    1:     @cached_property
+    1:     def should_close(self) -> anyio.Event:
+>>>>>>         return anyio.Event()
+       
+    1:     async def _notify_close(self) -> None:
+>>>>>>         self.should_close.set()
+       
+    1:     def __exit__(self, *args: typing.Any) -> None:
+>>>>>>         try:
+>>>>>>             self.close(1000)
+               finally:
+>>>>>>             self.portal.start_task_soon(self._notify_close)
+>>>>>>             self.exit_stack.close()
+>>>>>>         while not self._send_queue.empty():
+>>>>>>             message = self._send_queue.get()
+>>>>>>             if isinstance(message, BaseException):
+>>>>>>                 raise message
+       
+    1:     async def _run(self) -> None:
+               """
+               The sub-thread in which the websocket session runs.
+               """
+       
+>>>>>>         async def run_app(tg: anyio.abc.TaskGroup) -> None:
+>>>>>>             try:
+>>>>>>                 await self.app(self.scope, self._asgi_receive, self._asgi_send)
+>>>>>>             except anyio.get_cancelled_exc_class():
+>>>>>>                 ...
+>>>>>>             except BaseException as exc:
+>>>>>>                 self._send_queue.put(exc)
+>>>>>>                 raise
+                   finally:
+>>>>>>                 tg.cancel_scope.cancel()
+       
+>>>>>>         async with anyio.create_task_group() as tg:
+>>>>>>             tg.start_soon(run_app, tg)
+>>>>>>             await self.should_close.wait()
+>>>>>>             tg.cancel_scope.cancel()
+       
+    1:     async def _asgi_receive(self) -> Message:
+>>>>>>         while self._receive_queue.empty():
+>>>>>>             await anyio.sleep(0)
+>>>>>>         return self._receive_queue.get()
+       
+    1:     async def _asgi_send(self, message: Message) -> None:
+>>>>>>         self._send_queue.put(message)
+       
+    1:     def _raise_on_close(self, message: Message) -> None:
+>>>>>>         if message["type"] == "websocket.close":
+>>>>>>             raise WebSocketDisconnect(
+>>>>>>                 message.get("code", 1000), message.get("reason", "")
+                   )
+       
+    1:     def send(self, message: Message) -> None:
+>>>>>>         self._receive_queue.put(message)
+       
+    1:     def send_text(self, data: str) -> None:
+>>>>>>         self.send({"type": "websocket.receive", "text": data})
+       
+    1:     def send_bytes(self, data: bytes) -> None:
+>>>>>>         self.send({"type": "websocket.receive", "bytes": data})
+       
+    1:     def send_json(
+               self, data: typing.Any, mode: typing.Literal["text", "binary"] = "text"
+           ) -> None:
+>>>>>>         text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+>>>>>>         if mode == "text":
+>>>>>>             self.send({"type": "websocket.receive", "text": text})
+               else:
+>>>>>>             self.send({"type": "websocket.receive", "bytes": text.encode("utf-8")})
+       
+    1:     def close(self, code: int = 1000, reason: str | None = None) -> None:
+>>>>>>         self.send({"type": "websocket.disconnect", "code": code, "reason": reason})
+       
+    1:     def receive(self) -> Message:
+>>>>>>         message = self._send_queue.get()
+>>>>>>         if isinstance(message, BaseException):
+>>>>>>             raise message
+>>>>>>         return message
+       
+    1:     def receive_text(self) -> str:
+>>>>>>         message = self.receive()
+>>>>>>         self._raise_on_close(message)
+>>>>>>         return typing.cast(str, message["text"])
+       
+    1:     def receive_bytes(self) -> bytes:
+>>>>>>         message = self.receive()
+>>>>>>         self._raise_on_close(message)
+>>>>>>         return typing.cast(bytes, message["bytes"])
+       
+    1:     def receive_json(
+               self, mode: typing.Literal["text", "binary"] = "text"
+           ) -> typing.Any:
+>>>>>>         message = self.receive()
+>>>>>>         self._raise_on_close(message)
+>>>>>>         if mode == "text":
+>>>>>>             text = message["text"]
+               else:
+>>>>>>             text = message["bytes"].decode("utf-8")
+>>>>>>         return json.loads(text)
+       
+       
+    2: class _TestClientTransport(httpx.BaseTransport):
+    1:     def __init__(
+               self,
+               app: ASGI3App,
+               portal_factory: _PortalFactoryType,
+               raise_server_exceptions: bool = True,
+               root_path: str = "",
+               *,
+               app_state: dict[str, typing.Any],
+           ) -> None:
+   13:         self.app = app
+   13:         self.raise_server_exceptions = raise_server_exceptions
+   13:         self.root_path = root_path
+   13:         self.portal_factory = portal_factory
+   13:         self.app_state = app_state
+       
+    1:     def handle_request(self, request: httpx.Request) -> httpx.Response:
+   15:         scheme = request.url.scheme
+   15:         netloc = request.url.netloc.decode(encoding="ascii")
+   15:         path = request.url.path
+   15:         raw_path = request.url.raw_path
+   15:         query = request.url.query.decode(encoding="ascii")
+       
+   15:         default_port = {"http": 80, "ws": 80, "https": 443, "wss": 443}[scheme]
+       
+   15:         if ":" in netloc:
+>>>>>>             host, port_string = netloc.split(":", 1)
+>>>>>>             port = int(port_string)
+               else:
+   15:             host = netloc
+   15:             port = default_port
+       
+               # Include the 'host' header.
+   15:         if "host" in request.headers:
+   15:             headers: list[tuple[bytes, bytes]] = []
+>>>>>>         elif port == default_port:  # pragma: no cover
+>>>>>>             headers = [(b"host", host.encode())]
+               else:  # pragma: no cover
+>>>>>>             headers = [(b"host", (f"{host}:{port}").encode())]
+       
+               # Include other request headers.
+  135:         headers += [
+   90:             (key.lower().encode(), value.encode())
+  105:             for key, value in request.headers.multi_items()
+               ]
+       
+               scope: dict[str, typing.Any]
+       
+   15:         if scheme in {"ws", "wss"}:
+>>>>>>             subprotocol = request.headers.get("sec-websocket-protocol", None)
+>>>>>>             if subprotocol is None:
+>>>>>>                 subprotocols: typing.Sequence[str] = []
+                   else:
+>>>>>>                 subprotocols = [value.strip() for value in subprotocol.split(",")]
+>>>>>>             scope = {
+>>>>>>                 "type": "websocket",
+>>>>>>                 "path": unquote(path),
+>>>>>>                 "raw_path": raw_path,
+>>>>>>                 "root_path": self.root_path,
+>>>>>>                 "scheme": scheme,
+>>>>>>                 "query_string": query.encode(),
+>>>>>>                 "headers": headers,
+>>>>>>                 "client": None,
+>>>>>>                 "server": [host, port],
+>>>>>>                 "subprotocols": subprotocols,
+>>>>>>                 "state": self.app_state.copy(),
+                   }
+>>>>>>             session = WebSocketTestSession(self.app, scope, self.portal_factory)
+>>>>>>             raise _Upgrade(session)
+       
+   15:         scope = {
+   15:             "type": "http",
+   15:             "http_version": "1.1",
+   15:             "method": request.method,
+   15:             "path": unquote(path),
+   15:             "raw_path": raw_path,
+   15:             "root_path": self.root_path,
+   15:             "scheme": scheme,
+   15:             "query_string": query.encode(),
+   15:             "headers": headers,
+   15:             "client": None,
+   15:             "server": [host, port],
+   15:             "extensions": {"http.response.debug": {}},
+   15:             "state": self.app_state.copy(),
+               }
+       
+   15:         request_complete = False
+   15:         response_started = False
+               response_complete: anyio.Event
+   15:         raw_kwargs: dict[str, typing.Any] = {"stream": io.BytesIO()}
+   15:         template = None
+   15:         context = None
+       
+   15:         async def receive() -> Message:
+                   nonlocal request_complete
+       
+    6:             if request_complete:
+>>>>>>                 if not response_complete.is_set():
+>>>>>>                     await response_complete.wait()
+>>>>>>                 return {"type": "http.disconnect"}
+       
+    6:             body = request.read()
+    6:             if isinstance(body, str):
+>>>>>>                 body_bytes: bytes = body.encode("utf-8")  # pragma: no cover
+    6:             elif body is None:
+>>>>>>                 body_bytes = b""  # pragma: no cover
+    6:             elif isinstance(body, GeneratorType):
+>>>>>>                 try:  # pragma: no cover
+>>>>>>                     chunk = body.send(None)
+>>>>>>                     if isinstance(chunk, str):
+>>>>>>                         chunk = chunk.encode("utf-8")
+>>>>>>                     return {"type": "http.request", "body": chunk, "more_body": True}
+>>>>>>                 except StopIteration:  # pragma: no cover
+>>>>>>                     request_complete = True
+>>>>>>                     return {"type": "http.request", "body": b""}
+                   else:
+    6:                 body_bytes = body
+       
+    6:             request_complete = True
+    6:             return {"type": "http.request", "body": body_bytes}
+       
+   15:         async def send(message: Message) -> None:
+                   nonlocal raw_kwargs, response_started, template, context
+       
+   30:             if message["type"] == "http.response.start":
+   15:                 assert (
+   15:                     not response_started
+>>>>>>                 ), 'Received multiple "http.response.start" messages.'
+   15:                 raw_kwargs["status_code"] = message["status"]
+   75:                 raw_kwargs["headers"] = [
+   30:                     (key.decode(), value.decode())
+   45:                     for key, value in message.get("headers", [])
+                       ]
+   15:                 response_started = True
+   15:             elif message["type"] == "http.response.body":
+   15:                 assert (
+   15:                     response_started
+>>>>>>                 ), 'Received "http.response.body" without "http.response.start".'
+   15:                 assert (
+   15:                     not response_complete.is_set()
+>>>>>>                 ), 'Received "http.response.body" after response completed.'
+   15:                 body = message.get("body", b"")
+   15:                 more_body = message.get("more_body", False)
+   15:                 if request.method != "HEAD":
+   15:                     raw_kwargs["stream"].write(body)
+   15:                 if not more_body:
+   15:                     raw_kwargs["stream"].seek(0)
+   15:                     response_complete.set()
+>>>>>>             elif message["type"] == "http.response.debug":
+>>>>>>                 template = message["info"]["template"]
+>>>>>>                 context = message["info"]["context"]
+       
+   15:         try:
+   15:             with self.portal_factory() as portal:
+   15:                 response_complete = portal.call(anyio.Event)
+   15:                 portal.call(self.app, scope, receive, send)
+>>>>>>         except BaseException as exc:
+>>>>>>             if self.raise_server_exceptions:
+>>>>>>                 raise exc
+       
+   15:         if self.raise_server_exceptions:
+   15:             assert response_started, "TestClient did not receive any response."
+>>>>>>         elif not response_started:
+>>>>>>             raw_kwargs = {
+>>>>>>                 "status_code": 500,
+>>>>>>                 "headers": [],
+>>>>>>                 "stream": io.BytesIO(),
+                   }
+       
+   15:         raw_kwargs["stream"] = httpx.ByteStream(raw_kwargs["stream"].read())
+       
+   15:         response = httpx.Response(**raw_kwargs, request=request)
+   15:         if template is not None:
+>>>>>>             response.template = template  # type: ignore[attr-defined]
+>>>>>>             response.context = context  # type: ignore[attr-defined]
+   15:         return response
+       
+       
+    2: class TestClient(httpx.Client):
+    1:     __test__ = False
+    1:     task: Future[None]
+    1:     portal: anyio.abc.BlockingPortal | None = None
+       
+    1:     def __init__(
+               self,
+               app: ASGIApp,
+               base_url: str = "http://testserver",
+               raise_server_exceptions: bool = True,
+               root_path: str = "",
+               backend: typing.Literal["asyncio", "trio"] = "asyncio",
+               backend_options: dict[str, typing.Any] | None = None,
+               cookies: httpx._types.CookieTypes | None = None,
+               headers: dict[str, str] | None = None,
+               follow_redirects: bool = True,
+           ) -> None:
+   26:         self.async_backend = _AsyncBackend(
+   13:             backend=backend, backend_options=backend_options or {}
+               )
+   13:         if _is_asgi3(app):
+   13:             asgi_app = app
+               else:
+>>>>>>             app = typing.cast(ASGI2App, app)  # type: ignore[assignment]
+>>>>>>             asgi_app = _WrapASGI2(app)  # type: ignore[arg-type]
+   13:         self.app = asgi_app
+   13:         self.app_state: dict[str, typing.Any] = {}
+   26:         transport = _TestClientTransport(
+   13:             self.app,
+   13:             portal_factory=self._portal_factory,
+   13:             raise_server_exceptions=raise_server_exceptions,
+   13:             root_path=root_path,
+   13:             app_state=self.app_state,
+               )
+   13:         if headers is None:
+   13:             headers = {}
+   13:         headers.setdefault("user-agent", "testclient")
+   26:         super().__init__(
+   13:             app=self.app,
+   13:             base_url=base_url,
+   13:             headers=headers,
+   13:             transport=transport,
+   13:             follow_redirects=follow_redirects,
+   13:             cookies=cookies,
+               )
+       
+    1:     @contextlib.contextmanager
+    1:     def _portal_factory(self) -> typing.Generator[anyio.abc.BlockingPortal, None, None]:
+   15:         if self.portal is not None:
+   15:             yield self.portal
+               else:
+>>>>>>             with anyio.from_thread.start_blocking_portal(
+>>>>>>                 **self.async_backend
+>>>>>>             ) as portal:
+>>>>>>                 yield portal
+       
+    1:     def _choose_redirect_arg(
+               self, follow_redirects: bool | None, allow_redirects: bool | None
+           ) -> bool | httpx._client.UseClientDefault:
+   30:         redirect: bool | httpx._client.UseClientDefault = (
+   30:             httpx._client.USE_CLIENT_DEFAULT
+               )
+   30:         if allow_redirects is not None:
+>>>>>>             message = (
+>>>>>>                 "The `allow_redirects` argument is deprecated. "
+                       "Use `follow_redirects` instead."
+                   )
+>>>>>>             warnings.warn(message, DeprecationWarning)
+>>>>>>             redirect = allow_redirects
+   30:         if follow_redirects is not None:
+   15:             redirect = follow_redirects
+   15:         elif allow_redirects is not None and follow_redirects is not None:
+>>>>>>             raise RuntimeError(  # pragma: no cover
+>>>>>>                 "Cannot use both `allow_redirects` and `follow_redirects`."
+                   )
+   30:         return redirect
+       
+    1:     def request(  # type: ignore[override]
+               self,
+               method: str,
+               url: httpx._types.URLTypes,
+               *,
+    1:         content: httpx._types.RequestContent | None = None,
+    1:         data: _RequestData | None = None,
+    1:         files: httpx._types.RequestFiles | None = None,
+    1:         json: typing.Any = None,
+    1:         params: httpx._types.QueryParamTypes | None = None,
+    1:         headers: httpx._types.HeaderTypes | None = None,
+    1:         cookies: httpx._types.CookieTypes | None = None,
+               auth: httpx._types.AuthTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         follow_redirects: bool | None = None,
+    1:         allow_redirects: bool | None = None,
+               timeout: httpx._types.TimeoutTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         extensions: dict[str, typing.Any] | None = None,
+           ) -> httpx.Response:
+   15:         url = self._merge_url(url)
+   15:         redirect = self._choose_redirect_arg(follow_redirects, allow_redirects)
+   30:         return super().request(
+   15:             method,
+   15:             url,
+   15:             content=content,
+   15:             data=data,
+   15:             files=files,
+   15:             json=json,
+   15:             params=params,
+   15:             headers=headers,
+   15:             cookies=cookies,
+   15:             auth=auth,
+   15:             follow_redirects=redirect,
+   15:             timeout=timeout,
+   15:             extensions=extensions,
+               )
+       
+    1:     def get(  # type: ignore[override]
+               self,
+               url: httpx._types.URLTypes,
+               *,
+    1:         params: httpx._types.QueryParamTypes | None = None,
+    1:         headers: httpx._types.HeaderTypes | None = None,
+    1:         cookies: httpx._types.CookieTypes | None = None,
+               auth: httpx._types.AuthTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         follow_redirects: bool | None = None,
+    1:         allow_redirects: bool | None = None,
+               timeout: httpx._types.TimeoutTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         extensions: dict[str, typing.Any] | None = None,
+           ) -> httpx.Response:
+    6:         redirect = self._choose_redirect_arg(follow_redirects, allow_redirects)
+   12:         return super().get(
+    6:             url,
+    6:             params=params,
+    6:             headers=headers,
+    6:             cookies=cookies,
+    6:             auth=auth,
+    6:             follow_redirects=redirect,
+    6:             timeout=timeout,
+    6:             extensions=extensions,
+               )
+       
+    1:     def options(  # type: ignore[override]
+               self,
+               url: httpx._types.URLTypes,
+               *,
+    1:         params: httpx._types.QueryParamTypes | None = None,
+    1:         headers: httpx._types.HeaderTypes | None = None,
+    1:         cookies: httpx._types.CookieTypes | None = None,
+               auth: httpx._types.AuthTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         follow_redirects: bool | None = None,
+    1:         allow_redirects: bool | None = None,
+               timeout: httpx._types.TimeoutTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         extensions: dict[str, typing.Any] | None = None,
+           ) -> httpx.Response:
+>>>>>>         redirect = self._choose_redirect_arg(follow_redirects, allow_redirects)
+>>>>>>         return super().options(
+>>>>>>             url,
+>>>>>>             params=params,
+>>>>>>             headers=headers,
+>>>>>>             cookies=cookies,
+>>>>>>             auth=auth,
+>>>>>>             follow_redirects=redirect,
+>>>>>>             timeout=timeout,
+>>>>>>             extensions=extensions,
+               )
+       
+    1:     def head(  # type: ignore[override]
+               self,
+               url: httpx._types.URLTypes,
+               *,
+    1:         params: httpx._types.QueryParamTypes | None = None,
+    1:         headers: httpx._types.HeaderTypes | None = None,
+    1:         cookies: httpx._types.CookieTypes | None = None,
+               auth: httpx._types.AuthTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         follow_redirects: bool | None = None,
+    1:         allow_redirects: bool | None = None,
+               timeout: httpx._types.TimeoutTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         extensions: dict[str, typing.Any] | None = None,
+           ) -> httpx.Response:
+>>>>>>         redirect = self._choose_redirect_arg(follow_redirects, allow_redirects)
+>>>>>>         return super().head(
+>>>>>>             url,
+>>>>>>             params=params,
+>>>>>>             headers=headers,
+>>>>>>             cookies=cookies,
+>>>>>>             auth=auth,
+>>>>>>             follow_redirects=redirect,
+>>>>>>             timeout=timeout,
+>>>>>>             extensions=extensions,
+               )
+       
+    1:     def post(  # type: ignore[override]
+               self,
+               url: httpx._types.URLTypes,
+               *,
+    1:         content: httpx._types.RequestContent | None = None,
+    1:         data: _RequestData | None = None,
+    1:         files: httpx._types.RequestFiles | None = None,
+    1:         json: typing.Any = None,
+    1:         params: httpx._types.QueryParamTypes | None = None,
+    1:         headers: httpx._types.HeaderTypes | None = None,
+    1:         cookies: httpx._types.CookieTypes | None = None,
+               auth: httpx._types.AuthTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         follow_redirects: bool | None = None,
+    1:         allow_redirects: bool | None = None,
+               timeout: httpx._types.TimeoutTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         extensions: dict[str, typing.Any] | None = None,
+           ) -> httpx.Response:
+    9:         redirect = self._choose_redirect_arg(follow_redirects, allow_redirects)
+   18:         return super().post(
+    9:             url,
+    9:             content=content,
+    9:             data=data,
+    9:             files=files,
+    9:             json=json,
+    9:             params=params,
+    9:             headers=headers,
+    9:             cookies=cookies,
+    9:             auth=auth,
+    9:             follow_redirects=redirect,
+    9:             timeout=timeout,
+    9:             extensions=extensions,
+               )
+       
+    1:     def put(  # type: ignore[override]
+               self,
+               url: httpx._types.URLTypes,
+               *,
+    1:         content: httpx._types.RequestContent | None = None,
+    1:         data: _RequestData | None = None,
+    1:         files: httpx._types.RequestFiles | None = None,
+    1:         json: typing.Any = None,
+    1:         params: httpx._types.QueryParamTypes | None = None,
+    1:         headers: httpx._types.HeaderTypes | None = None,
+    1:         cookies: httpx._types.CookieTypes | None = None,
+               auth: httpx._types.AuthTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         follow_redirects: bool | None = None,
+    1:         allow_redirects: bool | None = None,
+               timeout: httpx._types.TimeoutTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         extensions: dict[str, typing.Any] | None = None,
+           ) -> httpx.Response:
+>>>>>>         redirect = self._choose_redirect_arg(follow_redirects, allow_redirects)
+>>>>>>         return super().put(
+>>>>>>             url,
+>>>>>>             content=content,
+>>>>>>             data=data,
+>>>>>>             files=files,
+>>>>>>             json=json,
+>>>>>>             params=params,
+>>>>>>             headers=headers,
+>>>>>>             cookies=cookies,
+>>>>>>             auth=auth,
+>>>>>>             follow_redirects=redirect,
+>>>>>>             timeout=timeout,
+>>>>>>             extensions=extensions,
+               )
+       
+    1:     def patch(  # type: ignore[override]
+               self,
+               url: httpx._types.URLTypes,
+               *,
+    1:         content: httpx._types.RequestContent | None = None,
+    1:         data: _RequestData | None = None,
+    1:         files: httpx._types.RequestFiles | None = None,
+    1:         json: typing.Any = None,
+    1:         params: httpx._types.QueryParamTypes | None = None,
+    1:         headers: httpx._types.HeaderTypes | None = None,
+    1:         cookies: httpx._types.CookieTypes | None = None,
+               auth: httpx._types.AuthTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         follow_redirects: bool | None = None,
+    1:         allow_redirects: bool | None = None,
+               timeout: httpx._types.TimeoutTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         extensions: dict[str, typing.Any] | None = None,
+           ) -> httpx.Response:
+>>>>>>         redirect = self._choose_redirect_arg(follow_redirects, allow_redirects)
+>>>>>>         return super().patch(
+>>>>>>             url,
+>>>>>>             content=content,
+>>>>>>             data=data,
+>>>>>>             files=files,
+>>>>>>             json=json,
+>>>>>>             params=params,
+>>>>>>             headers=headers,
+>>>>>>             cookies=cookies,
+>>>>>>             auth=auth,
+>>>>>>             follow_redirects=redirect,
+>>>>>>             timeout=timeout,
+>>>>>>             extensions=extensions,
+               )
+       
+    1:     def delete(  # type: ignore[override]
+               self,
+               url: httpx._types.URLTypes,
+               *,
+    1:         params: httpx._types.QueryParamTypes | None = None,
+    1:         headers: httpx._types.HeaderTypes | None = None,
+    1:         cookies: httpx._types.CookieTypes | None = None,
+               auth: httpx._types.AuthTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         follow_redirects: bool | None = None,
+    1:         allow_redirects: bool | None = None,
+               timeout: httpx._types.TimeoutTypes
+    1:         | httpx._client.UseClientDefault = httpx._client.USE_CLIENT_DEFAULT,
+    1:         extensions: dict[str, typing.Any] | None = None,
+           ) -> httpx.Response:
+>>>>>>         redirect = self._choose_redirect_arg(follow_redirects, allow_redirects)
+>>>>>>         return super().delete(
+>>>>>>             url,
+>>>>>>             params=params,
+>>>>>>             headers=headers,
+>>>>>>             cookies=cookies,
+>>>>>>             auth=auth,
+>>>>>>             follow_redirects=redirect,
+>>>>>>             timeout=timeout,
+>>>>>>             extensions=extensions,
+               )
+       
+    1:     def websocket_connect(
+               self,
+               url: str,
+               subprotocols: typing.Sequence[str] | None = None,
+               **kwargs: typing.Any,
+           ) -> WebSocketTestSession:
+>>>>>>         url = urljoin("ws://testserver", url)
+>>>>>>         headers = kwargs.get("headers", {})
+>>>>>>         headers.setdefault("connection", "upgrade")
+>>>>>>         headers.setdefault("sec-websocket-key", "testserver==")
+>>>>>>         headers.setdefault("sec-websocket-version", "13")
+>>>>>>         if subprotocols is not None:
+>>>>>>             headers.setdefault("sec-websocket-protocol", ", ".join(subprotocols))
+>>>>>>         kwargs["headers"] = headers
+>>>>>>         try:
+>>>>>>             super().request("GET", url, **kwargs)
+>>>>>>         except _Upgrade as exc:
+>>>>>>             session = exc.session
+               else:
+>>>>>>             raise RuntimeError("Expected WebSocket upgrade")  # pragma: no cover
+       
+>>>>>>         return session
+       
+    1:     def __enter__(self) -> TestClient:
+   13:         with contextlib.ExitStack() as stack:
+   26:             self.portal = portal = stack.enter_context(
+   13:                 anyio.from_thread.start_blocking_portal(**self.async_backend)
+                   )
+       
+   13:             @stack.callback
+   13:             def reset_portal() -> None:
+   13:                 self.portal = None
+       
+                   send1: ObjectSendStream[typing.MutableMapping[str, typing.Any] | None]
+                   receive1: ObjectReceiveStream[typing.MutableMapping[str, typing.Any] | None]
+                   send2: ObjectSendStream[typing.MutableMapping[str, typing.Any]]
+                   receive2: ObjectReceiveStream[typing.MutableMapping[str, typing.Any]]
+   13:             send1, receive1 = anyio.create_memory_object_stream(math.inf)
+   13:             send2, receive2 = anyio.create_memory_object_stream(math.inf)
+   13:             self.stream_send = StapledObjectStream(send1, receive1)
+   13:             self.stream_receive = StapledObjectStream(send2, receive2)
+   13:             self.task = portal.start_task_soon(self.lifespan)
+   13:             portal.call(self.wait_startup)
+       
+   13:             @stack.callback
+   13:             def wait_shutdown() -> None:
+   13:                 portal.call(self.wait_shutdown)
+       
+   13:             self.exit_stack = stack.pop_all()
+       
+   13:         return self
+       
+    1:     def __exit__(self, *args: typing.Any) -> None:
+   13:         self.exit_stack.close()
+       
+    1:     async def lifespan(self) -> None:
+   13:         scope = {"type": "lifespan", "state": self.app_state}
+   13:         try:
+   13:             await self.app(scope, self.stream_receive.receive, self.stream_send.send)
+               finally:
+   13:             await self.stream_send.send(None)
+       
+    1:     async def wait_startup(self) -> None:
+   13:         await self.stream_receive.send({"type": "lifespan.startup"})
+       
+   13:         async def receive() -> typing.Any:
+   13:             message = await self.stream_send.receive()
+   13:             if message is None:
+>>>>>>                 self.task.result()
+   13:             return message
+       
+   13:         message = await receive()
+   13:         assert message["type"] in (
+                   "lifespan.startup.complete",
+                   "lifespan.startup.failed",
+               )
+   13:         if message["type"] == "lifespan.startup.failed":
+>>>>>>             await receive()
+       
+    1:     async def wait_shutdown(self) -> None:
+   13:         async def receive() -> typing.Any:
+   13:             message = await self.stream_send.receive()
+   13:             if message is None:
+>>>>>>                 self.task.result()
+   13:             return message
+       
+   13:         async with self.stream_send:
+   13:             await self.stream_receive.send({"type": "lifespan.shutdown"})
+   13:             message = await receive()
+   13:             assert message["type"] in (
+                       "lifespan.shutdown.complete",
+                       "lifespan.shutdown.failed",
+                   )
+   13:             if message["type"] == "lifespan.shutdown.failed":
+>>>>>>                 await receive()

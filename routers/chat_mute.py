@@ -10,7 +10,8 @@ from utils.chat_mute import (
     is_chat_muted,
     add_muted_user,
     remove_muted_user,
-    get_muted_users
+    get_muted_users,
+    get_muted_users_from_preferences
 )
 import logging
 
@@ -29,12 +30,12 @@ async def get_preferences(
     current_user: User = Depends(get_current_user)
 ):
     """Get current user's chat mute preferences"""
-    preferences = get_mute_preferences(current_user.account_id, db)
+    preferences = get_mute_preferences(current_user.account_id, db, create_if_missing=False)
     
     return {
         "global_chat_muted": preferences.global_chat_muted,
         "trivia_live_chat_muted": preferences.trivia_live_chat_muted,
-        "private_chat_muted_users": get_muted_users(current_user.account_id, db)
+        "private_chat_muted_users": get_muted_users_from_preferences(preferences)
     }
 
 
@@ -109,21 +110,22 @@ async def list_muted_users(
 ):
     """List all users muted for private chat"""
     muted_user_ids = get_muted_users(current_user.account_id, db)
-    
-    # Get user details for muted users
-    from models import User
     muted_users = []
-    for user_id in muted_user_ids:
-        user = db.query(User).filter(User.account_id == user_id).first()
-        if user:
-            muted_users.append({
-                "user_id": user.account_id,
-                "username": user.username or f"User{user.account_id}",
-                "profile_pic_url": user.profile_pic_url
-            })
+    if muted_user_ids:
+        # Get user details for muted users in one query
+        from models import User
+        users = db.query(User).filter(User.account_id.in_(muted_user_ids)).all()
+        user_map = {user.account_id: user for user in users}
+        for user_id in muted_user_ids:
+            user = user_map.get(user_id)
+            if user:
+                muted_users.append({
+                    "user_id": user.account_id,
+                    "username": user.username or f"User{user.account_id}",
+                    "profile_pic_url": user.profile_pic_url
+                })
     
     return {
         "muted_users": muted_users,
         "count": len(muted_users)
     }
-

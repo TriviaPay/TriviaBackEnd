@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, or_, func
 from datetime import datetime, timedelta
 from typing import Optional, Union, Tuple
@@ -29,9 +30,8 @@ from utils.onesignal_client import (
 )
 from utils.chat_mute import is_user_muted_for_private_chat
 from utils.message_sanitizer import sanitize_message
-from utils.chat_helpers import get_user_chat_profile_data
+from utils.chat_helpers import get_user_chat_profile_data, get_user_chat_profile_data_bulk
 from utils.storage import presign_get
-from utils.user_level_service import get_level_progress
 from utils.chat_redis import (
     check_burst_limit,
     check_rate_limit,
@@ -109,13 +109,21 @@ def get_user_presence_info(db: Session, user_id: int, viewer_id: int, conversati
             last_seen_at=None
         )
         db.add(presence)
-        db.commit()
-        db.refresh(presence)
+        try:
+            db.commit()
+            db.refresh(presence)
+        except IntegrityError:
+            db.rollback()
+            presence = db.query(UserPresence).filter(
+                UserPresence.user_id == user_id
+            ).first()
     
     # Check privacy settings
     privacy = presence.privacy_settings or {}
     share_online = privacy.get("share_online", True)
     share_last_seen = privacy.get("share_last_seen", "contacts")
+    if share_last_seen == "all":
+        share_last_seen = "everyone"
     
     # For now, assume if user is in conversation, they're a contact
     # TODO: Implement proper contact/friend checking
@@ -310,8 +318,17 @@ async def send_private_message(
             status='pending'
         )
         db.add(conversation)
-        db.flush()
-        is_new_conversation = True
+        try:
+            db.flush()
+            is_new_conversation = True
+        except IntegrityError:
+            db.rollback()
+            conversation = db.query(PrivateChatConversation).filter(
+                PrivateChatConversation.user1_id == user_ids[0],
+                PrivateChatConversation.user2_id == user_ids[1]
+            ).first()
+            if not conversation:
+                raise HTTPException(status_code=500, detail="Failed to create conversation")
     
     # Check if conversation is rejected
     if conversation.status == 'rejected':
@@ -635,48 +652,141 @@ async def list_private_conversations(
         func.coalesce(PrivateChatConversation.last_message_at, PrivateChatConversation.created_at).desc()
     ).all()
     
+    if not conversations:
+        return {"conversations": []}
+
+    peer_map = {}
+    conv_ids_user1 = []
+    conv_ids_user2 = []
+    peer_ids = set()
+    for conv in conversations:
+        if conv.user1_id == current_user.account_id:
+            peer_id = conv.user2_id
+            conv_ids_user1.append(conv.id)
+        else:
+            peer_id = conv.user1_id
+            conv_ids_user2.append(conv.id)
+        peer_map[conv.id] = peer_id
+        peer_ids.add(peer_id)
+
+    peer_users = db.query(User).filter(User.account_id.in_(list(peer_ids))).all()
+    peer_user_map = {user.account_id: user for user in peer_users}
+
+    unread_counts = {}
+    if conv_ids_user1:
+        unread_user1 = db.query(
+            PrivateChatMessage.conversation_id,
+            func.count(PrivateChatMessage.id)
+        ).join(
+            PrivateChatConversation,
+            PrivateChatConversation.id == PrivateChatMessage.conversation_id
+        ).filter(
+            PrivateChatMessage.conversation_id.in_(conv_ids_user1),
+            PrivateChatMessage.sender_id != current_user.account_id,
+            or_(
+                PrivateChatConversation.last_read_message_id_user1.is_(None),
+                PrivateChatMessage.id > PrivateChatConversation.last_read_message_id_user1
+            )
+        ).group_by(PrivateChatMessage.conversation_id).all()
+        unread_counts.update({cid: count for cid, count in unread_user1})
+    if conv_ids_user2:
+        unread_user2 = db.query(
+            PrivateChatMessage.conversation_id,
+            func.count(PrivateChatMessage.id)
+        ).join(
+            PrivateChatConversation,
+            PrivateChatConversation.id == PrivateChatMessage.conversation_id
+        ).filter(
+            PrivateChatMessage.conversation_id.in_(conv_ids_user2),
+            PrivateChatMessage.sender_id != current_user.account_id,
+            or_(
+                PrivateChatConversation.last_read_message_id_user2.is_(None),
+                PrivateChatMessage.id > PrivateChatConversation.last_read_message_id_user2
+            )
+        ).group_by(PrivateChatMessage.conversation_id).all()
+        unread_counts.update({cid: count for cid, count in unread_user2})
+
+    presence_rows = db.query(UserPresence).filter(
+        UserPresence.user_id.in_(list(peer_ids))
+    ).all()
+    presence_map = {p.user_id: p for p in presence_rows}
+    missing_ids = peer_ids - set(presence_map.keys())
+    if missing_ids:
+        for user_id in missing_ids:
+            presence = UserPresence(
+                user_id=user_id,
+                privacy_settings={
+                    "share_last_seen": "contacts",
+                    "share_online": True,
+                    "read_receipts": True
+                },
+                device_online=False,
+                last_seen_at=None
+            )
+            db.add(presence)
+            presence_map[user_id] = presence
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+        presence_rows = db.query(UserPresence).filter(
+            UserPresence.user_id.in_(list(peer_ids))
+        ).all()
+        presence_map = {p.user_id: p for p in presence_rows}
+
+    last_message_map = {}
+    if conversations and peer_ids:
+        last_messages = db.query(
+            PrivateChatMessage.conversation_id,
+            PrivateChatMessage.sender_id,
+            func.max(PrivateChatMessage.created_at)
+        ).filter(
+            PrivateChatMessage.conversation_id.in_([conv.id for conv in conversations]),
+            PrivateChatMessage.sender_id.in_(list(peer_ids))
+        ).group_by(
+            PrivateChatMessage.conversation_id,
+            PrivateChatMessage.sender_id
+        ).all()
+        last_message_map = {(cid, sender_id): created_at for cid, sender_id, created_at in last_messages}
+
+    profile_map = get_user_chat_profile_data_bulk(peer_users, db)
+
     result = []
     for conv in conversations:
-        # Determine peer user
-        peer_id = conv.user2_id if conv.user1_id == current_user.account_id else conv.user1_id
-        peer_user = db.query(User).filter(User.account_id == peer_id).first()
-        
+        peer_id = peer_map.get(conv.id)
+        peer_user = peer_user_map.get(peer_id)
         if not peer_user:
             continue
-        
-        # Determine last_read_message_id for current user
-        last_read_id = conv.last_read_message_id_user1 if conv.user1_id == current_user.account_id else conv.last_read_message_id_user2
-        
-        # Count unread messages (messages after last_read_id)
-        if last_read_id:
-            unread_count = db.query(PrivateChatMessage).filter(
-                PrivateChatMessage.conversation_id == conv.id,
-                PrivateChatMessage.sender_id != current_user.account_id,
-                PrivateChatMessage.id > last_read_id
-            ).count()
-        else:
-            # No read messages yet, count all messages from peer
-            unread_count = db.query(PrivateChatMessage).filter(
-                PrivateChatMessage.conversation_id == conv.id,
-                PrivateChatMessage.sender_id != current_user.account_id
-            ).count()
-        
-        # Get peer user's presence (last seen and online status)
-        peer_online, peer_last_seen = get_user_presence_info(db, peer_id, current_user.account_id, conv.id)
-        
-        # Get peer user's profile data (avatar, frame)
-        peer_profile_data = get_user_chat_profile_data(peer_user, db)
-        
+
+        presence = presence_map.get(peer_id)
+        privacy = presence.privacy_settings if presence and presence.privacy_settings else {}
+        share_online = privacy.get("share_online", True)
+        share_last_seen = privacy.get("share_last_seen", "contacts")
+        if share_last_seen == "all":
+            share_last_seen = "everyone"
+
+        peer_online = presence.device_online if presence and share_online else False
+        peer_last_seen = None
+        if share_last_seen in ["everyone", "contacts"]:
+            if presence and presence.last_seen_at:
+                peer_last_seen = presence.last_seen_at.isoformat()
+            else:
+                last_msg_time = last_message_map.get((conv.id, peer_id))
+                if last_msg_time:
+                    peer_last_seen = last_msg_time.isoformat()
+
+        profile_data = profile_map.get(peer_id, {})
+
         result.append({
             "conversation_id": conv.id,
             "peer_user_id": peer_id,
             "peer_username": get_display_username(peer_user),
-            "peer_profile_pic": peer_profile_data["profile_pic_url"],
-            "peer_avatar_url": peer_profile_data["avatar_url"],
-            "peer_frame_url": peer_profile_data["frame_url"],
-            "peer_badge": peer_profile_data["badge"],
+            "peer_profile_pic": profile_data.get("profile_pic_url"),
+            "peer_avatar_url": profile_data.get("avatar_url"),
+            "peer_frame_url": profile_data.get("frame_url"),
+            "peer_badge": profile_data.get("badge"),
             "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
-            "unread_count": unread_count,
+            "unread_count": unread_counts.get(conv.id, 0),
             "peer_online": peer_online,
             "peer_last_seen": peer_last_seen
         })
@@ -766,6 +876,9 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
             except Exception as e:
                 logger.warning(f"Failed to presign frame {frame_id}: {e}")
     
+    from utils.user_level_service import get_level_progress_for_users
+    level_progress_map = get_level_progress_for_users(users, db)
+
     # Build profile data for each user
     for user in users:
         # Avatar URL
@@ -837,9 +950,12 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
                         "subscription_type": "silver",
                         "price": 10.0
                     })
-        
+
         # Level progress
-        level_progress = get_level_progress(user, db)
+        level_progress = level_progress_map.get(user.account_id, {
+            "level": user.level if user.level else 1,
+            "level_progress": "0/100"
+        })
         
         profile_cache[user.account_id] = {
             "profile_pic_url": user.profile_pic_url,
@@ -848,7 +964,7 @@ def _batch_get_user_profile_data(users: list[User], db: Session) -> dict[int, di
             "badge": badge_info,
             "subscription_badges": subscription_badges,
             "level": level_progress['level'],
-            "level_progress": level_progress['progress']
+            "level_progress": level_progress['level_progress']
         }
     
     return profile_cache
@@ -1357,15 +1473,22 @@ async def list_blocks(
         Block.blocker_id == current_user.account_id
     ).order_by(Block.created_at.desc()).all()
     
+    blocked_ids = [block.blocked_id for block in blocks]
+    users = []
+    if blocked_ids:
+        users = db.query(User).filter(User.account_id.in_(blocked_ids)).all()
+    user_map = {user.account_id: user for user in users}
+
     blocked_users = []
     for block in blocks:
-        blocked_user = db.query(User).filter(User.account_id == block.blocked_id).first()
-        if blocked_user:
-            blocked_users.append({
-                "user_id": blocked_user.account_id,
-                "username": get_display_username(blocked_user),
-                "blocked_at": block.created_at.isoformat()
-            })
+        blocked_user = user_map.get(block.blocked_id)
+        if not blocked_user:
+            continue
+        blocked_users.append({
+            "user_id": blocked_user.account_id,
+            "username": get_display_username(blocked_user),
+            "blocked_at": block.created_at.isoformat()
+        })
     
     return {
         "blocked_users": blocked_users

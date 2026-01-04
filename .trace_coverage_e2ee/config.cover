@@ -1,0 +1,187 @@
+    1: import os
+    1: import warnings
+    1: import sys
+    1: import io
+       
+       # Suppress ALL warnings from dotenv BEFORE importing it
+    1: warnings.filterwarnings("ignore", category=UserWarning)
+    1: warnings.filterwarnings("ignore", message=".*dotenv.*")
+    1: warnings.filterwarnings("ignore", message=".*Python-dotenv.*")
+       
+       # Create a filter for stderr that removes dotenv warnings
+    2: class FilteredStderr:
+    1:     def __init__(self, original_stderr):
+    1:         self.original_stderr = original_stderr
+               
+    1:     def write(self, text):
+               # Filter out dotenv-related warnings
+>>>>>>         if text and ('dotenv' not in text.lower() and 'Python-dotenv' not in text):
+>>>>>>             self.original_stderr.write(text)
+                   
+    1:     def flush(self):
+>>>>>>         self.original_stderr.flush()
+               
+    1:     def __getattr__(self, name):
+>>>>>>         return getattr(self.original_stderr, name)
+       
+       # Redirect stderr to filter out dotenv warnings
+    1: _filtered_stderr = FilteredStderr(sys.stderr)
+    1: sys.stderr = _filtered_stderr
+       
+    1: from dotenv import load_dotenv
+       
+       # Load environment variables from .env file
+       # Suppress dotenv parsing warnings for malformed lines (comments, etc.)
+    1: load_dotenv(override=False)
+       
+       # Application environment
+    1: ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+    1: DEBUG = ENVIRONMENT == "development"
+       
+       # Database settings
+    1: DATABASE_URL = os.getenv("DATABASE_URL")
+       
+       # Stripe settings
+    1: STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+    1: STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+    1: STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+       
+       # IAP (In-App Purchase) settings
+    1: APPLE_IAP_SHARED_SECRET = os.getenv("APPLE_IAP_SHARED_SECRET", "")
+    1: APPLE_IAP_USE_SANDBOX = os.getenv("APPLE_IAP_USE_SANDBOX", "false").lower() == "true"
+    1: GOOGLE_IAP_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_IAP_SERVICE_ACCOUNT_JSON", "")
+    1: GOOGLE_IAP_PACKAGE_NAME = os.getenv("GOOGLE_IAP_PACKAGE_NAME", "com.triviapay.app")
+       
+       # Logging
+    1: LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+       
+       # Application settings
+    1: APP_NAME = "TriviaPay API"
+    1: APP_VERSION = "1.0.0"
+       
+       # Descope settings
+    1: DESCOPE_PROJECT_ID = os.getenv("DESCOPE_PROJECT_ID", "")
+    1: DESCOPE_MANAGEMENT_KEY = os.getenv("DESCOPE_MANAGEMENT_KEY", "")
+    1: DESCOPE_JWT_LEEWAY = int(os.getenv("DESCOPE_JWT_LEEWAY", "60"))  # default 60 seconds for JWT clock-skew tolerance
+    1: DESCOPE_JWT_LEEWAY_FALLBACK = int(os.getenv("DESCOPE_JWT_LEEWAY_FALLBACK", "120"))  # fallback 120 seconds for severe clock-skew
+       
+       # Log JWT leeway configuration on startup
+    1: import logging
+    1: logging.info(f"Descope JWT leeway configured: primary={DESCOPE_JWT_LEEWAY}s, fallback={DESCOPE_JWT_LEEWAY_FALLBACK}s")
+       
+       # Password storage configuration
+    1: STORE_PASSWORD_IN_DESCOPE = os.getenv("STORE_PASSWORD_IN_DESCOPE", "true").lower() == "true"
+    1: STORE_PASSWORD_IN_NEONDB = os.getenv("STORE_PASSWORD_IN_NEONDB", "true").lower() == "true"
+       
+       # Live Chat settings
+    1: LIVE_CHAT_ENABLED = os.getenv("LIVE_CHAT_ENABLED", "true").lower() == "true"
+    1: LIVE_CHAT_PRE_DRAW_HOURS = int(os.getenv("LIVE_CHAT_PRE_DRAW_HOURS", "1"))  # Hours before draw
+    1: LIVE_CHAT_POST_DRAW_HOURS = int(os.getenv("LIVE_CHAT_POST_DRAW_HOURS", "1"))  # Hours after draw
+    1: LIVE_CHAT_MAX_MESSAGES_PER_USER_PER_MINUTE = int(os.getenv("LIVE_CHAT_MAX_MESSAGES_PER_USER_PER_MINUTE", "10"))
+    1: LIVE_CHAT_MESSAGE_HISTORY_LIMIT = int(os.getenv("LIVE_CHAT_MESSAGE_HISTORY_LIMIT", "100"))  # fallback 2 hours
+    1: LIVE_CHAT_MAX_MESSAGE_LENGTH = int(os.getenv("LIVE_CHAT_MAX_MESSAGE_LENGTH", "1000"))  # Maximum message length in characters
+       
+       # Redis settings
+    1: REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+       
+       # AWS Default Profile Picture Settings
+    1: AWS_DEFAULT_PROFILE_PIC_BASE_URL = os.getenv("AWS_DEFAULT_PROFILE_PIC_BASE_URL", "")
+       
+       # AWS Profile Picture Upload Settings
+    1: AWS_PROFILE_PIC_BUCKET = os.getenv("AWS_PROFILE_PIC_BUCKET", "triviapics")  # S3 bucket for custom profile pictures
+       
+       # Referral Settings
+    1: REFERRAL_APP_LINK = os.getenv("REFERRAL_APP_LINK", "https://triviapay.app")  # App download link for referrals
+       
+       # SSE settings
+    1: SSE_HEARTBEAT_SECONDS = int(os.getenv("SSE_HEARTBEAT_SECONDS", "25"))
+    1: E2EE_DM_METRICS_CACHE_SECONDS = int(os.getenv("E2EE_DM_METRICS_CACHE_SECONDS", "10"))
+       
+       # E2EE DM Settings
+    1: E2EE_DM_ENABLED = os.getenv("E2EE_DM_ENABLED", "false").lower() == "true"
+    1: E2EE_DM_MAX_MESSAGE_SIZE = int(os.getenv("E2EE_DM_MAX_MESSAGE_SIZE", "65536"))  # 64KB
+    1: E2EE_DM_MAX_MESSAGES_PER_MINUTE = int(os.getenv("E2EE_DM_MAX_MESSAGES_PER_MINUTE", "20"))
+    1: E2EE_DM_MAX_MESSAGES_PER_CONVERSATION_BURST = int(os.getenv("E2EE_DM_MAX_MESSAGES_PER_CONVERSATION_BURST", "5"))
+    1: E2EE_DM_BURST_WINDOW_SECONDS = int(os.getenv("E2EE_DM_BURST_WINDOW_SECONDS", "5"))
+    1: E2EE_DM_PREKEY_POOL_SIZE = int(os.getenv("E2EE_DM_PREKEY_POOL_SIZE", "100"))
+    1: E2EE_DM_OTPK_LOW_WATERMARK = int(os.getenv("E2EE_DM_OTPK_LOW_WATERMARK", "5"))
+    1: E2EE_DM_OTPK_CRITICAL_WATERMARK = int(os.getenv("E2EE_DM_OTPK_CRITICAL_WATERMARK", "2"))
+    1: E2EE_DM_SIGNED_PREKEY_ROTATION_DAYS = int(os.getenv("E2EE_DM_SIGNED_PREKEY_ROTATION_DAYS", "60"))
+    1: E2EE_DM_SIGNED_PREKEY_MAX_AGE_DAYS = int(os.getenv("E2EE_DM_SIGNED_PREKEY_MAX_AGE_DAYS", "90"))
+    1: E2EE_DM_IDENTITY_CHANGE_ALERT_THRESHOLD = int(os.getenv("E2EE_DM_IDENTITY_CHANGE_ALERT_THRESHOLD", "2"))
+    1: E2EE_DM_IDENTITY_CHANGE_BLOCK_THRESHOLD = int(os.getenv("E2EE_DM_IDENTITY_CHANGE_BLOCK_THRESHOLD", "5"))
+    1: E2EE_DM_MAX_CONCURRENT_STREAMS_PER_USER = int(os.getenv("E2EE_DM_MAX_CONCURRENT_STREAMS_PER_USER", "3"))
+    1: E2EE_DM_MESSAGE_HISTORY_LIMIT = int(os.getenv("E2EE_DM_MESSAGE_HISTORY_LIMIT", "100"))
+    1: E2EE_DM_SSE_ALLOW_QUERY_TOKEN = os.getenv("E2EE_DM_SSE_ALLOW_QUERY_TOKEN", "false").lower() == "true"
+    1: REDIS_RETRY_INTERVAL_SECONDS = int(os.getenv("REDIS_RETRY_INTERVAL_SECONDS", "60"))
+    1: REDIS_PUBSUB_LAG_ALERT_THRESHOLD_MS = int(os.getenv("REDIS_PUBSUB_LAG_ALERT_THRESHOLD_MS", "2000"))
+    1: SSE_MAX_MISSED_HEARTBEATS = int(os.getenv("SSE_MAX_MISSED_HEARTBEATS", "2"))
+       
+       # Groups Settings
+    1: GROUPS_ENABLED = os.getenv("GROUPS_ENABLED", "true").lower() == "true"
+    1: GROUP_MAX_PARTICIPANTS = int(os.getenv("GROUP_MAX_PARTICIPANTS", "100"))
+    1: GROUP_INVITE_EXPIRY_HOURS = int(os.getenv("GROUP_INVITE_EXPIRY_HOURS", "72"))
+    1: GROUP_SENDER_KEY_ROTATE_DAYS = int(os.getenv("GROUP_SENDER_KEY_ROTATE_DAYS", "60"))
+    1: GROUP_MESSAGE_RATE_PER_USER_PER_MIN = int(os.getenv("GROUP_MESSAGE_RATE_PER_USER_PER_MIN", "40"))
+    1: GROUP_BURST_PER_5S = int(os.getenv("GROUP_BURST_PER_5S", "10"))
+    1: GROUP_BURST_WINDOW_SECONDS = int(os.getenv("GROUP_BURST_WINDOW_SECONDS", "5"))
+    1: GROUP_ATTACHMENT_MAX_MB = int(os.getenv("GROUP_ATTACHMENT_MAX_MB", "25"))
+       
+       # Status Settings
+    1: STATUS_ENABLED = os.getenv("STATUS_ENABLED", "true").lower() == "true"
+    1: STATUS_TTL_HOURS = int(os.getenv("STATUS_TTL_HOURS", "24"))
+    1: STATUS_MAX_POSTS_PER_DAY = int(os.getenv("STATUS_MAX_POSTS_PER_DAY", "20"))
+    1: STATUS_ATTACHMENT_MAX_MB = int(os.getenv("STATUS_ATTACHMENT_MAX_MB", "50"))
+       
+       # Presence Settings
+    1: PRESENCE_ENABLED = os.getenv("PRESENCE_ENABLED", "true").lower() == "true"
+    1: PRESENCE_HEARTBEAT_SECONDS = int(os.getenv("PRESENCE_HEARTBEAT_SECONDS", "25"))
+    1: PRESENCE_UPDATE_INTERVAL_SECONDS = int(os.getenv("PRESENCE_UPDATE_INTERVAL_SECONDS", "60"))
+    1: PRESENCE_LAST_SEEN_PRIVACY = os.getenv("PRESENCE_LAST_SEEN_PRIVACY", "contacts")  # 'contacts', 'everyone', 'nobody'
+       
+       # Draw Settings
+    1: DRAW_PRIZE_POOL_CACHE_SECONDS = int(os.getenv("DRAW_PRIZE_POOL_CACHE_SECONDS", "60"))
+       
+       # Pusher Settings
+    1: PUSHER_ENABLED = os.getenv("PUSHER_ENABLED", "true").lower() == "true"
+    1: PUSHER_APP_ID = os.getenv("PUSHER_APP_ID", "")
+    1: PUSHER_KEY = os.getenv("PUSHER_KEY", "")
+    1: PUSHER_SECRET = os.getenv("PUSHER_SECRET", "")
+    1: PUSHER_CLUSTER = os.getenv("PUSHER_CLUSTER", "us2")
+       
+       # OneSignal Settings
+    1: ONESIGNAL_ENABLED = os.getenv("ONESIGNAL_ENABLED", "true").lower() == "true"
+    1: ONESIGNAL_APP_ID = os.getenv("ONESIGNAL_APP_ID", "")
+    1: ONESIGNAL_REST_API_KEY = os.getenv("ONESIGNAL_REST_API_KEY", "")
+       
+       # Global Chat Settings
+    1: GLOBAL_CHAT_ENABLED = os.getenv("GLOBAL_CHAT_ENABLED", "true").lower() == "true"
+    1: GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE = int(os.getenv("GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE", "20"))
+    1: GLOBAL_CHAT_MAX_MESSAGE_LENGTH = int(os.getenv("GLOBAL_CHAT_MAX_MESSAGE_LENGTH", "1000"))
+    1: GLOBAL_CHAT_RETENTION_DAYS = int(os.getenv("GLOBAL_CHAT_RETENTION_DAYS", "90"))
+       
+       # Private Chat Settings
+    1: PRIVATE_CHAT_ENABLED = os.getenv("PRIVATE_CHAT_ENABLED", "true").lower() == "true"
+    1: PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE = int(os.getenv("PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE", "15"))
+    1: PRIVATE_CHAT_MAX_MESSAGE_LENGTH = int(os.getenv("PRIVATE_CHAT_MAX_MESSAGE_LENGTH", "2000"))
+       
+       # Trivia Live Chat Settings
+    1: TRIVIA_LIVE_CHAT_ENABLED = os.getenv("TRIVIA_LIVE_CHAT_ENABLED", "true").lower() == "true"
+    1: TRIVIA_LIVE_CHAT_PRE_HOURS = int(os.getenv("TRIVIA_LIVE_CHAT_PRE_HOURS", "3"))
+    1: TRIVIA_LIVE_CHAT_POST_HOURS = int(os.getenv("TRIVIA_LIVE_CHAT_POST_HOURS", "3"))
+    1: TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE = int(os.getenv("TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE", "15"))
+    1: TRIVIA_LIVE_CHAT_MAX_MESSAGE_LENGTH = int(os.getenv("TRIVIA_LIVE_CHAT_MAX_MESSAGE_LENGTH", "1000"))
+       
+       # Message Sanitization
+    1: MESSAGE_SANITIZE_ENABLED = os.getenv("MESSAGE_SANITIZE_ENABLED", "true").lower() == "true"
+       
+       # Burst Rate Limiting
+    1: GLOBAL_CHAT_MAX_MESSAGES_PER_BURST = int(os.getenv("GLOBAL_CHAT_MAX_MESSAGES_PER_BURST", "3"))
+    1: GLOBAL_CHAT_BURST_WINDOW_SECONDS = int(os.getenv("GLOBAL_CHAT_BURST_WINDOW_SECONDS", "3"))
+    1: PRIVATE_CHAT_MAX_MESSAGES_PER_BURST = int(os.getenv("PRIVATE_CHAT_MAX_MESSAGES_PER_BURST", "3"))
+    1: PRIVATE_CHAT_BURST_WINDOW_SECONDS = int(os.getenv("PRIVATE_CHAT_BURST_WINDOW_SECONDS", "3"))
+    1: TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST = int(os.getenv("TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_BURST", "3"))
+    1: TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS = int(os.getenv("TRIVIA_LIVE_CHAT_BURST_WINDOW_SECONDS", "3"))
+       
+       # Typing Indicators
+    1: TYPING_TIMEOUT_SECONDS = int(os.getenv("TYPING_TIMEOUT_SECONDS", "5"))

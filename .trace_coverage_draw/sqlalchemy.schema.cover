@@ -1,0 +1,70 @@
+       # schema.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """Compatibility namespace for sqlalchemy.sql.schema and related.
+       
+       """
+       
+    1: from __future__ import annotations
+       
+    1: from .sql.base import SchemaVisitor as SchemaVisitor
+    1: from .sql.ddl import _CreateDropBase as _CreateDropBase
+    1: from .sql.ddl import _DropView as _DropView
+    1: from .sql.ddl import AddConstraint as AddConstraint
+    1: from .sql.ddl import BaseDDLElement as BaseDDLElement
+    1: from .sql.ddl import CreateColumn as CreateColumn
+    1: from .sql.ddl import CreateIndex as CreateIndex
+    1: from .sql.ddl import CreateSchema as CreateSchema
+    1: from .sql.ddl import CreateSequence as CreateSequence
+    1: from .sql.ddl import CreateTable as CreateTable
+    1: from .sql.ddl import DDL as DDL
+    1: from .sql.ddl import DDLElement as DDLElement
+    1: from .sql.ddl import DropColumnComment as DropColumnComment
+    1: from .sql.ddl import DropConstraint as DropConstraint
+    1: from .sql.ddl import DropConstraintComment as DropConstraintComment
+    1: from .sql.ddl import DropIndex as DropIndex
+    1: from .sql.ddl import DropSchema as DropSchema
+    1: from .sql.ddl import DropSequence as DropSequence
+    1: from .sql.ddl import DropTable as DropTable
+    1: from .sql.ddl import DropTableComment as DropTableComment
+    1: from .sql.ddl import ExecutableDDLElement as ExecutableDDLElement
+    1: from .sql.ddl import InvokeDDLBase as InvokeDDLBase
+    1: from .sql.ddl import SetColumnComment as SetColumnComment
+    1: from .sql.ddl import SetConstraintComment as SetConstraintComment
+    1: from .sql.ddl import SetTableComment as SetTableComment
+    1: from .sql.ddl import sort_tables as sort_tables
+    1: from .sql.ddl import (
+           sort_tables_and_constraints as sort_tables_and_constraints,
+       )
+    1: from .sql.naming import conv as conv
+    1: from .sql.schema import _get_table_key as _get_table_key
+    1: from .sql.schema import BLANK_SCHEMA as BLANK_SCHEMA
+    1: from .sql.schema import CheckConstraint as CheckConstraint
+    1: from .sql.schema import Column as Column
+    1: from .sql.schema import (
+           ColumnCollectionConstraint as ColumnCollectionConstraint,
+       )
+    1: from .sql.schema import ColumnCollectionMixin as ColumnCollectionMixin
+    1: from .sql.schema import ColumnDefault as ColumnDefault
+    1: from .sql.schema import Computed as Computed
+    1: from .sql.schema import Constraint as Constraint
+    1: from .sql.schema import DefaultClause as DefaultClause
+    1: from .sql.schema import DefaultGenerator as DefaultGenerator
+    1: from .sql.schema import FetchedValue as FetchedValue
+    1: from .sql.schema import ForeignKey as ForeignKey
+    1: from .sql.schema import ForeignKeyConstraint as ForeignKeyConstraint
+    1: from .sql.schema import HasConditionalDDL as HasConditionalDDL
+    1: from .sql.schema import Identity as Identity
+    1: from .sql.schema import Index as Index
+    1: from .sql.schema import insert_sentinel as insert_sentinel
+    1: from .sql.schema import MetaData as MetaData
+    1: from .sql.schema import PrimaryKeyConstraint as PrimaryKeyConstraint
+    1: from .sql.schema import SchemaConst as SchemaConst
+    1: from .sql.schema import SchemaItem as SchemaItem
+    1: from .sql.schema import Sequence as Sequence
+    1: from .sql.schema import Table as Table
+    1: from .sql.schema import UniqueConstraint as UniqueConstraint

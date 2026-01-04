@@ -1,0 +1,105 @@
+       # -*- coding: utf-8 -*-
+       
+    1: from __future__ import (
+           print_function,
+           unicode_literals,
+           absolute_import,
+           division)
+       
+    1: import six
+       
+    1: from pusher.util import ensure_text, ensure_binary, app_id_re
+    1: from pusher.crypto import parse_master_key
+       
+       
+    2: class Client(object):
+    1:     def __init__(
+                   self,
+                   app_id,
+                   key,
+                   secret,
+                   ssl=True,
+                   host=None,
+                   port=None,
+                   timeout=5,
+                   cluster=None,
+                   encryption_master_key=None,
+                   encryption_master_key_base64=None,
+                   json_encoder=None,
+                   json_decoder=None,
+                   backend=None,
+                   **backend_options):
+       
+    2:         if backend is None:
+    2:               from .requests import RequestsBackend
+    2:               backend = RequestsBackend
+       
+    2:         self._app_id = ensure_text(app_id, "app_id")
+    2:         if not app_id_re.match(self._app_id):
+>>>>>>               raise ValueError("Invalid app id")
+       
+    2:         self._key = ensure_text(key, "key")
+    2:         self._secret = ensure_text(secret, "secret")
+       
+    2:         if not isinstance(ssl, bool):
+>>>>>>               raise TypeError("SSL should be a boolean")
+       
+    2:         self._ssl = ssl
+       
+    2:         if host:
+>>>>>>             self._host = ensure_text(host, "host")
+    2:         elif cluster:
+    2:             self._host = (
+    4:                 six.text_type("api-%s.pusher.com") %
+    2:                 ensure_text(cluster, "cluster"))
+               else:
+>>>>>>             self._host = six.text_type("api.pusherapp.com")
+       
+    2:         if port and not isinstance(port, six.integer_types):
+>>>>>>               raise TypeError("port should be an integer")
+       
+    2:         self._port = port or (443 if ssl else 80)
+       
+    2:         if not isinstance(timeout, six.integer_types):
+>>>>>>               raise TypeError("timeout should be an integer")
+       
+    2:         self._timeout = timeout
+    2:         self._json_encoder = json_encoder
+    2:         self._json_decoder = json_decoder
+       
+    2:         self._encryption_master_key = parse_master_key(encryption_master_key, encryption_master_key_base64)
+       
+    2:         self.http = backend(self, **backend_options)
+       
+       
+    1:     @property
+    1:     def app_id(self):
+    1:         return self._app_id
+       
+    1:     @property
+    1:     def key(self):
+    1:         return self._key
+       
+    1:     @property
+    1:     def secret(self):
+    1:         return self._secret
+       
+    1:     @property
+    1:     def host(self):
+    1:         return self._host
+       
+    1:     @property
+    1:     def port(self):
+    1:         return self._port
+       
+    1:     @property
+    1:     def timeout(self):
+    1:         return self._timeout
+       
+    1:     @property
+    1:     def ssl(self):
+    3:         return self._ssl
+       
+    1:     @property
+    1:     def scheme(self):
+    1:         return 'https' if self.ssl else 'http'

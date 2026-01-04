@@ -1,0 +1,9 @@
+       # This is not part of the public API but a code helper
+    1: from descope.auth import Auth
+       
+       
+    2: class AuthBase:
+    1:     """Base class for classes having auth"""
+       
+    1:     def __init__(self, auth: Auth):
+   23:         self._auth = auth

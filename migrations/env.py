@@ -2,6 +2,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+import sqlalchemy as sa
 
 from alembic import context
 
@@ -66,6 +67,17 @@ if database_url:
         database_url = database_url.replace("postgres://", "postgresql://", 1)
     config.set_main_option("sqlalchemy.url", database_url)
 
+def _mask_db_url(url: str) -> str:
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(url)
+        if parts.password:
+            netloc = parts.netloc.replace(f":{parts.password}@", ":***@")
+            return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    except Exception:
+        pass
+    return url
+
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
@@ -110,6 +122,13 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # Helpful diagnostics for mis-pointed DATABASE_URL
+        try:
+            effective_url = str(connectable.url)
+            context.get_context().log.info(f"Alembic connected to: {_mask_db_url(effective_url)}")
+        except Exception:
+            pass
+
         context.configure(
             connection=connection, target_metadata=target_metadata
         )

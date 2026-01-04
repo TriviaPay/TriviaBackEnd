@@ -1,0 +1,102 @@
+    1: """
+       Helper functions for storing notifications in the database.
+       """
+    1: from sqlalchemy.orm import Session
+    1: from models import Notification
+    1: from datetime import datetime
+    1: from typing import Optional, Dict, Any, List
+    1: import logging
+       
+    1: logger = logging.getLogger(__name__)
+       
+       
+    2: def create_notification(
+    1:     db: Session,
+    1:     user_id: int,
+    1:     title: str,
+    1:     body: str,
+    1:     notification_type: str,
+    1:     data: Optional[Dict[str, Any]] = None
+    1: ) -> Notification:
+           """
+           Create and store a notification in the database.
+           
+           Args:
+               db: Database session
+               user_id: User ID to send notification to
+               title: Notification title/heading
+               body: Notification body/content
+               notification_type: Type of notification (e.g., "chat_global", "chat_private", "chat_trivia_live", "system", "reward")
+               data: Optional additional data (e.g., message_id, conversation_id, etc.)
+           
+           Returns:
+               Created Notification object
+           """
+>>>>>>     try:
+>>>>>>         notification = Notification(
+>>>>>>             user_id=user_id,
+>>>>>>             title=title,
+>>>>>>             body=body,
+>>>>>>             type=notification_type,
+>>>>>>             data=data,
+>>>>>>             read=False,
+>>>>>>             created_at=datetime.utcnow()
+               )
+>>>>>>         db.add(notification)
+>>>>>>         db.commit()
+>>>>>>         db.refresh(notification)
+>>>>>>         logger.debug(f"Created notification {notification.id} for user {user_id} (type: {notification_type})")
+>>>>>>         return notification
+>>>>>>     except Exception as e:
+>>>>>>         logger.error(f"Failed to create notification for user {user_id}: {e}")
+>>>>>>         db.rollback()
+>>>>>>         raise
+       
+       
+    2: def create_notifications_batch(
+    1:     db: Session,
+    1:     user_ids: List[int],
+    1:     title: str,
+    1:     body: str,
+    1:     notification_type: str,
+    1:     data: Optional[Dict[str, Any]] = None
+    1: ) -> int:
+           """
+           Create notifications for multiple users in batch.
+           
+           Args:
+               db: Database session
+               user_ids: List of user IDs to send notifications to
+               title: Notification title/heading
+               body: Notification body/content
+               notification_type: Type of notification
+               data: Optional additional data
+           
+           Returns:
+               Number of notifications created
+           """
+>>>>>>     if not user_ids:
+>>>>>>         return 0
+           
+>>>>>>     try:
+>>>>>>         notifications = [
+>>>>>>             Notification(
+>>>>>>                 user_id=user_id,
+>>>>>>                 title=title,
+>>>>>>                 body=body,
+>>>>>>                 type=notification_type,
+>>>>>>                 data=data,
+>>>>>>                 read=False,
+>>>>>>                 created_at=datetime.utcnow()
+                   )
+>>>>>>             for user_id in user_ids
+               ]
+>>>>>>         db.add_all(notifications)
+>>>>>>         db.commit()
+>>>>>>         logger.debug(f"Created {len(notifications)} notifications (type: {notification_type}) for user_ids: {user_ids[:5]}..." if len(user_ids) > 5 else f"Created {len(notifications)} notifications (type: {notification_type}) for user_ids: {user_ids}")
+>>>>>>         return len(notifications)
+>>>>>>     except Exception as e:
+>>>>>>         logger.error(f"Failed to create batch notifications: {e}", exc_info=True)
+>>>>>>         db.rollback()
+>>>>>>         return 0
+       

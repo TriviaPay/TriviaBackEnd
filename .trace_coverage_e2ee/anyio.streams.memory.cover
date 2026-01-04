@@ -1,0 +1,279 @@
+    1: from __future__ import annotations
+       
+    1: from collections import OrderedDict, deque
+    1: from dataclasses import dataclass, field
+    1: from types import TracebackType
+    1: from typing import Generic, NamedTuple, TypeVar
+       
+    1: from .. import (
+           BrokenResourceError,
+           ClosedResourceError,
+           EndOfStream,
+           WouldBlock,
+           get_cancelled_exc_class,
+       )
+    1: from .._core._compat import DeprecatedAwaitable
+    1: from ..abc import Event, ObjectReceiveStream, ObjectSendStream
+    1: from ..lowlevel import checkpoint
+       
+    1: T_Item = TypeVar("T_Item")
+    1: T_co = TypeVar("T_co", covariant=True)
+    1: T_contra = TypeVar("T_contra", contravariant=True)
+       
+       
+    2: class MemoryObjectStreamStatistics(NamedTuple):
+    1:     current_buffer_used: int  #: number of items stored in the buffer
+           #: maximum number of items that can be stored on this stream (or :data:`math.inf`)
+    1:     max_buffer_size: float
+    1:     open_send_streams: int  #: number of unclosed clones of the send stream
+    1:     open_receive_streams: int  #: number of unclosed clones of the receive stream
+    1:     tasks_waiting_send: int  #: number of tasks blocked on :meth:`MemoryObjectSendStream.send`
+           #: number of tasks blocked on :meth:`MemoryObjectReceiveStream.receive`
+    1:     tasks_waiting_receive: int
+       
+       
+    2: @dataclass(eq=False)
+    1: class MemoryObjectStreamState(Generic[T_Item]):
+    1:     max_buffer_size: float = field()
+    1:     buffer: deque[T_Item] = field(init=False, default_factory=deque)
+    1:     open_send_channels: int = field(init=False, default=0)
+    1:     open_receive_channels: int = field(init=False, default=0)
+    2:     waiting_receivers: OrderedDict[Event, list[T_Item]] = field(
+    1:         init=False, default_factory=OrderedDict
+           )
+    2:     waiting_senders: OrderedDict[Event, T_Item] = field(
+    1:         init=False, default_factory=OrderedDict
+           )
+       
+    1:     def statistics(self) -> MemoryObjectStreamStatistics:
+>>>>>>         return MemoryObjectStreamStatistics(
+>>>>>>             len(self.buffer),
+>>>>>>             self.max_buffer_size,
+>>>>>>             self.open_send_channels,
+>>>>>>             self.open_receive_channels,
+>>>>>>             len(self.waiting_senders),
+>>>>>>             len(self.waiting_receivers),
+               )
+       
+       
+    2: @dataclass(eq=False)
+    1: class MemoryObjectReceiveStream(Generic[T_co], ObjectReceiveStream[T_co]):
+    1:     _state: MemoryObjectStreamState[T_co]
+    1:     _closed: bool = field(init=False, default=False)
+       
+    1:     def __post_init__(self) -> None:
+   32:         self._state.open_receive_channels += 1
+       
+    1:     def receive_nowait(self) -> T_co:
+               """
+               Receive the next item if it can be done without waiting.
+       
+               :return: the received item
+               :raises ~anyio.ClosedResourceError: if this send stream has been closed
+               :raises ~anyio.EndOfStream: if the buffer is empty and this stream has been
+                   closed from the sending end
+               :raises ~anyio.WouldBlock: if there are no items in the buffer and no tasks
+                   waiting to send
+       
+               """
+   64:         if self._closed:
+>>>>>>             raise ClosedResourceError
+       
+   64:         if self._state.waiting_senders:
+                   # Get the item from the next sender
+>>>>>>             send_event, item = self._state.waiting_senders.popitem(last=False)
+>>>>>>             self._state.buffer.append(item)
+>>>>>>             send_event.set()
+       
+   64:         if self._state.buffer:
+>>>>>>             return self._state.buffer.popleft()
+   64:         elif not self._state.open_send_channels:
+>>>>>>             raise EndOfStream
+       
+   64:         raise WouldBlock
+       
+    1:     async def receive(self) -> T_co:
+   64:         await checkpoint()
+   64:         try:
+   64:             return self.receive_nowait()
+   64:         except WouldBlock:
+                   # Add ourselves in the queue
+   64:             receive_event = Event()
+   64:             container: list[T_co] = []
+   64:             self._state.waiting_receivers[receive_event] = container
+       
+   64:             try:
+   64:                 await receive_event.wait()
+>>>>>>             except get_cancelled_exc_class():
+                       # Ignore the immediate cancellation if we already received an item, so as not to
+                       # lose it
+>>>>>>                 if not container:
+>>>>>>                     raise
+                   finally:
+   64:                 self._state.waiting_receivers.pop(receive_event, None)
+       
+   64:             if container:
+   64:                 return container[0]
+                   else:
+>>>>>>                 raise EndOfStream
+       
+    1:     def clone(self) -> MemoryObjectReceiveStream[T_co]:
+               """
+               Create a clone of this receive stream.
+       
+               Each clone can be closed separately. Only when all clones have been closed will the
+               receiving end of the memory stream be considered closed by the sending ends.
+       
+               :return: the cloned stream
+       
+               """
+>>>>>>         if self._closed:
+>>>>>>             raise ClosedResourceError
+       
+>>>>>>         return MemoryObjectReceiveStream(_state=self._state)
+       
+    1:     def close(self) -> None:
+               """
+               Close the stream.
+       
+               This works the exact same way as :meth:`aclose`, but is provided as a special case for the
+               benefit of synchronous callbacks.
+       
+               """
+   16:         if not self._closed:
+   16:             self._closed = True
+   16:             self._state.open_receive_channels -= 1
+   16:             if self._state.open_receive_channels == 0:
+   16:                 send_events = list(self._state.waiting_senders.keys())
+   16:                 for event in send_events:
+>>>>>>                     event.set()
+       
+    1:     async def aclose(self) -> None:
+   16:         self.close()
+       
+    1:     def statistics(self) -> MemoryObjectStreamStatistics:
+               """
+               Return statistics about the current state of this stream.
+       
+               .. versionadded:: 3.0
+               """
+>>>>>>         return self._state.statistics()
+       
+    1:     def __enter__(self) -> MemoryObjectReceiveStream[T_co]:
+>>>>>>         return self
+       
+    1:     def __exit__(
+               self,
+               exc_type: type[BaseException] | None,
+               exc_val: BaseException | None,
+               exc_tb: TracebackType | None,
+           ) -> None:
+>>>>>>         self.close()
+       
+       
+    2: @dataclass(eq=False)
+    1: class MemoryObjectSendStream(Generic[T_contra], ObjectSendStream[T_contra]):
+    1:     _state: MemoryObjectStreamState[T_contra]
+    1:     _closed: bool = field(init=False, default=False)
+       
+    1:     def __post_init__(self) -> None:
+   32:         self._state.open_send_channels += 1
+       
+    1:     def send_nowait(self, item: T_contra) -> DeprecatedAwaitable:
+               """
+               Send an item immediately if it can be done without waiting.
+       
+               :param item: the item to send
+               :raises ~anyio.ClosedResourceError: if this send stream has been closed
+               :raises ~anyio.BrokenResourceError: if the stream has been closed from the
+                   receiving end
+               :raises ~anyio.WouldBlock: if the buffer is full and there are no tasks waiting
+                   to receive
+       
+               """
+   80:         if self._closed:
+>>>>>>             raise ClosedResourceError
+   80:         if not self._state.open_receive_channels:
+>>>>>>             raise BrokenResourceError
+       
+   80:         if self._state.waiting_receivers:
+   64:             receive_event, container = self._state.waiting_receivers.popitem(last=False)
+   64:             container.append(item)
+   64:             receive_event.set()
+   16:         elif len(self._state.buffer) < self._state.max_buffer_size:
+   16:             self._state.buffer.append(item)
+               else:
+>>>>>>             raise WouldBlock
+       
+   80:         return DeprecatedAwaitable(self.send_nowait)
+       
+    1:     async def send(self, item: T_contra) -> None:
+   80:         await checkpoint()
+   80:         try:
+   80:             self.send_nowait(item)
+>>>>>>         except WouldBlock:
+                   # Wait until there's someone on the receiving end
+>>>>>>             send_event = Event()
+>>>>>>             self._state.waiting_senders[send_event] = item
+>>>>>>             try:
+>>>>>>                 await send_event.wait()
+>>>>>>             except BaseException:
+>>>>>>                 self._state.waiting_senders.pop(send_event, None)  # type: ignore[arg-type]
+>>>>>>                 raise
+       
+>>>>>>             if self._state.waiting_senders.pop(send_event, None):  # type: ignore[arg-type]
+>>>>>>                 raise BrokenResourceError
+       
+    1:     def clone(self) -> MemoryObjectSendStream[T_contra]:
+               """
+               Create a clone of this send stream.
+       
+               Each clone can be closed separately. Only when all clones have been closed will the
+               sending end of the memory stream be considered closed by the receiving ends.
+       
+               :return: the cloned stream
+       
+               """
+>>>>>>         if self._closed:
+>>>>>>             raise ClosedResourceError
+       
+>>>>>>         return MemoryObjectSendStream(_state=self._state)
+       
+    1:     def close(self) -> None:
+               """
+               Close the stream.
+       
+               This works the exact same way as :meth:`aclose`, but is provided as a special case for the
+               benefit of synchronous callbacks.
+       
+               """
+   16:         if not self._closed:
+   16:             self._closed = True
+   16:             self._state.open_send_channels -= 1
+   16:             if self._state.open_send_channels == 0:
+   16:                 receive_events = list(self._state.waiting_receivers.keys())
+   16:                 self._state.waiting_receivers.clear()
+   16:                 for event in receive_events:
+>>>>>>                     event.set()
+       
+    1:     async def aclose(self) -> None:
+   16:         self.close()
+       
+    1:     def statistics(self) -> MemoryObjectStreamStatistics:
+               """
+               Return statistics about the current state of this stream.
+       
+               .. versionadded:: 3.0
+               """
+>>>>>>         return self._state.statistics()
+       
+    1:     def __enter__(self) -> MemoryObjectSendStream[T_contra]:
+>>>>>>         return self
+       
+    1:     def __exit__(
+               self,
+               exc_type: type[BaseException] | None,
+               exc_val: BaseException | None,
+               exc_tb: TracebackType | None,
+           ) -> None:
+>>>>>>         self.close()

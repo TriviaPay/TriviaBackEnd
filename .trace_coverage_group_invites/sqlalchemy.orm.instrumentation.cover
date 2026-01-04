@@ -1,0 +1,754 @@
+       # orm/instrumentation.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       # mypy: allow-untyped-defs, allow-untyped-calls
+       
+    1: """Defines SQLAlchemy's system of class instrumentation.
+       
+       This module is usually not directly visible to user applications, but
+       defines a large part of the ORM's interactivity.
+       
+       instrumentation.py deals with registration of end-user classes
+       for state tracking.   It interacts closely with state.py
+       and attributes.py which establish per-instance and per-class-attribute
+       instrumentation, respectively.
+       
+       The class instrumentation system can be customized on a per-class
+       or global basis using the :mod:`sqlalchemy.ext.instrumentation`
+       module, which provides the means to build and specify
+       alternate instrumentation forms.
+       
+       .. versionchanged: 0.8
+          The instrumentation extension system was moved out of the
+          ORM and into the external :mod:`sqlalchemy.ext.instrumentation`
+          package.  When that package is imported, it installs
+          itself within sqlalchemy.orm so that its more comprehensive
+          resolution mechanics take effect.
+       
+       """
+       
+       
+    1: from __future__ import annotations
+       
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import cast
+    1: from typing import Collection
+    1: from typing import Dict
+    1: from typing import Generic
+    1: from typing import Iterable
+    1: from typing import List
+    1: from typing import Optional
+    1: from typing import Set
+    1: from typing import Tuple
+    1: from typing import Type
+    1: from typing import TYPE_CHECKING
+    1: from typing import TypeVar
+    1: from typing import Union
+    1: import weakref
+       
+    1: from . import base
+    1: from . import collections
+    1: from . import exc
+    1: from . import interfaces
+    1: from . import state
+    1: from ._typing import _O
+    1: from .attributes import _is_collection_attribute_impl
+    1: from .. import util
+    1: from ..event import EventTarget
+    1: from ..util import HasMemoized
+    1: from ..util.typing import Literal
+    1: from ..util.typing import Protocol
+       
+    1: if TYPE_CHECKING:
+>>>>>>     from ._typing import _RegistryType
+>>>>>>     from .attributes import AttributeImpl
+>>>>>>     from .attributes import QueryableAttribute
+>>>>>>     from .collections import _AdaptedCollectionProtocol
+>>>>>>     from .collections import _CollectionFactoryType
+>>>>>>     from .decl_base import _MapperConfig
+>>>>>>     from .events import InstanceEvents
+>>>>>>     from .mapper import Mapper
+>>>>>>     from .state import InstanceState
+>>>>>>     from ..event import dispatcher
+       
+    1: _T = TypeVar("_T", bound=Any)
+    1: DEL_ATTR = util.symbol("DEL_ATTR")
+       
+       
+    2: class _ExpiredAttributeLoaderProto(Protocol):
+    1:     def __call__(
+               self,
+               state: state.InstanceState[Any],
+               toload: Set[str],
+               passive: base.PassiveFlag,
+>>>>>>     ) -> None: ...
+       
+       
+    2: class _ManagerFactory(Protocol):
+    1:     def __call__(self, class_: Type[_O]) -> ClassManager[_O]: ...
+       
+       
+    3: class ClassManager(
+    1:     HasMemoized,
+    1:     Dict[str, "QueryableAttribute[Any]"],
+    1:     Generic[_O],
+    1:     EventTarget,
+       ):
+    1:     """Tracks state information at the class level."""
+       
+    1:     dispatch: dispatcher[ClassManager[_O]]
+       
+    1:     MANAGER_ATTR = base.DEFAULT_MANAGER_ATTR
+    1:     STATE_ATTR = base.DEFAULT_STATE_ATTR
+       
+    1:     _state_setter = staticmethod(util.attrsetter(STATE_ATTR))
+       
+    1:     expired_attribute_loader: _ExpiredAttributeLoaderProto
+           "previously known as deferred_scalar_loader"
+       
+    1:     init_method: Optional[Callable[..., None]]
+    1:     original_init: Optional[Callable[..., None]] = None
+       
+    1:     factory: Optional[_ManagerFactory]
+       
+    1:     declarative_scan: Optional[weakref.ref[_MapperConfig]] = None
+       
+    1:     registry: _RegistryType
+       
+    1:     if not TYPE_CHECKING:
+               # starts as None during setup
+    1:         registry = None
+       
+    1:     class_: Type[_O]
+       
+    1:     _bases: List[ClassManager[Any]]
+       
+    1:     @property
+    2:     @util.deprecated(
+    1:         "1.4",
+    1:         message="The ClassManager.deferred_scalar_loader attribute is now "
+               "named expired_attribute_loader",
+           )
+    1:     def deferred_scalar_loader(self):
+>>>>>>         return self.expired_attribute_loader
+       
+    1:     @deferred_scalar_loader.setter
+    2:     @util.deprecated(
+    1:         "1.4",
+    1:         message="The ClassManager.deferred_scalar_loader attribute is now "
+               "named expired_attribute_loader",
+           )
+    1:     def deferred_scalar_loader(self, obj):
+>>>>>>         self.expired_attribute_loader = obj
+       
+    1:     def __init__(self, class_):
+   50:         self.class_ = class_
+   50:         self.info = {}
+   50:         self.new_init = None
+   50:         self.local_attrs = {}
+   50:         self.originals = {}
+   50:         self._finalized = False
+   50:         self.factory = None
+   50:         self.init_method = None
+       
+  200:         self._bases = [
+>>>>>>             mgr
+  150:             for mgr in cast(
+   50:                 "List[Optional[ClassManager[Any]]]",
+  200:                 [
+   50:                     opt_manager_of_class(base)
+  100:                     for base in self.class_.__bases__
+   50:                     if isinstance(base, type)
+                       ],
+                   )
+   50:             if mgr is not None
+               ]
+       
+   50:         for base_ in self._bases:
+>>>>>>             self.update(base_)
+       
+  150:         cast(
+   50:             "InstanceEvents", self.dispatch._events
+   50:         )._new_classmanager_instance(class_, self)
+       
+  200:         for basecls in class_.__mro__:
+  150:             mgr = opt_manager_of_class(basecls)
+  150:             if mgr is not None:
+>>>>>>                 self.dispatch._update(mgr.dispatch)
+       
+   50:         self.manage()
+       
+   50:         if "__del__" in class_.__dict__:
+>>>>>>             util.warn(
+>>>>>>                 "__del__() method on class %s will "
+                       "cause unreachable cycles and memory leaks, "
+                       "as SQLAlchemy instrumentation often creates "
+>>>>>>                 "reference cycles.  Please remove this method." % class_
+                   )
+       
+    1:     def _update_state(
+               self,
+               finalize: bool = False,
+               mapper: Optional[Mapper[_O]] = None,
+               registry: Optional[_RegistryType] = None,
+               declarative_scan: Optional[_MapperConfig] = None,
+               expired_attribute_loader: Optional[
+                   _ExpiredAttributeLoaderProto
+               ] = None,
+               init_method: Optional[Callable[..., None]] = None,
+           ) -> None:
+  100:         if mapper:
+   50:             self.mapper = mapper  #
+  100:         if registry:
+   50:             registry._add_manager(self)
+  100:         if declarative_scan:
+   50:             self.declarative_scan = weakref.ref(declarative_scan)
+  100:         if expired_attribute_loader:
+   50:             self.expired_attribute_loader = expired_attribute_loader
+       
+  100:         if init_method:
+   50:             assert not self._finalized, (
+>>>>>>                 "class is already instrumented, "
+>>>>>>                 "init_method %s can't be applied" % init_method
+                   )
+   50:             self.init_method = init_method
+       
+  100:         if not self._finalized:
+  100:             self.original_init = (
+  200:                 self.init_method
+  100:                 if self.init_method is not None
+  100:                 and self.class_.__init__ is object.__init__
+  100:                 else self.class_.__init__
+                   )
+       
+  100:         if finalize and not self._finalized:
+   50:             self._finalize()
+       
+    1:     def _finalize(self) -> None:
+   50:         if self._finalized:
+>>>>>>             return
+   50:         self._finalized = True
+       
+   50:         self._instrument_init()
+       
+   50:         _instrumentation_factory.dispatch.class_instrument(self.class_)
+       
+    1:     def __hash__(self) -> int:  # type: ignore[override]
+   50:         return id(self)
+       
+    1:     def __eq__(self, other: Any) -> bool:
+>>>>>>         return other is self
+       
+    1:     @property
+    1:     def is_mapped(self) -> bool:
+  206:         return "mapper" in self.__dict__
+       
+    1:     @HasMemoized.memoized_attribute
+    1:     def _all_key_set(self):
+    4:         return frozenset(self)
+       
+    1:     @HasMemoized.memoized_attribute
+    1:     def _collection_impl_keys(self):
+    8:         return frozenset(
+  110:             [attr.key for attr in self.values() if attr.impl.collection]
+               )
+       
+    1:     @HasMemoized.memoized_attribute
+    1:     def _scalar_loader_impls(self):
+>>>>>>         return frozenset(
+>>>>>>             [
+>>>>>>                 attr.impl
+>>>>>>                 for attr in self.values()
+>>>>>>                 if attr.impl.accepts_scalar_loader
+                   ]
+               )
+       
+    1:     @HasMemoized.memoized_attribute
+    1:     def _loader_impls(self):
+  110:         return frozenset([attr.impl for attr in self.values()])
+       
+    1:     @util.memoized_property
+    1:     def mapper(self) -> Mapper[_O]:
+               # raises unless self.mapper has been assigned
+>>>>>>         raise exc.UnmappedClassError(self.class_)
+       
+    1:     def _all_sqla_attributes(self, exclude=None):
+               """return an iterator of all classbound attributes that are
+               implement :class:`.InspectionAttr`.
+       
+               This includes :class:`.QueryableAttribute` as well as extension
+               types such as :class:`.hybrid_property` and
+               :class:`.AssociationProxy`.
+       
+               """
+       
+    1:         found: Dict[str, Any] = {}
+       
+               # constraints:
+               # 1. yield keys in cls.__dict__ order
+               # 2. if a subclass has the same key as a superclass, include that
+               #    key as part of the ordering of the superclass, because an
+               #    overridden key is usually installed by the mapper which is going
+               #    on a different ordering
+               # 3. don't use getattr() as this fires off descriptors
+       
+    3:         for supercls in self.class_.__mro__[0:-1]:
+    2:             inherits = supercls.__mro__[1]
+   33:             for key in supercls.__dict__:
+   31:                 found.setdefault(key, supercls)
+   31:                 if key in inherits.__dict__:
+    5:                     continue
+   26:                 val = found[key].__dict__[key]
+   42:                 if (
+   26:                     isinstance(val, interfaces.InspectionAttr)
+   16:                     and val.is_attribute
+                       ):
+   15:                     yield key, val
+       
+    1:     def _get_class_attr_mro(self, key, default=None):
+               """return an attribute on the class without tripping it."""
+       
+>>>>>>         for supercls in self.class_.__mro__:
+>>>>>>             if key in supercls.__dict__:
+>>>>>>                 return supercls.__dict__[key]
+               else:
+>>>>>>             return default
+       
+    1:     def _attr_has_impl(self, key: str) -> bool:
+               """Return True if the given attribute is fully initialized.
+       
+               i.e. has an impl.
+               """
+       
+ 1106:         return key in self and self[key].impl is not None
+       
+    1:     def _subclass_manager(self, cls: Type[_T]) -> ClassManager[_T]:
+               """Create a new ClassManager for a subclass of this ClassManager's
+               class.
+       
+               This is called automatically when attributes are instrumented so that
+               the attributes can be propagated to subclasses against their own
+               class-local manager, without the need for mappers etc. to have already
+               pre-configured managers for the full class hierarchy.   Mappers
+               can post-configure the auto-generated ClassManager when needed.
+       
+               """
+>>>>>>         return register_class(cls, finalize=False)
+       
+    1:     def _instrument_init(self):
+   50:         self.new_init = _generate_init(self.class_, self, self.original_init)
+   50:         self.install_member("__init__", self.new_init)
+       
+    1:     @util.memoized_property
+    1:     def _state_constructor(self) -> Type[state.InstanceState[_O]]:
+    5:         self.dispatch.first_init(self, self.class_)
+    5:         return state.InstanceState
+       
+    1:     def manage(self):
+               """Mark this instance as the manager for its class."""
+       
+   50:         setattr(self.class_, self.MANAGER_ATTR, self)
+       
+    1:     @util.hybridmethod
+    1:     def manager_getter(self):
+>>>>>>         return _default_manager_getter
+       
+    1:     @util.hybridmethod
+    1:     def state_getter(self):
+               """Return a (instance) -> InstanceState callable.
+       
+               "state getter" callables should raise either KeyError or
+               AttributeError if no InstanceState could be found for the
+               instance.
+               """
+       
+>>>>>>         return _default_state_getter
+       
+    1:     @util.hybridmethod
+    1:     def dict_getter(self):
+>>>>>>         return _default_dict_getter
+       
+    1:     def instrument_attribute(
+               self,
+               key: str,
+               inst: QueryableAttribute[Any],
+               propagated: bool = False,
+           ) -> None:
+  553:         if propagated:
+>>>>>>             if key in self.local_attrs:
+>>>>>>                 return  # don't override local attr with inherited attr
+               else:
+  553:             self.local_attrs[key] = inst
+  553:             self.install_descriptor(key, inst)
+  553:         self._reset_memoizations()
+  553:         self[key] = inst
+       
+  553:         for cls in self.class_.__subclasses__():
+>>>>>>             manager = self._subclass_manager(cls)
+>>>>>>             manager.instrument_attribute(key, inst, True)
+       
+    1:     def subclass_managers(self, recursive):
+    7:         for cls in self.class_.__subclasses__():
+>>>>>>             mgr = opt_manager_of_class(cls)
+>>>>>>             if mgr is not None and mgr is not self:
+>>>>>>                 yield mgr
+>>>>>>                 if recursive:
+>>>>>>                     yield from mgr.subclass_managers(True)
+       
+    1:     def post_configure_attribute(self, key):
+ 1106:         _instrumentation_factory.dispatch.attribute_instrument(
+  553:             self.class_, key, self[key]
+               )
+       
+    1:     def uninstrument_attribute(self, key, propagated=False):
+>>>>>>         if key not in self:
+>>>>>>             return
+>>>>>>         if propagated:
+>>>>>>             if key in self.local_attrs:
+>>>>>>                 return  # don't get rid of local attr
+               else:
+>>>>>>             del self.local_attrs[key]
+>>>>>>             self.uninstall_descriptor(key)
+>>>>>>         self._reset_memoizations()
+>>>>>>         del self[key]
+>>>>>>         for cls in self.class_.__subclasses__():
+>>>>>>             manager = opt_manager_of_class(cls)
+>>>>>>             if manager:
+>>>>>>                 manager.uninstrument_attribute(key, True)
+       
+    1:     def unregister(self) -> None:
+               """remove all instrumentation established by this ClassManager."""
+       
+>>>>>>         for key in list(self.originals):
+>>>>>>             self.uninstall_member(key)
+       
+>>>>>>         self.mapper = None
+>>>>>>         self.dispatch = None  # type: ignore
+>>>>>>         self.new_init = None
+>>>>>>         self.info.clear()
+       
+>>>>>>         for key in list(self):
+>>>>>>             if key in self.local_attrs:
+>>>>>>                 self.uninstrument_attribute(key)
+       
+>>>>>>         if self.MANAGER_ATTR in self.class_.__dict__:
+>>>>>>             delattr(self.class_, self.MANAGER_ATTR)
+       
+    1:     def install_descriptor(
+               self, key: str, inst: QueryableAttribute[Any]
+           ) -> None:
+  553:         if key in (self.STATE_ATTR, self.MANAGER_ATTR):
+>>>>>>             raise KeyError(
+>>>>>>                 "%r: requested attribute name conflicts with "
+>>>>>>                 "instrumentation attribute of the same name." % key
+                   )
+  553:         setattr(self.class_, key, inst)
+       
+    1:     def uninstall_descriptor(self, key: str) -> None:
+>>>>>>         delattr(self.class_, key)
+       
+    1:     def install_member(self, key: str, implementation: Any) -> None:
+  150:         if key in (self.STATE_ATTR, self.MANAGER_ATTR):
+>>>>>>             raise KeyError(
+>>>>>>                 "%r: requested attribute name conflicts with "
+>>>>>>                 "instrumentation attribute of the same name." % key
+                   )
+  150:         self.originals.setdefault(key, self.class_.__dict__.get(key, DEL_ATTR))
+  150:         setattr(self.class_, key, implementation)
+       
+    1:     def uninstall_member(self, key: str) -> None:
+>>>>>>         original = self.originals.pop(key, None)
+>>>>>>         if original is not DEL_ATTR:
+>>>>>>             setattr(self.class_, key, original)
+               else:
+>>>>>>             delattr(self.class_, key)
+       
+    1:     def instrument_collection_class(
+               self, key: str, collection_class: Type[Collection[Any]]
+           ) -> _CollectionFactoryType:
+   47:         return collections.prepare_instrumentation(collection_class)
+       
+    1:     def initialize_collection(
+               self,
+               key: str,
+               state: InstanceState[_O],
+               factory: _CollectionFactoryType,
+           ) -> Tuple[collections.CollectionAdapter, _AdaptedCollectionProtocol]:
+>>>>>>         user_data = factory()
+>>>>>>         impl = self.get_impl(key)
+>>>>>>         assert _is_collection_attribute_impl(impl)
+>>>>>>         adapter = collections.CollectionAdapter(impl, state, user_data)
+>>>>>>         return adapter, user_data
+       
+    1:     def is_instrumented(self, key: str, search: bool = False) -> bool:
+>>>>>>         if search:
+>>>>>>             return key in self
+               else:
+>>>>>>             return key in self.local_attrs
+       
+    1:     def get_impl(self, key: str) -> AttributeImpl:
+>>>>>>         return self[key].impl
+       
+    1:     @property
+    1:     def attributes(self) -> Iterable[Any]:
+>>>>>>         return iter(self.values())
+       
+           # InstanceState management
+       
+    1:     def new_instance(self, state: Optional[InstanceState[_O]] = None) -> _O:
+               # here, we would prefer _O to be bound to "object"
+               # so that mypy sees that __new__ is present.   currently
+               # it's bound to Any as there were other problems not having
+               # it that way but these can be revisited
+    3:         instance = self.class_.__new__(self.class_)
+    3:         if state is None:
+    3:             state = self._state_constructor(instance, self)
+    3:         self._state_setter(instance, state)
+    3:         return instance
+       
+    1:     def setup_instance(
+               self, instance: _O, state: Optional[InstanceState[_O]] = None
+           ) -> None:
+>>>>>>         if state is None:
+>>>>>>             state = self._state_constructor(instance, self)
+>>>>>>         self._state_setter(instance, state)
+       
+    1:     def teardown_instance(self, instance: _O) -> None:
+>>>>>>         delattr(instance, self.STATE_ATTR)
+       
+    1:     def _serialize(
+               self, state: InstanceState[_O], state_dict: Dict[str, Any]
+           ) -> _SerializeManager:
+>>>>>>         return _SerializeManager(state, state_dict)
+       
+    1:     def _new_state_if_none(
+               self, instance: _O
+           ) -> Union[Literal[False], InstanceState[_O]]:
+               """Install a default InstanceState if none is present.
+       
+               A private convenience method used by the __init__ decorator.
+       
+               """
+   50:         if hasattr(instance, self.STATE_ATTR):
+>>>>>>             return False
+   50:         elif self.class_ is not instance.__class__ and self.is_mapped:
+                   # this will create a new ClassManager for the
+                   # subclass, without a mapper.  This is likely a
+                   # user error situation but allow the object
+                   # to be constructed, so that it is usable
+                   # in a non-ORM context at least.
+>>>>>>             return self._subclass_manager(
+>>>>>>                 instance.__class__
+>>>>>>             )._new_state_if_none(instance)
+               else:
+   50:             state = self._state_constructor(instance, self)
+   50:             self._state_setter(instance, state)
+   50:             return state
+       
+    1:     def has_state(self, instance: _O) -> bool:
+>>>>>>         return hasattr(instance, self.STATE_ATTR)
+       
+    1:     def has_parent(
+               self, state: InstanceState[_O], key: str, optimistic: bool = False
+           ) -> bool:
+               """TODO"""
+>>>>>>         return self.get_impl(key).hasparent(state, optimistic=optimistic)
+       
+    1:     def __bool__(self) -> bool:
+               """All ClassManagers are non-zero regardless of attribute state."""
+  559:         return True
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return "<%s of %r at %x>" % (
+>>>>>>             self.__class__.__name__,
+>>>>>>             self.class_,
+>>>>>>             id(self),
+               )
+       
+       
+    2: class _SerializeManager:
+    1:     """Provide serialization of a :class:`.ClassManager`.
+       
+           The :class:`.InstanceState` uses ``__init__()`` on serialize
+           and ``__call__()`` on deserialize.
+       
+           """
+       
+    1:     def __init__(self, state: state.InstanceState[Any], d: Dict[str, Any]):
+>>>>>>         self.class_ = state.class_
+>>>>>>         manager = state.manager
+>>>>>>         manager.dispatch.pickle(state, d)
+       
+    1:     def __call__(self, state, inst, state_dict):
+>>>>>>         state.manager = manager = opt_manager_of_class(self.class_)
+>>>>>>         if manager is None:
+>>>>>>             raise exc.UnmappedInstanceError(
+>>>>>>                 inst,
+>>>>>>                 "Cannot deserialize object of type %r - "
+                       "no mapper() has "
+                       "been configured for this class within the current "
+>>>>>>                 "Python process!" % self.class_,
+                   )
+>>>>>>         elif manager.is_mapped and not manager.mapper.configured:
+>>>>>>             manager.mapper._check_configure()
+       
+               # setup _sa_instance_state ahead of time so that
+               # unpickle events can access the object normally.
+               # see [ticket:2362]
+>>>>>>         if inst is not None:
+>>>>>>             manager.setup_instance(inst, state)
+>>>>>>         manager.dispatch.unpickle(state, state_dict)
+       
+       
+    2: class InstrumentationFactory(EventTarget):
+    1:     """Factory for new ClassManager instances."""
+       
+    1:     dispatch: dispatcher[InstrumentationFactory]
+       
+    1:     def create_manager_for_cls(self, class_: Type[_O]) -> ClassManager[_O]:
+   50:         assert class_ is not None
+   50:         assert opt_manager_of_class(class_) is None
+       
+               # give a more complicated subclass
+               # a chance to do what it wants here
+   50:         manager, factory = self._locate_extended_factory(class_)
+       
+   50:         if factory is None:
+   50:             factory = ClassManager
+   50:             manager = ClassManager(class_)
+               else:
+>>>>>>             assert manager is not None
+       
+   50:         self._check_conflicts(class_, factory)
+       
+   50:         manager.factory = factory
+       
+   50:         return manager
+       
+    1:     def _locate_extended_factory(
+               self, class_: Type[_O]
+           ) -> Tuple[Optional[ClassManager[_O]], Optional[_ManagerFactory]]:
+               """Overridden by a subclass to do an extended lookup."""
+   50:         return None, None
+       
+    1:     def _check_conflicts(
+               self, class_: Type[_O], factory: Callable[[Type[_O]], ClassManager[_O]]
+           ) -> None:
+   50:         """Overridden by a subclass to test for conflicting factories."""
+       
+    1:     def unregister(self, class_: Type[_O]) -> None:
+>>>>>>         manager = manager_of_class(class_)
+>>>>>>         manager.unregister()
+>>>>>>         self.dispatch.class_uninstrument(class_)
+       
+       
+       # this attribute is replaced by sqlalchemy.ext.instrumentation
+       # when imported.
+    1: _instrumentation_factory = InstrumentationFactory()
+       
+       # these attributes are replaced by sqlalchemy.ext.instrumentation
+       # when a non-standard InstrumentationManager class is first
+       # used to instrument a class.
+    1: instance_state = _default_state_getter = base.instance_state
+       
+    1: instance_dict = _default_dict_getter = base.instance_dict
+       
+    1: manager_of_class = _default_manager_getter = base.manager_of_class
+    1: opt_manager_of_class = _default_opt_manager_getter = base.opt_manager_of_class
+       
+       
+    1: def register_class(
+           class_: Type[_O],
+           finalize: bool = True,
+           mapper: Optional[Mapper[_O]] = None,
+           registry: Optional[_RegistryType] = None,
+           declarative_scan: Optional[_MapperConfig] = None,
+           expired_attribute_loader: Optional[_ExpiredAttributeLoaderProto] = None,
+           init_method: Optional[Callable[..., None]] = None,
+       ) -> ClassManager[_O]:
+           """Register class instrumentation.
+       
+           Returns the existing or newly created class manager.
+       
+           """
+       
+  100:     manager = opt_manager_of_class(class_)
+  100:     if manager is None:
+   50:         manager = _instrumentation_factory.create_manager_for_cls(class_)
+  200:     manager._update_state(
+  100:         mapper=mapper,
+  100:         registry=registry,
+  100:         declarative_scan=declarative_scan,
+  100:         expired_attribute_loader=expired_attribute_loader,
+  100:         init_method=init_method,
+  100:         finalize=finalize,
+           )
+       
+  100:     return manager
+       
+       
+    1: def unregister_class(class_):
+           """Unregister class instrumentation."""
+       
+>>>>>>     _instrumentation_factory.unregister(class_)
+       
+       
+    1: def is_instrumented(instance, key):
+           """Return True if the given attribute on the given instance is
+           instrumented by the attributes package.
+       
+           This function may be used regardless of instrumentation
+           applied directly to the class, i.e. no descriptors are required.
+       
+           """
+>>>>>>     return manager_of_class(instance.__class__).is_instrumented(
+>>>>>>         key, search=True
+           )
+       
+       
+    1: def _generate_init(class_, class_manager, original_init):
+           """Build an __init__ decorator that triggers ClassManager events."""
+       
+           # TODO: we should use the ClassManager's notion of the
+           # original '__init__' method, once ClassManager is fixed
+           # to always reference that.
+       
+   50:     if original_init is None:
+>>>>>>         original_init = class_.__init__
+       
+           # Go through some effort here and don't change the user's __init__
+           # calling signature, including the unlikely case that it has
+           # a return value.
+           # FIXME: need to juggle local names to avoid constructor argument
+           # clashes.
+   50:     func_body = """\
+       def __init__(%(apply_pos)s):
+           new_state = class_manager._new_state_if_none(%(self_arg)s)
+           if new_state:
+               return new_state._initialize_instance(%(apply_kw)s)
+           else:
+               return original_init(%(apply_kw)s)
+       """
+   50:     func_vars = util.format_argspec_init(original_init, grouped=False)
+   50:     func_text = func_body % func_vars
+       
+   50:     func_defaults = getattr(original_init, "__defaults__", None)
+   50:     func_kw_defaults = getattr(original_init, "__kwdefaults__", None)
+       
+   50:     env = locals().copy()
+   50:     env["__name__"] = __name__
+   50:     exec(func_text, env)
+   50:     __init__ = env["__init__"]
+   50:     __init__.__doc__ = original_init.__doc__
+   50:     __init__._sa_original_init = original_init
+       
+   50:     if func_defaults:
+>>>>>>         __init__.__defaults__ = func_defaults
+   50:     if func_kw_defaults:
+>>>>>>         __init__.__kwdefaults__ = func_kw_defaults
+       
+   50:     return __init__

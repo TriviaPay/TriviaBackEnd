@@ -1,0 +1,74 @@
+    1: import typing
+       
+    1: from starlette._exception_handler import (
+           ExceptionHandlers,
+           StatusHandlers,
+           wrap_app_handling_exceptions,
+       )
+    1: from starlette.exceptions import HTTPException, WebSocketException
+    1: from starlette.requests import Request
+    1: from starlette.responses import PlainTextResponse, Response
+    1: from starlette.types import ASGIApp, Receive, Scope, Send
+    1: from starlette.websockets import WebSocket
+       
+       
+    2: class ExceptionMiddleware:
+    2:     def __init__(
+               self,
+    1:         app: ASGIApp,
+    2:         handlers: typing.Optional[
+    1:             typing.Mapping[typing.Any, typing.Callable[[Request, Exception], Response]]
+               ] = None,
+    1:         debug: bool = False,
+    1:     ) -> None:
+   13:         self.app = app
+   13:         self.debug = debug  # TODO: We ought to handle 404 cases if debug is set.
+   13:         self._status_handlers: StatusHandlers = {}
+   13:         self._exception_handlers: ExceptionHandlers = {
+   13:             HTTPException: self.http_exception,
+   13:             WebSocketException: self.websocket_exception,
+               }
+   13:         if handlers is not None:
+   52:             for key, value in handlers.items():
+   39:                 self.add_exception_handler(key, value)
+       
+    1:     def add_exception_handler(
+               self,
+    1:         exc_class_or_status_code: typing.Union[int, typing.Type[Exception]],
+    1:         handler: typing.Callable[[Request, Exception], Response],
+    1:     ) -> None:
+   39:         if isinstance(exc_class_or_status_code, int):
+>>>>>>             self._status_handlers[exc_class_or_status_code] = handler
+               else:
+   39:             assert issubclass(exc_class_or_status_code, Exception)
+   39:             self._exception_handlers[exc_class_or_status_code] = handler
+       
+    1:     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+   28:         if scope["type"] not in ("http", "websocket"):
+   13:             await self.app(scope, receive, send)
+   13:             return
+       
+   15:         scope["starlette.exception_handlers"] = (
+   15:             self._exception_handlers,
+   15:             self._status_handlers,
+               )
+       
+               conn: typing.Union[Request, WebSocket]
+   15:         if scope["type"] == "http":
+   15:             conn = Request(scope, receive, send)
+               else:
+>>>>>>             conn = WebSocket(scope, receive, send)
+       
+   15:         await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+       
+    1:     def http_exception(self, request: Request, exc: Exception) -> Response:
+>>>>>>         assert isinstance(exc, HTTPException)
+>>>>>>         if exc.status_code in {204, 304}:
+>>>>>>             return Response(status_code=exc.status_code, headers=exc.headers)
+>>>>>>         return PlainTextResponse(
+>>>>>>             exc.detail, status_code=exc.status_code, headers=exc.headers
+               )
+       
+    1:     async def websocket_exception(self, websocket: WebSocket, exc: Exception) -> None:
+>>>>>>         assert isinstance(exc, WebSocketException)
+>>>>>>         await websocket.close(code=exc.code, reason=exc.reason)  # pragma: no cover

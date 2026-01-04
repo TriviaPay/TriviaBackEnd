@@ -1,0 +1,500 @@
+    1: from __future__ import annotations
+       
+    1: import threading
+    1: from asyncio import iscoroutine
+    1: from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+    1: from contextlib import AbstractContextManager, contextmanager
+    1: from types import TracebackType
+    1: from typing import (
+           Any,
+           AsyncContextManager,
+           Awaitable,
+           Callable,
+           ContextManager,
+           Generator,
+           Generic,
+           Iterable,
+           TypeVar,
+           cast,
+           overload,
+       )
+    1: from warnings import warn
+       
+    1: from ._core import _eventloop
+    1: from ._core._eventloop import get_asynclib, get_cancelled_exc_class, threadlocals
+    1: from ._core._synchronization import Event
+    1: from ._core._tasks import CancelScope, create_task_group
+    1: from .abc._tasks import TaskStatus
+       
+    1: T_Retval = TypeVar("T_Retval")
+    1: T_co = TypeVar("T_co")
+       
+       
+    1: def run(func: Callable[..., Awaitable[T_Retval]], *args: object) -> T_Retval:
+           """
+           Call a coroutine function from a worker thread.
+       
+           :param func: a coroutine function
+           :param args: positional arguments for the callable
+           :return: the return value of the coroutine function
+       
+           """
+>>>>>>     try:
+>>>>>>         asynclib = threadlocals.current_async_module
+>>>>>>     except AttributeError:
+>>>>>>         raise RuntimeError("This function can only be run from an AnyIO worker thread")
+       
+>>>>>>     return asynclib.run_async_from_thread(func, *args)
+       
+       
+    1: def run_async_from_thread(
+           func: Callable[..., Awaitable[T_Retval]], *args: object
+       ) -> T_Retval:
+>>>>>>     warn(
+>>>>>>         "run_async_from_thread() has been deprecated, use anyio.from_thread.run() instead",
+>>>>>>         DeprecationWarning,
+           )
+>>>>>>     return run(func, *args)
+       
+       
+    1: def run_sync(func: Callable[..., T_Retval], *args: object) -> T_Retval:
+           """
+           Call a function in the event loop thread from a worker thread.
+       
+           :param func: a callable
+           :param args: positional arguments for the callable
+           :return: the return value of the callable
+       
+           """
+>>>>>>     try:
+>>>>>>         asynclib = threadlocals.current_async_module
+>>>>>>     except AttributeError:
+>>>>>>         raise RuntimeError("This function can only be run from an AnyIO worker thread")
+       
+>>>>>>     return asynclib.run_sync_from_thread(func, *args)
+       
+       
+    1: def run_sync_from_thread(func: Callable[..., T_Retval], *args: object) -> T_Retval:
+>>>>>>     warn(
+>>>>>>         "run_sync_from_thread() has been deprecated, use anyio.from_thread.run_sync() instead",
+>>>>>>         DeprecationWarning,
+           )
+>>>>>>     return run_sync(func, *args)
+       
+       
+    2: class _BlockingAsyncContextManager(Generic[T_co], AbstractContextManager):
+    1:     _enter_future: Future
+    1:     _exit_future: Future
+    1:     _exit_event: Event
+    1:     _exit_exc_info: tuple[
+               type[BaseException] | None, BaseException | None, TracebackType | None
+    1:     ] = (None, None, None)
+       
+    1:     def __init__(self, async_cm: AsyncContextManager[T_co], portal: BlockingPortal):
+>>>>>>         self._async_cm = async_cm
+>>>>>>         self._portal = portal
+       
+    1:     async def run_async_cm(self) -> bool | None:
+>>>>>>         try:
+>>>>>>             self._exit_event = Event()
+>>>>>>             value = await self._async_cm.__aenter__()
+>>>>>>         except BaseException as exc:
+>>>>>>             self._enter_future.set_exception(exc)
+>>>>>>             raise
+               else:
+>>>>>>             self._enter_future.set_result(value)
+       
+>>>>>>         try:
+                   # Wait for the sync context manager to exit.
+                   # This next statement can raise `get_cancelled_exc_class()` if
+                   # something went wrong in a task group in this async context
+                   # manager.
+>>>>>>             await self._exit_event.wait()
+               finally:
+                   # In case of cancellation, it could be that we end up here before
+                   # `_BlockingAsyncContextManager.__exit__` is called, and an
+                   # `_exit_exc_info` has been set.
+>>>>>>             result = await self._async_cm.__aexit__(*self._exit_exc_info)
+>>>>>>             return result
+       
+    1:     def __enter__(self) -> T_co:
+>>>>>>         self._enter_future = Future()
+>>>>>>         self._exit_future = self._portal.start_task_soon(self.run_async_cm)
+>>>>>>         cm = self._enter_future.result()
+>>>>>>         return cast(T_co, cm)
+       
+    1:     def __exit__(
+               self,
+               __exc_type: type[BaseException] | None,
+               __exc_value: BaseException | None,
+               __traceback: TracebackType | None,
+           ) -> bool | None:
+>>>>>>         self._exit_exc_info = __exc_type, __exc_value, __traceback
+>>>>>>         self._portal.call(self._exit_event.set)
+>>>>>>         return self._exit_future.result()
+       
+       
+    2: class _BlockingPortalTaskStatus(TaskStatus):
+    1:     def __init__(self, future: Future):
+>>>>>>         self._future = future
+       
+    1:     def started(self, value: object = None) -> None:
+>>>>>>         self._future.set_result(value)
+       
+       
+    2: class BlockingPortal:
+    1:     """An object that lets external threads run code in an asynchronous event loop."""
+       
+    1:     def __new__(cls) -> BlockingPortal:
+   12:         return get_asynclib().BlockingPortal()
+       
+    1:     def __init__(self) -> None:
+   24:         self._event_loop_thread_id: int | None = threading.get_ident()
+   24:         self._stop_event = Event()
+   24:         self._task_group = create_task_group()
+   24:         self._cancelled_exc_class = get_cancelled_exc_class()
+       
+    1:     async def __aenter__(self) -> BlockingPortal:
+   12:         await self._task_group.__aenter__()
+   12:         return self
+       
+    1:     async def __aexit__(
+               self,
+               exc_type: type[BaseException] | None,
+               exc_val: BaseException | None,
+               exc_tb: TracebackType | None,
+           ) -> bool | None:
+   12:         await self.stop()
+   12:         return await self._task_group.__aexit__(exc_type, exc_val, exc_tb)
+       
+    1:     def _check_running(self) -> None:
+   72:         if self._event_loop_thread_id is None:
+>>>>>>             raise RuntimeError("This portal is not running")
+   72:         if self._event_loop_thread_id == threading.get_ident():
+>>>>>>             raise RuntimeError(
+>>>>>>                 "This method cannot be called from the event loop thread"
+                   )
+       
+    1:     async def sleep_until_stopped(self) -> None:
+               """Sleep until :meth:`stop` is called."""
+   12:         await self._stop_event.wait()
+       
+    1:     async def stop(self, cancel_remaining: bool = False) -> None:
+               """
+               Signal the portal to shut down.
+       
+               This marks the portal as no longer accepting new calls and exits from
+               :meth:`sleep_until_stopped`.
+       
+               :param cancel_remaining: ``True`` to cancel all the remaining tasks, ``False`` to let them
+                   finish before returning
+       
+               """
+   24:         self._event_loop_thread_id = None
+   24:         self._stop_event.set()
+   24:         if cancel_remaining:
+>>>>>>             self._task_group.cancel_scope.cancel()
+       
+    1:     async def _call_func(
+               self, func: Callable, args: tuple, kwargs: dict[str, Any], future: Future
+           ) -> None:
+   72:         def callback(f: Future) -> None:
+   60:             if f.cancelled() and self._event_loop_thread_id not in (
+>>>>>>                 None,
+>>>>>>                 threading.get_ident(),
+                   ):
+>>>>>>                 self.call(scope.cancel)
+       
+   72:         try:
+   72:             retval = func(*args, **kwargs)
+   72:             if iscoroutine(retval):
+   60:                 with CancelScope() as scope:
+   60:                     if future.cancelled():
+>>>>>>                         scope.cancel()
+                           else:
+   60:                         future.add_done_callback(callback)
+       
+   60:                     retval = await retval
+>>>>>>         except self._cancelled_exc_class:
+>>>>>>             future.cancel()
+>>>>>>         except BaseException as exc:
+>>>>>>             if not future.cancelled():
+>>>>>>                 future.set_exception(exc)
+       
+                   # Let base exceptions fall through
+>>>>>>             if not isinstance(exc, Exception):
+>>>>>>                 raise
+               else:
+   72:             if not future.cancelled():
+   72:                 future.set_result(retval)
+               finally:
+   72:             scope = None  # type: ignore[assignment]
+       
+    1:     def _spawn_task_from_thread(
+               self,
+               func: Callable,
+               args: tuple,
+               kwargs: dict[str, Any],
+               name: object,
+               future: Future,
+           ) -> None:
+               """
+               Spawn a new task using the given callable.
+       
+               Implementors must ensure that the future is resolved when the task finishes.
+       
+               :param func: a callable
+               :param args: positional arguments to be passed to the callable
+               :param kwargs: keyword arguments to be passed to the callable
+               :param name: name of the task (will be coerced to a string if not ``None``)
+               :param future: a future that will resolve to the return value of the callable, or the
+                   exception raised during its execution
+       
+               """
+>>>>>>         raise NotImplementedError
+       
+    1:     @overload
+    1:     def call(self, func: Callable[..., Awaitable[T_Retval]], *args: object) -> T_Retval:
+>>>>>>         ...
+       
+    1:     @overload
+    1:     def call(self, func: Callable[..., T_Retval], *args: object) -> T_Retval:
+>>>>>>         ...
+       
+    1:     def call(
+               self, func: Callable[..., Awaitable[T_Retval] | T_Retval], *args: object
+           ) -> T_Retval:
+               """
+               Call the given function in the event loop thread.
+       
+               If the callable returns a coroutine object, it is awaited on.
+       
+               :param func: any callable
+               :raises RuntimeError: if the portal is not running or if this method is called from within
+                   the event loop thread
+       
+               """
+   60:         return cast(T_Retval, self.start_task_soon(func, *args).result())
+       
+    1:     @overload
+    1:     def spawn_task(
+               self,
+               func: Callable[..., Awaitable[T_Retval]],
+               *args: object,
+    1:         name: object = None,
+           ) -> Future[T_Retval]:
+>>>>>>         ...
+       
+    1:     @overload
+    1:     def spawn_task(
+    1:         self, func: Callable[..., T_Retval], *args: object, name: object = None
+           ) -> Future[T_Retval]:
+>>>>>>         ...
+       
+    1:     def spawn_task(
+               self,
+               func: Callable[..., Awaitable[T_Retval] | T_Retval],
+               *args: object,
+    1:         name: object = None,
+           ) -> Future[T_Retval]:
+               """
+               Start a task in the portal's task group.
+       
+               :param func: the target coroutine function
+               :param args: positional arguments passed to ``func``
+               :param name: name of the task (will be coerced to a string if not ``None``)
+               :return: a future that resolves with the return value of the callable if the task completes
+                   successfully, or with the exception raised in the task
+               :raises RuntimeError: if the portal is not running or if this method is called from within
+                   the event loop thread
+       
+               .. versionadded:: 2.1
+               .. deprecated:: 3.0
+                  Use :meth:`start_task_soon` instead. If your code needs AnyIO 2 compatibility, you
+                  can keep using this until AnyIO 4.
+       
+               """
+>>>>>>         warn(
+>>>>>>             "spawn_task() is deprecated -- use start_task_soon() instead",
+>>>>>>             DeprecationWarning,
+               )
+>>>>>>         return self.start_task_soon(func, *args, name=name)  # type: ignore[arg-type]
+       
+    1:     @overload
+    1:     def start_task_soon(
+               self,
+               func: Callable[..., Awaitable[T_Retval]],
+               *args: object,
+    1:         name: object = None,
+           ) -> Future[T_Retval]:
+>>>>>>         ...
+       
+    1:     @overload
+    1:     def start_task_soon(
+    1:         self, func: Callable[..., T_Retval], *args: object, name: object = None
+           ) -> Future[T_Retval]:
+>>>>>>         ...
+       
+    1:     def start_task_soon(
+               self,
+               func: Callable[..., Awaitable[T_Retval] | T_Retval],
+               *args: object,
+    1:         name: object = None,
+           ) -> Future[T_Retval]:
+               """
+               Start a task in the portal's task group.
+       
+               The task will be run inside a cancel scope which can be cancelled by cancelling the
+               returned future.
+       
+               :param func: the target function
+               :param args: positional arguments passed to ``func``
+               :param name: name of the task (will be coerced to a string if not ``None``)
+               :return: a future that resolves with the return value of the callable if the
+                   task completes successfully, or with the exception raised in the task
+               :raises RuntimeError: if the portal is not running or if this method is called
+                   from within the event loop thread
+               :rtype: concurrent.futures.Future[T_Retval]
+       
+               .. versionadded:: 3.0
+       
+               """
+   72:         self._check_running()
+   72:         f: Future = Future()
+   72:         self._spawn_task_from_thread(func, args, {}, name, f)
+   72:         return f
+       
+    1:     def start_task(
+    1:         self, func: Callable[..., Awaitable[Any]], *args: object, name: object = None
+           ) -> tuple[Future[Any], Any]:
+               """
+               Start a task in the portal's task group and wait until it signals for readiness.
+       
+               This method works the same way as :meth:`.abc.TaskGroup.start`.
+       
+               :param func: the target function
+               :param args: positional arguments passed to ``func``
+               :param name: name of the task (will be coerced to a string if not ``None``)
+               :return: a tuple of (future, task_status_value) where the ``task_status_value``
+                   is the value passed to ``task_status.started()`` from within the target
+                   function
+               :rtype: tuple[concurrent.futures.Future[Any], Any]
+       
+               .. versionadded:: 3.0
+       
+               """
+       
+>>>>>>         def task_done(future: Future) -> None:
+>>>>>>             if not task_status_future.done():
+>>>>>>                 if future.cancelled():
+>>>>>>                     task_status_future.cancel()
+>>>>>>                 elif future.exception():
+>>>>>>                     task_status_future.set_exception(future.exception())
+                       else:
+>>>>>>                     exc = RuntimeError(
+>>>>>>                         "Task exited without calling task_status.started()"
+                           )
+>>>>>>                     task_status_future.set_exception(exc)
+       
+>>>>>>         self._check_running()
+>>>>>>         task_status_future: Future = Future()
+>>>>>>         task_status = _BlockingPortalTaskStatus(task_status_future)
+>>>>>>         f: Future = Future()
+>>>>>>         f.add_done_callback(task_done)
+>>>>>>         self._spawn_task_from_thread(func, args, {"task_status": task_status}, name, f)
+>>>>>>         return f, task_status_future.result()
+       
+    1:     def wrap_async_context_manager(
+               self, cm: AsyncContextManager[T_co]
+           ) -> ContextManager[T_co]:
+               """
+               Wrap an async context manager as a synchronous context manager via this portal.
+       
+               Spawns a task that will call both ``__aenter__()`` and ``__aexit__()``, stopping in the
+               middle until the synchronous context manager exits.
+       
+               :param cm: an asynchronous context manager
+               :return: a synchronous context manager
+       
+               .. versionadded:: 2.1
+       
+               """
+>>>>>>         return _BlockingAsyncContextManager(cm, self)
+       
+       
+    1: def create_blocking_portal() -> BlockingPortal:
+           """
+           Create a portal for running functions in the event loop thread from external threads.
+       
+           Use this function in asynchronous code when you need to allow external threads access to the
+           event loop where your asynchronous code is currently running.
+       
+           .. deprecated:: 3.0
+               Use :class:`.BlockingPortal` directly.
+       
+           """
+>>>>>>     warn(
+>>>>>>         "create_blocking_portal() has been deprecated -- use anyio.from_thread.BlockingPortal() "
+               "directly",
+>>>>>>         DeprecationWarning,
+           )
+>>>>>>     return BlockingPortal()
+       
+       
+    1: @contextmanager
+    1: def start_blocking_portal(
+           backend: str = "asyncio", backend_options: dict[str, Any] | None = None
+       ) -> Generator[BlockingPortal, Any, None]:
+           """
+           Start a new event loop in a new thread and run a blocking portal in its main task.
+       
+           The parameters are the same as for :func:`~anyio.run`.
+       
+           :param backend: name of the backend
+           :param backend_options: backend options
+           :return: a context manager that yields a blocking portal
+       
+           .. versionchanged:: 3.0
+               Usage as a context manager is now required.
+       
+           """
+       
+   12:     async def run_portal() -> None:
+   12:         async with BlockingPortal() as portal_:
+   12:             if future.set_running_or_notify_cancel():
+   12:                 future.set_result(portal_)
+   12:                 await portal_.sleep_until_stopped()
+       
+   12:     future: Future[BlockingPortal] = Future()
+   12:     with ThreadPoolExecutor(1) as executor:
+   24:         run_future = executor.submit(
+   12:             _eventloop.run,
+   12:             run_portal,  # type: ignore[arg-type]
+   12:             backend=backend,
+   12:             backend_options=backend_options,
+               )
+   12:         try:
+   24:             wait(
+   12:                 cast(Iterable[Future], [run_future, future]),
+   12:                 return_when=FIRST_COMPLETED,
+                   )
+>>>>>>         except BaseException:
+>>>>>>             future.cancel()
+>>>>>>             run_future.cancel()
+>>>>>>             raise
+       
+   12:         if future.done():
+   12:             portal = future.result()
+   12:             cancel_remaining_tasks = False
+   12:             try:
+   12:                 yield portal
+>>>>>>             except BaseException:
+>>>>>>                 cancel_remaining_tasks = True
+>>>>>>                 raise
+                   finally:
+   12:                 try:
+   12:                     portal.call(portal.stop, cancel_remaining_tasks)
+>>>>>>                 except RuntimeError:
+>>>>>>                     pass
+       
+   12:         run_future.result()

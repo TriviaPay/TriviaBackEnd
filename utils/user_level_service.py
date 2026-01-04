@@ -3,6 +3,7 @@ Service for tracking user level based on trivia questions answered correctly.
 Level increases by 1 for every 100 CORRECT answers across all modes.
 """
 import logging
+from typing import Dict, List
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 from models import (
@@ -105,6 +106,76 @@ def get_level_progress(user: User, db: Session) -> dict:
     }
 
 
+def get_level_progress_for_users(users: List[User], db: Session) -> Dict[int, Dict[str, object]]:
+    """
+    Batch version of get_level_progress for multiple users.
+    Returns a mapping of account_id to level info.
+    """
+    if not users:
+        return {}
+
+    user_ids = [user.account_id for user in users]
+
+    free_counts = dict(
+        db.query(TriviaUserFreeModeDaily.account_id, func.count(TriviaUserFreeModeDaily.account_id))
+        .filter(
+            and_(
+                TriviaUserFreeModeDaily.account_id.in_(user_ids),
+                TriviaUserFreeModeDaily.status == 'answered_correct',
+                TriviaUserFreeModeDaily.is_correct == True
+            )
+        )
+        .group_by(TriviaUserFreeModeDaily.account_id)
+        .all()
+    )
+
+    bronze_counts = dict(
+        db.query(TriviaUserBronzeModeDaily.account_id, func.count(TriviaUserBronzeModeDaily.account_id))
+        .filter(
+            and_(
+                TriviaUserBronzeModeDaily.account_id.in_(user_ids),
+                TriviaUserBronzeModeDaily.submitted_at.isnot(None),
+                TriviaUserBronzeModeDaily.is_correct == True
+            )
+        )
+        .group_by(TriviaUserBronzeModeDaily.account_id)
+        .all()
+    )
+
+    silver_counts = dict(
+        db.query(TriviaUserSilverModeDaily.account_id, func.count(TriviaUserSilverModeDaily.account_id))
+        .filter(
+            and_(
+                TriviaUserSilverModeDaily.account_id.in_(user_ids),
+                TriviaUserSilverModeDaily.submitted_at.isnot(None),
+                TriviaUserSilverModeDaily.is_correct == True
+            )
+        )
+        .group_by(TriviaUserSilverModeDaily.account_id)
+        .all()
+    )
+
+    results: Dict[int, Dict[str, object]] = {}
+    for user in users:
+        total_correct = (
+            free_counts.get(user.account_id, 0)
+            + bronze_counts.get(user.account_id, 0)
+            + silver_counts.get(user.account_id, 0)
+        )
+        current_level = user.level if user.level else 1
+        current_level_correct = total_correct - ((current_level - 1) * 100)
+        if current_level_correct < 0:
+            current_level_correct = 0
+        progress = f"{current_level_correct}/100"
+        results[user.account_id] = {
+            'level': current_level,
+            'level_progress': progress,
+            'total_correct_answers': total_correct
+        }
+
+    return results
+
+
 def update_user_level(user: User, db: Session) -> dict:
     """
     Update user level based on total CORRECT questions answered.
@@ -169,4 +240,3 @@ def track_answer_and_update_level(user: User, db: Session) -> dict:
         Dictionary with level update information
     """
     return update_user_level(user, db)
-

@@ -1,0 +1,2 @@
+       # This file is protected via CODEOWNERS
+    1: __version__ = "1.26.20"

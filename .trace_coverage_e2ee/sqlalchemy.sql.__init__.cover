@@ -1,0 +1,145 @@
+       # sql/__init__.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+    1: from typing import Any
+    1: from typing import TYPE_CHECKING
+       
+    1: from ._typing import ColumnExpressionArgument as ColumnExpressionArgument
+    1: from ._typing import NotNullable as NotNullable
+    1: from ._typing import Nullable as Nullable
+    1: from .base import Executable as Executable
+    1: from .compiler import COLLECT_CARTESIAN_PRODUCTS as COLLECT_CARTESIAN_PRODUCTS
+    1: from .compiler import FROM_LINTING as FROM_LINTING
+    1: from .compiler import NO_LINTING as NO_LINTING
+    1: from .compiler import WARN_LINTING as WARN_LINTING
+    1: from .ddl import BaseDDLElement as BaseDDLElement
+    1: from .ddl import DDL as DDL
+    1: from .ddl import DDLElement as DDLElement
+    1: from .ddl import ExecutableDDLElement as ExecutableDDLElement
+    1: from .expression import Alias as Alias
+    1: from .expression import alias as alias
+    1: from .expression import all_ as all_
+    1: from .expression import and_ as and_
+    1: from .expression import any_ as any_
+    1: from .expression import asc as asc
+    1: from .expression import between as between
+    1: from .expression import bindparam as bindparam
+    1: from .expression import case as case
+    1: from .expression import cast as cast
+    1: from .expression import ClauseElement as ClauseElement
+    1: from .expression import collate as collate
+    1: from .expression import column as column
+    1: from .expression import ColumnCollection as ColumnCollection
+    1: from .expression import ColumnElement as ColumnElement
+    1: from .expression import CompoundSelect as CompoundSelect
+    1: from .expression import cte as cte
+    1: from .expression import Delete as Delete
+    1: from .expression import delete as delete
+    1: from .expression import desc as desc
+    1: from .expression import distinct as distinct
+    1: from .expression import except_ as except_
+    1: from .expression import except_all as except_all
+    1: from .expression import exists as exists
+    1: from .expression import extract as extract
+    1: from .expression import false as false
+    1: from .expression import False_ as False_
+    1: from .expression import FromClause as FromClause
+    1: from .expression import func as func
+    1: from .expression import funcfilter as funcfilter
+    1: from .expression import Insert as Insert
+    1: from .expression import insert as insert
+    1: from .expression import intersect as intersect
+    1: from .expression import intersect_all as intersect_all
+    1: from .expression import Join as Join
+    1: from .expression import join as join
+    1: from .expression import label as label
+    1: from .expression import LABEL_STYLE_DEFAULT as LABEL_STYLE_DEFAULT
+    1: from .expression import (
+           LABEL_STYLE_DISAMBIGUATE_ONLY as LABEL_STYLE_DISAMBIGUATE_ONLY,
+       )
+    1: from .expression import LABEL_STYLE_NONE as LABEL_STYLE_NONE
+    1: from .expression import (
+           LABEL_STYLE_TABLENAME_PLUS_COL as LABEL_STYLE_TABLENAME_PLUS_COL,
+       )
+    1: from .expression import lambda_stmt as lambda_stmt
+    1: from .expression import LambdaElement as LambdaElement
+    1: from .expression import lateral as lateral
+    1: from .expression import literal as literal
+    1: from .expression import literal_column as literal_column
+    1: from .expression import modifier as modifier
+    1: from .expression import not_ as not_
+    1: from .expression import null as null
+    1: from .expression import nulls_first as nulls_first
+    1: from .expression import nulls_last as nulls_last
+    1: from .expression import nullsfirst as nullsfirst
+    1: from .expression import nullslast as nullslast
+    1: from .expression import or_ as or_
+    1: from .expression import outerjoin as outerjoin
+    1: from .expression import outparam as outparam
+    1: from .expression import over as over
+    1: from .expression import quoted_name as quoted_name
+    1: from .expression import Select as Select
+    1: from .expression import select as select
+    1: from .expression import Selectable as Selectable
+    1: from .expression import SelectLabelStyle as SelectLabelStyle
+    1: from .expression import SQLColumnExpression as SQLColumnExpression
+    1: from .expression import StatementLambdaElement as StatementLambdaElement
+    1: from .expression import Subquery as Subquery
+    1: from .expression import table as table
+    1: from .expression import TableClause as TableClause
+    1: from .expression import TableSample as TableSample
+    1: from .expression import tablesample as tablesample
+    1: from .expression import text as text
+    1: from .expression import true as true
+    1: from .expression import True_ as True_
+    1: from .expression import try_cast as try_cast
+    1: from .expression import tuple_ as tuple_
+    1: from .expression import type_coerce as type_coerce
+    1: from .expression import union as union
+    1: from .expression import union_all as union_all
+    1: from .expression import Update as Update
+    1: from .expression import update as update
+    1: from .expression import Values as Values
+    1: from .expression import values as values
+    1: from .expression import within_group as within_group
+    1: from .visitors import ClauseVisitor as ClauseVisitor
+       
+       
+    1: def __go(lcls: Any) -> None:
+    1:     from .. import util as _sa_util
+       
+    1:     from . import base
+    1:     from . import coercions
+    1:     from . import elements
+    1:     from . import lambdas
+    1:     from . import selectable
+    1:     from . import schema
+    1:     from . import traversals
+    1:     from . import type_api
+       
+    1:     if not TYPE_CHECKING:
+    1:         base.coercions = elements.coercions = coercions
+    1:         base.elements = elements
+    1:         base.type_api = type_api
+    1:         coercions.elements = elements
+    1:         coercions.lambdas = lambdas
+    1:         coercions.schema = schema
+    1:         coercions.selectable = selectable
+       
+    1:     from .annotation import _prepare_annotations
+    1:     from .annotation import Annotated
+    1:     from .elements import AnnotatedColumnElement
+    1:     from .elements import ClauseList
+    1:     from .selectable import AnnotatedFromClause
+       
+    1:     _prepare_annotations(ColumnElement, AnnotatedColumnElement)
+    1:     _prepare_annotations(FromClause, AnnotatedFromClause)
+    1:     _prepare_annotations(ClauseList, Annotated)
+       
+    1:     _sa_util.preloaded.import_prefix("sqlalchemy.sql")
+       
+       
+    1: __go(locals())

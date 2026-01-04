@@ -1,0 +1,100 @@
+    1: from __future__ import annotations
+       
+    1: import sys
+    1: import traceback
+    1: from types import TracebackType
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import Generator
+    1: from typing import TYPE_CHECKING
+    1: import warnings
+       
+    1: import pytest
+       
+       
+    1: if TYPE_CHECKING:
+>>>>>>     from typing_extensions import Self
+       
+       
+       # Copied from cpython/Lib/test/support/__init__.py, with modifications.
+    2: class catch_unraisable_exception:
+    1:     """Context manager catching unraisable exception using sys.unraisablehook.
+       
+           Storing the exception value (cm.unraisable.exc_value) creates a reference
+           cycle. The reference cycle is broken explicitly when the context manager
+           exits.
+       
+           Storing the object (cm.unraisable.object) can resurrect it if it is set to
+           an object which is being finalized. Exiting the context manager clears the
+           stored object.
+       
+           Usage:
+               with catch_unraisable_exception() as cm:
+                   # code creating an "unraisable exception"
+                   ...
+                   # check the unraisable exception: use cm.unraisable
+                   ...
+               # cm.unraisable attribute no longer exists at this point
+               # (to break a reference cycle)
+           """
+       
+    1:     def __init__(self) -> None:
+   48:         self.unraisable: sys.UnraisableHookArgs | None = None
+   48:         self._old_hook: Callable[[sys.UnraisableHookArgs], Any] | None = None
+       
+    1:     def _hook(self, unraisable: sys.UnraisableHookArgs) -> None:
+               # Storing unraisable.object can resurrect an object which is being
+               # finalized. Storing unraisable.exc_value creates a reference cycle.
+>>>>>>         self.unraisable = unraisable
+       
+    1:     def __enter__(self) -> Self:
+   48:         self._old_hook = sys.unraisablehook
+   48:         sys.unraisablehook = self._hook
+   48:         return self
+       
+    1:     def __exit__(
+               self,
+               exc_type: type[BaseException] | None,
+               exc_val: BaseException | None,
+               exc_tb: TracebackType | None,
+           ) -> None:
+   48:         assert self._old_hook is not None
+   48:         sys.unraisablehook = self._old_hook
+   48:         self._old_hook = None
+   48:         del self.unraisable
+       
+       
+    1: def unraisable_exception_runtest_hook() -> Generator[None]:
+   48:     with catch_unraisable_exception() as cm:
+   48:         try:
+   48:             yield
+               finally:
+   48:             if cm.unraisable:
+>>>>>>                 if cm.unraisable.err_msg is not None:
+>>>>>>                     err_msg = cm.unraisable.err_msg
+                       else:
+>>>>>>                     err_msg = "Exception ignored in"
+>>>>>>                 msg = f"{err_msg}: {cm.unraisable.object!r}\n\n"
+>>>>>>                 msg += "".join(
+>>>>>>                     traceback.format_exception(
+>>>>>>                         cm.unraisable.exc_type,
+>>>>>>                         cm.unraisable.exc_value,
+>>>>>>                         cm.unraisable.exc_traceback,
+                           )
+                       )
+>>>>>>                 warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+       
+       
+    1: @pytest.hookimpl(wrapper=True, tryfirst=True)
+    1: def pytest_runtest_setup() -> Generator[None]:
+   16:     yield from unraisable_exception_runtest_hook()
+       
+       
+    1: @pytest.hookimpl(wrapper=True, tryfirst=True)
+    1: def pytest_runtest_call() -> Generator[None]:
+   16:     yield from unraisable_exception_runtest_hook()
+       
+       
+    1: @pytest.hookimpl(wrapper=True, tryfirst=True)
+    1: def pytest_runtest_teardown() -> Generator[None]:
+   16:     yield from unraisable_exception_runtest_hook()

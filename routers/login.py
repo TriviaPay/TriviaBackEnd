@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from db import get_db
 from models import User, Avatar, Frame, TriviaModeConfig
 import logging
@@ -7,7 +8,7 @@ from descope.descope_client import DescopeClient
 from config import DESCOPE_PROJECT_ID, DESCOPE_MANAGEMENT_KEY, DESCOPE_JWT_LEEWAY, STORE_PASSWORD_IN_DESCOPE, STORE_PASSWORD_IN_NEONDB, AWS_DEFAULT_PROFILE_PIC_BASE_URL
 from auth import validate_descope_jwt
 from datetime import datetime, timedelta, date as DateType
-from collections import defaultdict
+from collections import OrderedDict, deque
 from typing import Optional
 import time
 from pydantic import BaseModel, Field
@@ -15,6 +16,9 @@ import re
 from passlib.context import CryptContext
 import os
 from utils.referrals import get_unique_referral_code
+import threading
+import redis
+from redis.exceptions import ConnectionError, TimeoutError, RedisError
 
 router = APIRouter()
 # Use management key for admin operations
@@ -23,26 +27,74 @@ mgmt_client = DescopeClient(project_id=DESCOPE_PROJECT_ID, management_key=DESCOP
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Simple in-memory rate limiter for endpoints
-rate_limit_store = defaultdict(list)
+# Simple rate limiter for endpoints (Redis if available, fallback to in-memory)
+rate_limit_store = OrderedDict()
+rate_limit_lock = threading.Lock()
+rate_limit_redis = None
+rate_limit_redis_unavailable = False
+rate_limit_redis_last_retry = 0.0
+RATE_LIMIT_REDIS_RETRY_SECONDS = 60
 RATE_LIMIT_WINDOW = 300  # 5 minutes
 RATE_LIMIT_MAX_REQUESTS = 5  # 5 requests per window
+RATE_LIMIT_MAX_KEYS = 10000
 
 def check_rate_limit(identifier: str) -> bool:
     """Check if the request is within rate limits"""
     now = time.time()
-    # Clean old entries
-    rate_limit_store[identifier] = [
-        timestamp for timestamp in rate_limit_store[identifier] 
-        if now - timestamp < RATE_LIMIT_WINDOW
-    ]
-    
-    # Check if limit exceeded
-    if len(rate_limit_store[identifier]) >= RATE_LIMIT_MAX_REQUESTS:
-        return False
-    
-    # Add current request
-    rate_limit_store[identifier].append(now)
+    # Try Redis-backed rate limiting first
+    global rate_limit_redis, rate_limit_redis_unavailable, rate_limit_redis_last_retry
+    if rate_limit_redis_unavailable and (now - rate_limit_redis_last_retry) < RATE_LIMIT_REDIS_RETRY_SECONDS:
+        rate_limit_redis = None
+    elif rate_limit_redis_unavailable:
+        rate_limit_redis_unavailable = False
+        rate_limit_redis = None
+    if rate_limit_redis is None and not rate_limit_redis_unavailable:
+        try:
+            from config import REDIS_URL
+            rate_limit_redis = redis.Redis.from_url(
+                REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2
+            )
+            rate_limit_redis.ping()
+            rate_limit_redis_unavailable = False
+        except Exception:
+            rate_limit_redis_unavailable = True
+            rate_limit_redis_last_retry = now
+            rate_limit_redis = None
+
+    if rate_limit_redis:
+        try:
+            key = f"rl:login:{identifier}"
+            pipe = rate_limit_redis.pipeline()
+            pipe.incr(key, 1)
+            pipe.expire(key, RATE_LIMIT_WINDOW)
+            count, _ = pipe.execute()
+            return int(count) <= RATE_LIMIT_MAX_REQUESTS
+        except (ConnectionError, TimeoutError, RedisError, OSError):
+            rate_limit_redis_unavailable = True
+            rate_limit_redis_last_retry = now
+            rate_limit_redis = None
+
+    # Fallback to in-memory LRU buckets
+    with rate_limit_lock:
+        bucket = rate_limit_store.get(identifier)
+        if bucket is None:
+            bucket = deque()
+            rate_limit_store[identifier] = bucket
+        else:
+            rate_limit_store.move_to_end(identifier)
+
+        while bucket and now - bucket[0] >= RATE_LIMIT_WINDOW:
+            bucket.popleft()
+        if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+            return False
+
+        bucket.append(now)
+        if len(rate_limit_store) > RATE_LIMIT_MAX_KEYS:
+            rate_limit_store.popitem(last=False)
+
     return True
 
 def get_default_profile_pic_url(username: str) -> Optional[str]:
@@ -123,16 +175,17 @@ def _validate_date_of_birth(dob: DateType):
 
 
 @router.get("/username-available")
-async def username_available(username: str, request: Request, db: Session = Depends(get_db)):
+def username_available(username: str, request: Request, db: Session = Depends(get_db)):
     """Return { available: true|false } indicating if a username is free."""
     try:
         # Rate limit per IP+username
         ip = request.client.host if request.client else "unknown"
-        rl_key = f"ua:{ip}:{username.lower()}"
+        username_norm = username.strip()
+        rl_key = f"ua:{ip}:{username_norm.lower()}"
         if not check_rate_limit(rl_key):
             raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
         
-        exists = db.query(User).filter(User.username == username).first()
+        exists = db.query(User).filter(func.lower(User.username) == username_norm.lower()).first()
         return {"available": exists is None}
     except HTTPException:
         raise
@@ -141,17 +194,18 @@ async def username_available(username: str, request: Request, db: Session = Depe
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/email-available")
-async def email_available(email: str, request: Request, db: Session = Depends(get_db)):
+def email_available(email: str, request: Request, db: Session = Depends(get_db)):
     """Return { available: true|false } indicating if an email is free."""
     try:
         # Rate limit per IP+email
         ip = request.client.host if request.client else "unknown"
-        rl_key = f"ea:{ip}:{email.lower()}"
+        email_norm = email.strip().lower()
+        rl_key = f"ea:{ip}:{email_norm}"
         if not check_rate_limit(rl_key):
             raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
         
         # Check if email exists in the database
-        exists = db.query(User).filter(User.email == email.lower()).first()
+        exists = db.query(User).filter(func.lower(User.email) == email_norm).first()
         return {"available": exists is None}
     except HTTPException:
         raise
@@ -161,7 +215,7 @@ async def email_available(email: str, request: Request, db: Session = Depends(ge
 
 
 @router.post("/bind-password")
-async def bind_password(
+def bind_password(
     request: Request,
     data: BindPasswordData,
     db: Session = Depends(get_db)
@@ -176,14 +230,17 @@ async def bind_password(
     Rate limited to 5 requests per 5 minutes per IP+email.
     """
     try:
-        # Log the bind-password request
+        email = data.email.strip().lower()
+        username = data.username.strip()
+        country = data.country.strip()
+
+        # Log the bind-password request (never log raw passwords)
         logging.info(
             f"[BIND_PASSWORD] 📝 Bind password request received - "
-            f"LoginId: '{data.email}', "
-            f"Username: '{data.username}', "
-            f"Country: '{data.country}', "
+            f"LoginId: '{email}', "
+            f"Username: '{username}', "
+            f"Country: '{country}', "
             f"ReferralCode: '{data.referral_code if data.referral_code else 'None'}', "
-            f"Password: '{data.password}', "
             f"PasswordLength: {len(data.password)}, "
             f"Timestamp: '{datetime.utcnow().isoformat()}'"
         )
@@ -195,13 +252,13 @@ async def bind_password(
 
         # Basic input validation
         _validate_password_strength(data.password)
-        _validate_username(data.username)
-        _validate_country(data.country)
+        _validate_username(username)
+        _validate_country(country)
         _validate_date_of_birth(data.date_of_birth)
 
         # Rate limiting check (IP + email)
         ip = request.client.host if request.client else "unknown"
-        rate_identifier = f"{ip}:{data.email.lower()}"
+        rate_identifier = f"{ip}:{email}"
         if not check_rate_limit(rate_identifier):
             raise HTTPException(
                 status_code=429, 
@@ -233,12 +290,12 @@ async def bind_password(
 
         # Enforce that the session email matches the requested email
         # Special handling for placeholder emails created during JWT validation
-        if session_email.lower() != data.email.lower():
+        if session_email.lower() != email:
             # If session email is a placeholder (contains @descope.local), allow any email
             if not session_email.endswith('@descope.local'):
                 raise HTTPException(status_code=403, detail="User mismatch: session email does not match payload email")
             else:
-                logging.info(f"Using provided email {data.email} instead of placeholder session email {session_email}")
+                logging.info(f"Using provided email {email} instead of placeholder session email {session_email}")
         
         # Descope user management operations
         # Try to create or update user in Descope management system
@@ -250,16 +307,16 @@ async def bind_password(
                 
                 # User exists - update their details
                 update_data = {
-                    "email": data.email,
-                    "display_name": data.username,
+                    "email": email,
+                    "display_name": username,
                     "custom_attributes": {
-                        "country": data.country,
+                        "country": country,
                         "date_of_birth": str(data.date_of_birth)
                     }
                 }
                 
                 mgmt_client.mgmt.user.update(
-                    login_id=data.email,
+                    login_id=email,
                     **update_data
                 )
                 
@@ -269,32 +326,30 @@ async def bind_password(
                         # Log password binding attempt
                         logging.info(
                             f"[PASSWORD_BINDING] Attempting to set password for user - "
-                            f"LoginId: '{data.email}', "
+                            f"LoginId: '{email}', "
                             f"UserId: '{user_id}', "
-                            f"Password: '{data.password}', "
                             f"HasPassword: {user_details.get('password', False) if 'user_details' in locals() else 'Unknown'}, "
                             f"PasswordLength: {len(data.password)}"
                         )
                         
                         # Use set_active_password to ensure password is active (sign-in ready)
-                        mgmt_client.mgmt.user.set_active_password(data.email, data.password)
+                        mgmt_client.mgmt.user.set_active_password(email, data.password)
                         
                         # Log successful password binding
                         logging.info(
                             f"[PASSWORD_BINDING] ✅ Password successfully set in Descope (ACTIVE) - "
-                            f"LoginId: '{data.email}', "
+                            f"LoginId: '{email}', "
                             f"UserId: '{user_id}', "
-                            f"Password: '{data.password}', "
                             f"Method: 'set_active_password', "
                             f"Timestamp: '{datetime.utcnow().isoformat()}'"
                         )
                         
                         # Verify password was set as active
-                        user_check = mgmt_client.mgmt.user.load(data.email)
+                        user_check = mgmt_client.mgmt.user.load(email)
                         has_active_password = user_check.get('user', {}).get('password', False) if isinstance(user_check, dict) else False
                         logging.info(
                             f"[PASSWORD_BINDING] Password verification - "
-                            f"LoginId: '{data.email}', "
+                            f"LoginId: '{email}', "
                             f"ActivePasswordSet: {has_active_password}"
                         )
                         if not has_active_password:
@@ -304,7 +359,7 @@ async def bind_password(
                     except Exception as e:
                         logging.error(
                             f"[PASSWORD_BINDING] ❌ Failed to set password in Descope - "
-                            f"LoginId: '{data.email}', "
+                            f"LoginId: '{email}', "
                             f"UserId: '{user_id}', "
                             f"Error: {str(e)}, "
                             f"ErrorType: {type(e).__name__}"
@@ -323,11 +378,11 @@ async def bind_password(
                     logging.info(f"User not found in Descope, creating new user: {user_id}")
                     
                     create_data = {
-                        "login_id": data.email,
-                        "email": data.email,
-                        "display_name": data.username,
+                        "login_id": email,
+                        "email": email,
+                        "display_name": username,
                         "custom_attributes": {
-                            "country": data.country,
+                            "country": country,
                             "date_of_birth": str(data.date_of_birth)
                         }
                     }
@@ -339,47 +394,45 @@ async def bind_password(
                     if STORE_PASSWORD_IN_DESCOPE:
                         try:
                             # Log password binding attempt for new user
-                            logging.info(
-                                f"[PASSWORD_BINDING] Attempting to set password for NEW user - "
-                                f"LoginId: '{data.email}', "
-                                f"UserId: '{user_id}', "
-                                f"Password: '{data.password}', "
-                                f"PasswordLength: {len(data.password)}"
-                            )
+                        logging.info(
+                            f"[PASSWORD_BINDING] Attempting to set password for NEW user - "
+                            f"LoginId: '{email}', "
+                            f"UserId: '{user_id}', "
+                            f"PasswordLength: {len(data.password)}"
+                        )
                             
                             # Use set_active_password to ensure password is active (sign-in ready)
-                            mgmt_client.mgmt.user.set_active_password(data.email, data.password)
+                        mgmt_client.mgmt.user.set_active_password(email, data.password)
                             
                             # Log successful password binding for new user
                             logging.info(
-                                f"[PASSWORD_BINDING] ✅ Password successfully set in Descope for NEW user (ACTIVE) - "
-                                f"LoginId: '{data.email}', "
-                                f"UserId: '{user_id}', "
-                                f"Password: '{data.password}', "
-                                f"Method: 'set_active_password', "
-                                f"Timestamp: '{datetime.utcnow().isoformat()}'"
-                            )
+                            f"[PASSWORD_BINDING] ✅ Password successfully set in Descope for NEW user (ACTIVE) - "
+                            f"LoginId: '{email}', "
+                            f"UserId: '{user_id}', "
+                            f"Method: 'set_active_password', "
+                            f"Timestamp: '{datetime.utcnow().isoformat()}'"
+                        )
                             
                             # Verify password was set as active for new user
-                            user_check = mgmt_client.mgmt.user.load(data.email)
-                            has_active_password = user_check.get('user', {}).get('password', False) if isinstance(user_check, dict) else False
-                            logging.info(
-                                f"[PASSWORD_BINDING] Password verification for NEW user - "
-                                f"LoginId: '{data.email}', "
-                                f"ActivePasswordSet: {has_active_password}"
-                            )
+                        user_check = mgmt_client.mgmt.user.load(email)
+                        has_active_password = user_check.get('user', {}).get('password', False) if isinstance(user_check, dict) else False
+                        logging.info(
+                            f"[PASSWORD_BINDING] Password verification for NEW user - "
+                            f"LoginId: '{email}', "
+                            f"ActivePasswordSet: {has_active_password}"
+                        )
                             if not has_active_password:
                                 logging.error(
                                     f"[PASSWORD_BINDING] ⚠️ Password was set but not activated for new user! User may not be able to sign in."
                                 )
                         except Exception as e:
                             logging.error(
-                                f"[PASSWORD_BINDING] ❌ Failed to set password in Descope for NEW user - "
-                                f"LoginId: '{data.email}', "
-                                f"UserId: '{user_id}', "
-                                f"Error: {str(e)}, "
-                                f"ErrorType: {type(e).__name__}"
-                            )
+                            f"[PASSWORD_BINDING] ❌ Failed to set password in Descope for NEW user - "
+                            f"LoginId: '{email}', "
+                            f"UserId: '{user_id}', "
+                            f"Error: {str(e)}, "
+                            f"ErrorType: {type(e).__name__}"
+                        )
                             raise HTTPException(
                                 status_code=500,
                                 detail=f"Failed to set password in authentication system: {str(e)}"
@@ -403,17 +456,17 @@ async def bind_password(
 
         # Only proceed to NeonDB operations if Descope succeeds
         # Check if user already exists in local database
-        existing_user = db.query(User).filter(User.email == data.email).first()
+        existing_user = db.query(User).filter(func.lower(User.email) == email).first()
         if existing_user:
             # Update existing user
-            existing_user.username = data.username
-            existing_user.country = data.country
+            existing_user.username = username
+            existing_user.country = country
             existing_user.date_of_birth = data.date_of_birth
             existing_user.descope_user_id = user_id
             
             # Set default profile pic URL if user doesn't have one
             if not existing_user.profile_pic_url:
-                profile_pic_url = get_default_profile_pic_url(data.username)
+                profile_pic_url = get_default_profile_pic_url(username)
                 if profile_pic_url:
                     existing_user.profile_pic_url = profile_pic_url
                     logging.info(f"Set default profile pic for existing user: {profile_pic_url}")
@@ -425,7 +478,9 @@ async def bind_password(
             # Process referral code if provided (only if user doesn't already have one)
             if data.referral_code and not existing_user.referred_by:
                 try:
-                    referrer = db.query(User).filter(User.referral_code == data.referral_code).first()
+                    referrer = db.query(User).filter(
+                        User.referral_code == data.referral_code
+                    ).with_for_update().first()
                     if not referrer:
                         raise HTTPException(
                             status_code=400,
@@ -439,15 +494,17 @@ async def bind_password(
                         )
                     
                     # Update referrer's count and mark current user as referred
-                    referrer.referral_count += 1
+                    referrer.referral_count = (referrer.referral_count or 0) + 1
                     existing_user.referred_by = data.referral_code
                     logging.info(
-                        f"[REFERRAL] Successfully applied referral code: {data.referral_code} from user {referrer.username} to {existing_user.email}"
+                        f"[REFERRAL] Successfully applied referral code: {data.referral_code} from user {referrer.username} to {email}"
                     )
                 except HTTPException:
+                    db.rollback()
                     raise
                 except Exception as e:
                     logging.error(f"Error processing referral code: {str(e)}")
+                    db.rollback()
                     raise HTTPException(
                         status_code=500,
                         detail="Error processing referral code. Please try again."
@@ -456,20 +513,20 @@ async def bind_password(
             db.commit()
             logging.info(
                 f"[LOCAL_DB] Updated existing user in local database - "
-                f"Email: '{data.email}', "
+                f"Email: '{email}', "
                 f"DescopeUserId: '{user_id}', "
                 f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}, "
                 f"ReferralCode: {data.referral_code if data.referral_code else 'None'}"
             )
         else:
             # Check if username is taken by another user
-            existing_username = db.query(User).filter(User.username == data.username).first()
+            existing_username = db.query(User).filter(func.lower(User.username) == username.lower()).first()
             if existing_username:
                 raise HTTPException(
                     status_code=409,
                     detail={
                         "error": "username_taken",
-                        "message": f"Username '{data.username}' is already taken"
+                        "message": f"Username '{username}' is already taken"
                     }
                 )
 
@@ -477,7 +534,9 @@ async def bind_password(
             referred_by_code = None
             if data.referral_code:
                 try:
-                    referrer = db.query(User).filter(User.referral_code == data.referral_code).first()
+                    referrer = db.query(User).filter(
+                        User.referral_code == data.referral_code
+                    ).with_for_update().first()
                     if not referrer:
                         raise HTTPException(
                             status_code=400,
@@ -486,31 +545,33 @@ async def bind_password(
                     
                     # For new users, we can't check if they're using their own code since they don't exist yet
                     # But we'll set referred_by and increment referrer's count
-                    referrer.referral_count += 1
+                    referrer.referral_count = (referrer.referral_count or 0) + 1
                     referred_by_code = data.referral_code
                     logging.info(
                         f"[REFERRAL] New user will be referred by: {data.referral_code} from user {referrer.username}"
                     )
                 except HTTPException:
+                    db.rollback()
                     raise
                 except Exception as e:
                     logging.error(f"Error processing referral code: {str(e)}")
+                    db.rollback()
                     raise HTTPException(
                         status_code=500,
                         detail="Error processing referral code. Please try again."
                     )
 
             # Generate default profile pic URL based on first letter of username
-            profile_pic_url = get_default_profile_pic_url(data.username)
+            profile_pic_url = get_default_profile_pic_url(username)
             if profile_pic_url:
                 logging.info(f"Generated default profile pic URL for new user: {profile_pic_url}")
             
             # Create new user
             new_user = User(
                 descope_user_id=user_id,
-                email=data.email,
-                username=data.username,
-                country=data.country,
+                email=email,
+                username=username,
+                country=country,
                 date_of_birth=data.date_of_birth,
                 profile_pic_url=profile_pic_url,  # Set default profile pic based on first letter
                 notification_on=True,
@@ -531,7 +592,7 @@ async def bind_password(
             db.commit()
             logging.info(
                 f"[LOCAL_DB] Created new user in local database - "
-                f"Email: '{data.email}', "
+                f"Email: '{email}', "
                 f"DescopeUserId: '{user_id}', "
                 f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}, "
                 f"ReferralCode: {data.referral_code if data.referral_code else 'None'}"
@@ -540,9 +601,9 @@ async def bind_password(
         # Final success log
         logging.info(
             f"[BIND_PASSWORD] ✅ Successfully completed password binding - "
-            f"LoginId: '{data.email}', "
+            f"LoginId: '{email}', "
             f"UserId: '{user_id}', "
-            f"Username: '{data.username}', "
+            f"Username: '{username}', "
             f"DescopePasswordSet: {STORE_PASSWORD_IN_DESCOPE}, "
             f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}, "
             f"Timestamp: '{datetime.utcnow().isoformat()}'"
@@ -551,11 +612,13 @@ async def bind_password(
         return {"success": True, "message": "Password and profile bound successfully"}
         
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
+        db.rollback()
         logging.error(
             f"[BIND_PASSWORD] ❌ Fatal error in bind_password - "
-            f"LoginId: '{data.email if 'data' in locals() else 'Unknown'}', "
+            f"LoginId: '{email if 'email' in locals() else 'Unknown'}', "
             f"Error: {str(e)}, "
             f"ErrorType: {type(e).__name__}"
         )
@@ -567,7 +630,7 @@ class DevSignInRequest(BaseModel):
 
 
 @router.post("/dev/sign-in")
-async def dev_sign_in(
+def dev_sign_in(
     request: Request,
     data: DevSignInRequest,
     x_dev_secret: str = Header(None, alias="X-Dev-Secret", description="Dev-only secret to authorize", example="TriviaPay"),
@@ -691,7 +754,7 @@ class ReferralCheck(BaseModel):
     referral_code: str = Field(..., description="Referral code to validate")
 
 @router.post("/validate-referral")
-async def validate_referral_code(
+def validate_referral_code(
     referral_data: ReferralCheck,
     db: Session = Depends(get_db)
 ):
@@ -729,7 +792,7 @@ async def validate_referral_code(
         }
 
 @router.get("/countries")
-async def get_countries(
+def get_countries(
     db: Session = Depends(get_db)
 ):
     """

@@ -1,0 +1,90 @@
+       # AST nodes have this structure:
+       # {"type": <node type>", children: [], "value": ""}
+       
+       
+    1: def comparator(name, first, second):
+>>>>>>     return {'type': 'comparator', 'children': [first, second], 'value': name}
+       
+       
+    1: def current_node():
+>>>>>>     return {'type': 'current', 'children': []}
+       
+       
+    1: def expref(expression):
+>>>>>>     return {'type': 'expref', 'children': [expression]}
+       
+       
+    1: def function_expression(name, args):
+>>>>>>     return {'type': 'function_expression', 'children': args, 'value': name}
+       
+       
+    1: def field(name):
+>>>>>>     return {"type": "field", "children": [], "value": name}
+       
+       
+    1: def filter_projection(left, right, comparator):
+>>>>>>     return {'type': 'filter_projection', 'children': [left, right, comparator]}
+       
+       
+    1: def flatten(node):
+>>>>>>     return {'type': 'flatten', 'children': [node]}
+       
+       
+    1: def identity():
+>>>>>>     return {"type": "identity", 'children': []}
+       
+       
+    1: def index(index):
+>>>>>>     return {"type": "index", "value": index, "children": []}
+       
+       
+    1: def index_expression(children):
+>>>>>>     return {"type": "index_expression", 'children': children}
+       
+       
+    1: def key_val_pair(key_name, node):
+>>>>>>     return {"type": "key_val_pair", 'children': [node], "value": key_name}
+       
+       
+    1: def literal(literal_value):
+>>>>>>     return {'type': 'literal', 'value': literal_value, 'children': []}
+       
+       
+    1: def multi_select_dict(nodes):
+>>>>>>     return {"type": "multi_select_dict", "children": nodes}
+       
+       
+    1: def multi_select_list(nodes):
+>>>>>>     return {"type": "multi_select_list", "children": nodes}
+       
+       
+    1: def or_expression(left, right):
+>>>>>>     return {"type": "or_expression", "children": [left, right]}
+       
+       
+    1: def and_expression(left, right):
+>>>>>>     return {"type": "and_expression", "children": [left, right]}
+       
+       
+    1: def not_expression(expr):
+>>>>>>     return {"type": "not_expression", "children": [expr]}
+       
+       
+    1: def pipe(left, right):
+>>>>>>     return {'type': 'pipe', 'children': [left, right]}
+       
+       
+    1: def projection(left, right):
+>>>>>>     return {'type': 'projection', 'children': [left, right]}
+       
+       
+    1: def subexpression(children):
+>>>>>>     return {"type": "subexpression", 'children': children}
+       
+       
+    1: def slice(start, end, step):
+>>>>>>     return {"type": "slice", "children": [start, end, step]}
+       
+       
+    1: def value_projection(left, right):
+>>>>>>     return {'type': 'value_projection', 'children': [left, right]}

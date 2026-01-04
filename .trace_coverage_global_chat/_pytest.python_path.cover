@@ -1,0 +1,26 @@
+    1: from __future__ import annotations
+       
+    1: import sys
+       
+    1: import pytest
+    1: from pytest import Config
+    1: from pytest import Parser
+       
+       
+    1: def pytest_addoption(parser: Parser) -> None:
+    1:     parser.addini("pythonpath", type="paths", help="Add paths to sys.path", default=[])
+       
+       
+    1: @pytest.hookimpl(tryfirst=True)
+    1: def pytest_load_initial_conftests(early_config: Config) -> None:
+           # `pythonpath = a b` will set `sys.path` to `[a, b, x, y, z, ...]`
+    1:     for path in reversed(early_config.getini("pythonpath")):
+>>>>>>         sys.path.insert(0, str(path))
+       
+       
+    1: @pytest.hookimpl(trylast=True)
+    1: def pytest_unconfigure(config: Config) -> None:
+    1:     for path in config.getini("pythonpath"):
+>>>>>>         path_str = str(path)
+>>>>>>         if path_str in sys.path:
+>>>>>>             sys.path.remove(path_str)

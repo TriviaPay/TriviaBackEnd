@@ -1,0 +1,99 @@
+    1: from __future__ import annotations
+       
+    1: import asyncio
+    1: import functools
+    1: import re
+    1: import sys
+    1: import typing
+    1: from contextlib import contextmanager
+       
+    1: from starlette.types import Scope
+       
+    1: if sys.version_info >= (3, 10):  # pragma: no cover
+>>>>>>     from typing import TypeGuard
+       else:  # pragma: no cover
+    1:     from typing_extensions import TypeGuard
+       
+    1: has_exceptiongroups = True
+    1: if sys.version_info < (3, 11):  # pragma: no cover
+    1:     try:
+    1:         from exceptiongroup import BaseExceptionGroup
+>>>>>>     except ImportError:
+>>>>>>         has_exceptiongroups = False
+       
+    1: T = typing.TypeVar("T")
+    1: AwaitableCallable = typing.Callable[..., typing.Awaitable[T]]
+       
+       
+    1: @typing.overload
+    1: def is_async_callable(obj: AwaitableCallable[T]) -> TypeGuard[AwaitableCallable[T]]:
+>>>>>>     ...
+       
+       
+    1: @typing.overload
+    1: def is_async_callable(obj: typing.Any) -> TypeGuard[AwaitableCallable[typing.Any]]:
+>>>>>>     ...
+       
+       
+    1: def is_async_callable(obj: typing.Any) -> typing.Any:
+    3:     while isinstance(obj, functools.partial):
+>>>>>>         obj = obj.func
+       
+    6:     return asyncio.iscoroutinefunction(obj) or (
+    1:         callable(obj) and asyncio.iscoroutinefunction(obj.__call__)
+           )
+       
+       
+    1: T_co = typing.TypeVar("T_co", covariant=True)
+       
+       
+    3: class AwaitableOrContextManager(
+    1:     typing.Awaitable[T_co], typing.AsyncContextManager[T_co], typing.Protocol[T_co]
+       ):
+    1:     ...
+       
+       
+    2: class SupportsAsyncClose(typing.Protocol):
+    1:     async def close(self) -> None:
+>>>>>>         ...  # pragma: no cover
+       
+       
+    2: SupportsAsyncCloseType = typing.TypeVar(
+    1:     "SupportsAsyncCloseType", bound=SupportsAsyncClose, covariant=False
+       )
+       
+       
+    2: class AwaitableOrContextManagerWrapper(typing.Generic[SupportsAsyncCloseType]):
+    1:     __slots__ = ("aw", "entered")
+       
+    1:     def __init__(self, aw: typing.Awaitable[SupportsAsyncCloseType]) -> None:
+>>>>>>         self.aw = aw
+       
+    1:     def __await__(self) -> typing.Generator[typing.Any, None, SupportsAsyncCloseType]:
+>>>>>>         return self.aw.__await__()
+       
+    1:     async def __aenter__(self) -> SupportsAsyncCloseType:
+>>>>>>         self.entered = await self.aw
+>>>>>>         return self.entered
+       
+    1:     async def __aexit__(self, *args: typing.Any) -> None | bool:
+>>>>>>         await self.entered.close()
+>>>>>>         return None
+       
+       
+    1: @contextmanager
+    1: def collapse_excgroups() -> typing.Generator[None, None, None]:
+>>>>>>     try:
+>>>>>>         yield
+>>>>>>     except BaseException as exc:
+>>>>>>         if has_exceptiongroups:
+>>>>>>             while isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
+>>>>>>                 exc = exc.exceptions[0]  # pragma: no cover
+       
+>>>>>>         raise exc
+       
+       
+    1: def get_route_path(scope: Scope) -> str:
+   10:     root_path = scope.get("root_path", "")
+   10:     route_path = re.sub(r"^" + root_path, "", scope["path"])
+   10:     return route_path

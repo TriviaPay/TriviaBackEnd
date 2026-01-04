@@ -1,0 +1,19 @@
+    1: import sys
+    1: import inspect
+    1: from itertools import zip_longest
+       
+       
+    1: text_type = str
+    1: string_type = str
+       
+       
+    1: def with_str_method(cls):
+           # In python3, we don't need to do anything, we return a str type.
+    6:     return cls
+       
+    1: def with_repr_method(cls):
+    1:     return cls
+       
+    1: def get_methods(cls):
+   35:     for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
+   34:         yield name, method

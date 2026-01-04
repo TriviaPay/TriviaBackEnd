@@ -48,7 +48,7 @@ class UpdateGroupRequest(BaseModel):
 
 
 @router.post("")
-async def create_group(
+def create_group(
     request: CreateGroupRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -103,7 +103,7 @@ async def create_group(
 
 
 @router.get("")
-async def list_groups(
+def list_groups(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -115,30 +115,37 @@ async def list_groups(
     if not GROUPS_ENABLED:
         raise HTTPException(status_code=403, detail="Groups feature is not enabled")
     
-    # Get groups user is a participant in
-    groups = db.query(Group).join(
-        GroupParticipant, Group.id == GroupParticipant.group_id
+    participant_counts_subq = db.query(
+        GroupParticipant.group_id.label("group_id"),
+        func.count(GroupParticipant.user_id).label("participant_count")
     ).filter(
-        GroupParticipant.user_id == current_user.account_id,
-        GroupParticipant.is_banned == False
+        GroupParticipant.is_banned.is_(False)
+    ).group_by(GroupParticipant.group_id).subquery()
+
+    member_subq = db.query(
+        GroupParticipant.group_id.label("group_id"),
+        GroupParticipant.role.label("role"),
+        GroupParticipant.is_banned.label("is_banned")
+    ).filter(
+        GroupParticipant.user_id == current_user.account_id
+    ).subquery()
+
+    groups = db.query(
+        Group,
+        member_subq.c.role.label("my_role"),
+        participant_counts_subq.c.participant_count.label("participant_count")
+    ).join(
+        member_subq, Group.id == member_subq.c.group_id
+    ).outerjoin(
+        participant_counts_subq, Group.id == participant_counts_subq.c.group_id
+    ).filter(
+        member_subq.c.is_banned.is_(False)
     ).order_by(
         desc(Group.updated_at)
     ).offset(offset).limit(limit).all()
-    
+
     result = []
-    for group in groups:
-        # Get participant count
-        participant_count = db.query(GroupParticipant).filter(
-            GroupParticipant.group_id == group.id,
-            GroupParticipant.is_banned == False
-        ).count()
-        
-        # Get user's role
-        participant = db.query(GroupParticipant).filter(
-            GroupParticipant.group_id == group.id,
-            GroupParticipant.user_id == current_user.account_id
-        ).first()
-        
+    for group, my_role, participant_count in groups:
         result.append({
             "id": str(group.id),
             "title": group.title,
@@ -146,18 +153,18 @@ async def list_groups(
             "photo_url": group.photo_url,
             "created_at": group.created_at.isoformat(),
             "updated_at": group.updated_at.isoformat() if group.updated_at else None,
-            "participant_count": participant_count,
+            "participant_count": participant_count or 0,
             "max_participants": group.max_participants,
             "group_epoch": group.group_epoch,
             "is_closed": group.is_closed,
-            "my_role": participant.role if participant else None
+            "my_role": my_role
         })
     
     return {"groups": result, "total": len(result)}
 
 
 @router.get("/{group_id}")
-async def get_group(
+def get_group(
     group_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -173,24 +180,42 @@ async def get_group(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid group ID format")
     
-    group = db.query(Group).filter(Group.id == group_uuid).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="Group not found")
-    
-    # Check if user is a participant
-    participant = db.query(GroupParticipant).filter(
-        GroupParticipant.group_id == group_uuid,
-        GroupParticipant.user_id == current_user.account_id
+    participant_counts_subq = db.query(
+        GroupParticipant.group_id.label("group_id"),
+        func.count(GroupParticipant.user_id).label("participant_count")
+    ).filter(
+        GroupParticipant.is_banned.is_(False)
+    ).group_by(GroupParticipant.group_id).subquery()
+
+    member_subq = db.query(
+        GroupParticipant.group_id.label("group_id"),
+        GroupParticipant.role.label("role"),
+        GroupParticipant.is_banned.label("is_banned")
+    ).filter(
+        GroupParticipant.user_id == current_user.account_id,
+        GroupParticipant.group_id == group_uuid
+    ).subquery()
+
+    row = db.query(
+        Group,
+        member_subq.c.role.label("my_role"),
+        member_subq.c.is_banned.label("is_banned"),
+        participant_counts_subq.c.participant_count.label("participant_count")
+    ).outerjoin(
+        member_subq, Group.id == member_subq.c.group_id
+    ).outerjoin(
+        participant_counts_subq, Group.id == participant_counts_subq.c.group_id
+    ).filter(
+        Group.id == group_uuid
     ).first()
-    
-    if not participant or participant.is_banned:
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    group, my_role, is_banned, participant_count = row
+
+    if not my_role or is_banned:
         raise HTTPException(status_code=403, detail="Not a member of this group")
-    
-    # Get participant count
-    participant_count = db.query(GroupParticipant).filter(
-        GroupParticipant.group_id == group_uuid,
-        GroupParticipant.is_banned == False
-    ).count()
     
     return {
         "id": str(group.id),
@@ -200,16 +225,16 @@ async def get_group(
         "created_by": group.created_by,
         "created_at": group.created_at.isoformat(),
         "updated_at": group.updated_at.isoformat() if group.updated_at else None,
-        "participant_count": participant_count,
+        "participant_count": participant_count or 0,
         "max_participants": group.max_participants,
         "group_epoch": group.group_epoch,
         "is_closed": group.is_closed,
-        "my_role": participant.role
+        "my_role": my_role
     }
 
 
 @router.patch("/{group_id}")
-async def update_group(
+def update_group(
     group_id: str,
     request: UpdateGroupRequest,
     db: Session = Depends(get_db),
@@ -226,9 +251,11 @@ async def update_group(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid group ID format")
     
-    group = db.query(Group).filter(Group.id == group_uuid).first()
+    group = db.query(Group).filter(Group.id == group_uuid).with_for_update().first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
+    if group.is_closed:
+        raise HTTPException(status_code=409, detail="Group is closed")
     
     # Check if user is owner or admin
     participant = db.query(GroupParticipant).filter(
@@ -270,7 +297,7 @@ async def update_group(
 
 
 @router.delete("/{group_id}")
-async def delete_group(
+def delete_group(
     group_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -286,9 +313,11 @@ async def delete_group(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid group ID format")
     
-    group = db.query(Group).filter(Group.id == group_uuid).first()
+    group = db.query(Group).filter(Group.id == group_uuid).with_for_update().first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
+    if group.is_closed:
+        return {"message": "Group already closed"}
     
     # Check if user is owner
     participant = db.query(GroupParticipant).filter(
@@ -310,4 +339,3 @@ async def delete_group(
         db.rollback()
         logger.error(f"Error closing group: {e}")
         raise HTTPException(status_code=500, detail="Failed to close group")
-

@@ -1,0 +1,58 @@
+    1: """Pydantic-specific warnings."""
+    1: from __future__ import annotations as _annotations
+       
+    1: from .version import version_short
+       
+    1: __all__ = 'PydanticDeprecatedSince20', 'PydanticDeprecationWarning'
+       
+       
+    2: class PydanticDeprecationWarning(DeprecationWarning):
+    1:     """A Pydantic specific deprecation warning.
+       
+           This warning is raised when using deprecated functionality in Pydantic. It provides information on when the
+           deprecation was introduced and the expected version in which the corresponding functionality will be removed.
+       
+           Attributes:
+               message: Description of the warning.
+               since: Pydantic version in what the deprecation was introduced.
+               expected_removal: Pydantic version in what the corresponding functionality expected to be removed.
+           """
+       
+    1:     message: str
+    1:     since: tuple[int, int]
+    1:     expected_removal: tuple[int, int]
+       
+    1:     def __init__(
+    1:         self, message: str, *args: object, since: tuple[int, int], expected_removal: tuple[int, int] | None = None
+           ) -> None:
+   24:         super().__init__(message, *args)
+   24:         self.message = message.rstrip('.')
+   24:         self.since = since
+   24:         self.expected_removal = expected_removal if expected_removal is not None else (since[0] + 1, 0)
+       
+    1:     def __str__(self) -> str:
+   24:         message = (
+   72:             f'{self.message}. Deprecated in Pydantic V{self.since[0]}.{self.since[1]}'
+   48:             f' to be removed in V{self.expected_removal[0]}.{self.expected_removal[1]}.'
+               )
+   24:         if self.since == (2, 0):
+   24:             message += f' See Pydantic V2 Migration Guide at https://errors.pydantic.dev/{version_short()}/migration/'
+   24:         return message
+       
+       
+    2: class PydanticDeprecatedSince20(PydanticDeprecationWarning):
+    1:     """A specific `PydanticDeprecationWarning` subclass defining functionality deprecated since Pydantic 2.0."""
+       
+    1:     def __init__(self, message: str, *args: object) -> None:
+   24:         super().__init__(message, *args, since=(2, 0), expected_removal=(3, 0))
+       
+       
+    2: class PydanticDeprecatedSince26(PydanticDeprecationWarning):
+    1:     """A specific `PydanticDeprecationWarning` subclass defining functionality deprecated since Pydantic 2.6."""
+       
+    1:     def __init__(self, message: str, *args: object) -> None:
+>>>>>>         super().__init__(message, *args, since=(2, 0), expected_removal=(3, 0))
+       
+       
+    2: class GenericBeforeBaseModelWarning(Warning):
+    1:     pass

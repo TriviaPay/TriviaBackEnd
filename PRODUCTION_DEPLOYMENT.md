@@ -9,7 +9,7 @@
 
 ### Using cron-job.org (Free)
 1. Create account at cron-job.org
-2. Set up three cron jobs:
+2. Set up four cron jobs:
 
 #### Daily Draw (Draw Time, default 6:00 PM EST)
 - **URL**: `https://your-app.vercel.app/internal/daily-draw`
@@ -28,6 +28,12 @@
 - **Method**: POST
 - **Headers**: `X-Secret: your-internal-secret`
 - **Schedule**: `59 23 L * *` (11:59 PM EST, last day of month)
+
+#### Daily Revenue Update (Draw Time, default 6:00 PM EST)
+- **URL**: `https://your-app.vercel.app/internal/daily-revenue-update`
+- **Method**: POST
+- **Headers**: `X-Secret: your-internal-secret`
+- **Schedule**: `0 18 * * *` (6:00 PM EST) - Update based on DRAW_TIME_HOUR
 
 ### Using EasyCron (Paid)
 1. Create account at easycron.com
@@ -71,6 +77,15 @@ jobs:
         run: |
           curl -X POST "https://your-app.vercel.app/internal/monthly-reset" \
             -H "X-Secret: ${{ secrets.INTERNAL_SECRET }}"
+
+  daily-revenue-update:
+    if: github.event.schedule == '0 18 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Daily Revenue Update
+        run: |
+          curl -X POST "https://your-app.vercel.app/internal/daily-revenue-update" \
+            -H "X-Secret: ${{ secrets.INTERNAL_SECRET }}"
 ```
 
 ## Environment Variables for Vercel
@@ -106,6 +121,10 @@ curl -X POST "https://your-app.vercel.app/internal/question-reset" \
 
 # Test monthly reset
 curl -X POST "https://your-app.vercel.app/internal/monthly-reset" \
+  -H "X-Secret: your-internal-secret"
+
+# Test daily revenue update
+curl -X POST "https://your-app.vercel.app/internal/daily-revenue-update" \
   -H "X-Secret: your-internal-secret"
 
 # Test health check

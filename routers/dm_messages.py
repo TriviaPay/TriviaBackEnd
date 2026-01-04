@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc
@@ -57,6 +57,7 @@ def check_blocked(db: Session, user1_id: int, user2_id: int) -> bool:
 async def send_message(
     conversation_id: str,
     request: SendMessageRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -73,16 +74,12 @@ async def send_message(
         raise HTTPException(status_code=400, detail="Invalid conversation ID")
     
     # Verify conversation exists and user is a participant
-    participant = db.query(DMParticipant).filter(
-        DMParticipant.conversation_id == conv_uuid,
+    conversation = db.query(DMConversation).join(
+        DMParticipant,
+        DMConversation.id == DMParticipant.conversation_id
+    ).filter(
+        DMConversation.id == conv_uuid,
         DMParticipant.user_id == current_user.account_id
-    ).first()
-    
-    if not participant:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    conversation = db.query(DMConversation).filter(
-        DMConversation.id == conv_uuid
     ).first()
     
     if not conversation:
@@ -96,15 +93,17 @@ async def send_message(
     ).first()
     
     if not sender_device:
+        revoked_device = db.query(E2EEDevice).filter(
+            E2EEDevice.user_id == current_user.account_id,
+            E2EEDevice.status == "revoked"
+        ).first()
+        if revoked_device:
+            raise HTTPException(
+                status_code=409,
+                detail="DEVICE_REVOKED",
+                headers={"X-Error-Code": "DEVICE_REVOKED"}
+            )
         raise HTTPException(status_code=400, detail="No active device found. Please register a device first.")
-    
-    # Check if sender device is revoked (shouldn't happen, but safety check)
-    if sender_device.status == "revoked":
-        raise HTTPException(
-            status_code=409,
-            detail="DEVICE_REVOKED",
-            headers={"X-Error-Code": "DEVICE_REVOKED"}
-        )
     
     # Check for duplicate message (idempotent write)
     if request.client_message_id:
@@ -135,12 +134,14 @@ async def send_message(
     
     # Rate limiting - per user per minute
     one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
-    recent_messages = db.query(DMMessage).filter(
+    recent_messages = db.query(DMMessage.id).filter(
         DMMessage.sender_user_id == current_user.account_id,
         DMMessage.created_at >= one_minute_ago
-    ).count()
+    ).order_by(DMMessage.created_at.desc()).limit(
+        E2EE_DM_MAX_MESSAGES_PER_MINUTE
+    ).all()
     
-    if recent_messages >= E2EE_DM_MAX_MESSAGES_PER_MINUTE:
+    if len(recent_messages) >= E2EE_DM_MAX_MESSAGES_PER_MINUTE:
         # Calculate retry time (seconds until window resets)
         oldest_message = db.query(DMMessage).filter(
             DMMessage.sender_user_id == current_user.account_id,
@@ -165,13 +166,15 @@ async def send_message(
     
     # Rate limiting - per conversation burst
     burst_window_start = datetime.utcnow() - timedelta(seconds=E2EE_DM_BURST_WINDOW_SECONDS)
-    recent_conversation_messages = db.query(DMMessage).filter(
+    recent_conversation_messages = db.query(DMMessage.id).filter(
         DMMessage.sender_user_id == current_user.account_id,
         DMMessage.conversation_id == conv_uuid,
         DMMessage.created_at >= burst_window_start
-    ).count()
+    ).order_by(DMMessage.created_at.desc()).limit(
+        E2EE_DM_MAX_MESSAGES_PER_CONVERSATION_BURST
+    ).all()
     
-    if recent_conversation_messages >= E2EE_DM_MAX_MESSAGES_PER_CONVERSATION_BURST:
+    if len(recent_conversation_messages) >= E2EE_DM_MAX_MESSAGES_PER_CONVERSATION_BURST:
         oldest_burst_message = db.query(DMMessage).filter(
             DMMessage.sender_user_id == current_user.account_id,
             DMMessage.conversation_id == conv_uuid,
@@ -195,10 +198,13 @@ async def send_message(
         )
     
     # Get recipient user (the other participant)
-    recipient_participant = db.query(DMParticipant).filter(
-        DMParticipant.conversation_id == conv_uuid,
-        DMParticipant.user_id != current_user.account_id
-    ).first()
+    participants = db.query(DMParticipant).filter(
+        DMParticipant.conversation_id == conv_uuid
+    ).all()
+    recipient_participant = next(
+        (p for p in participants if p.user_id != current_user.account_id),
+        None
+    )
     
     if not recipient_participant:
         raise HTTPException(status_code=400, detail="Recipient not found in conversation")
@@ -251,7 +257,12 @@ async def send_message(
         "created_at": new_message.created_at.isoformat()
     }
     
-    await publish_dm_message(conversation_id, recipient_user_id, event)
+    background_tasks.add_task(
+        publish_dm_message,
+        conversation_id,
+        recipient_user_id,
+        event
+    )
     
     logger.info(f"Message sent: {new_message.id} in conversation {conversation_id}")
     
@@ -419,4 +430,3 @@ async def mark_read(
         "message_id": message_id,
         "read_at": delivery.read_at.isoformat()
     }
-

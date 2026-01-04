@@ -1,0 +1,6 @@
+    1: from fastapi.openapi.models import SecurityBase as SecurityBaseModel
+       
+       
+    2: class SecurityBase:
+    1:     model: SecurityBaseModel
+    1:     scheme_name: str

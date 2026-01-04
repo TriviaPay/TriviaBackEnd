@@ -1,0 +1,5 @@
+    1: from fastapi import APIRouter
+       
+       # Trivia router - all endpoints have been removed
+       # Daily login endpoints have been moved to rewards.py
+    1: router = APIRouter(prefix="/trivia", tags=["Trivia"])

@@ -1,0 +1,61 @@
+       # dialects/__init__.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: from __future__ import annotations
+       
+    1: from typing import Callable
+    1: from typing import Optional
+    1: from typing import Type
+    1: from typing import TYPE_CHECKING
+       
+    1: from .. import util
+       
+    1: if TYPE_CHECKING:
+>>>>>>     from ..engine.interfaces import Dialect
+       
+    1: __all__ = ("mssql", "mysql", "oracle", "postgresql", "sqlite")
+       
+       
+    1: def _auto_fn(name: str) -> Optional[Callable[[], Type[Dialect]]]:
+           """default dialect importer.
+       
+           plugs into the :class:`.PluginLoader`
+           as a first-hit system.
+       
+           """
+    3:     if "." in name:
+    2:         dialect, driver = name.split(".")
+           else:
+    1:         dialect = name
+    1:         driver = "base"
+       
+    3:     try:
+    3:         if dialect == "mariadb":
+                   # it's "OK" for us to hardcode here since _auto_fn is already
+                   # hardcoded.   if mysql / mariadb etc were third party dialects
+                   # they would just publish all the entrypoints, which would actually
+                   # look much nicer.
+>>>>>>             module = __import__(
+>>>>>>                 "sqlalchemy.dialects.mysql.mariadb"
+                   ).dialects.mysql.mariadb
+>>>>>>             return module.loader(driver)  # type: ignore
+               else:
+    3:             module = __import__("sqlalchemy.dialects.%s" % (dialect,)).dialects
+    3:             module = getattr(module, dialect)
+>>>>>>     except ImportError:
+>>>>>>         return None
+       
+    3:     if hasattr(module, driver):
+    3:         module = getattr(module, driver)
+    6:         return lambda: module.dialect
+           else:
+>>>>>>         return None
+       
+       
+    1: registry = util.PluginLoader("sqlalchemy.dialects", auto_fn=_auto_fn)
+       
+    1: plugins = util.PluginLoader("sqlalchemy.plugins")

@@ -1,0 +1,186 @@
+    1: from enum import Enum
+    1: from typing import Any, Optional
+       
+    1: from descope.exceptions import ERROR_TYPE_INVALID_ARGUMENT, AuthException
+       
+    1: DEFAULT_URL_PREFIX = "https://api"
+    1: DEFAULT_DOMAIN = "descope.com"
+    1: DEFAULT_BASE_URL = DEFAULT_URL_PREFIX + "." + DEFAULT_DOMAIN  # pragma: no cover
+    1: DEFAULT_TIMEOUT_SECONDS = 60
+       
+    1: PHONE_REGEX = r"""^(?:(?:\(?(?:00|\+)([1-4]\d\d|[1-9]\d?)\)?)?[\-\.\ \\/]?)?((?:\(?\d{1,}\)?[\-\.\ \\/]?){0,})(?:[\-\.\ \\/]?(?:#|ext\.?|extension|x)[\-\.\ \\/]?(\d+))?$"""
+       
+    1: SESSION_COOKIE_NAME = "DS"
+    1: REFRESH_SESSION_COOKIE_NAME = "DSR"
+       
+    1: SESSION_TOKEN_NAME = "sessionToken"
+    1: REFRESH_SESSION_TOKEN_NAME = "refreshSessionToken"
+    1: COOKIE_DATA_NAME = "cookieData"
+       
+    1: REDIRECT_LOCATION_COOKIE_NAME = "Location"
+       
+       
+    2: class EndpointsV1:
+    1:     refresh_token_path = "/v1/auth/refresh"
+    1:     select_tenant_path = "/v1/auth/tenant/select"
+    1:     logout_path = "/v1/auth/logout"
+    1:     logout_all_path = "/v1/auth/logoutall"
+    1:     me_path = "/v1/auth/me"
+    1:     my_tenants_path = "/v1/auth/me/tenants"
+    1:     history_path = "/v1/auth/me/history"
+       
+           # accesskey
+    1:     exchange_auth_access_key_path = "/v1/auth/accesskey/exchange"
+       
+           # otp
+    1:     sign_up_auth_otp_path = "/v1/auth/otp/signup"
+    1:     sign_in_auth_otp_path = "/v1/auth/otp/signin"
+    1:     sign_up_or_in_auth_otp_path = "/v1/auth/otp/signup-in"
+    1:     verify_code_auth_path = "/v1/auth/otp/verify"
+    1:     update_user_email_otp_path = "/v1/auth/otp/update/email"
+    1:     update_user_phone_otp_path = "/v1/auth/otp/update/phone"
+       
+           # magiclink
+    1:     sign_up_auth_magiclink_path = "/v1/auth/magiclink/signup"
+    1:     sign_in_auth_magiclink_path = "/v1/auth/magiclink/signin"
+    1:     sign_up_or_in_auth_magiclink_path = "/v1/auth/magiclink/signup-in"
+    1:     verify_magiclink_auth_path = "/v1/auth/magiclink/verify"
+    1:     get_session_magiclink_auth_path = "/v1/auth/magiclink/pending-session"
+    1:     update_user_email_magiclink_path = "/v1/auth/magiclink/update/email"
+    1:     update_user_phone_magiclink_path = "/v1/auth/magiclink/update/phone"
+       
+           # enchantedlink
+    1:     sign_up_auth_enchantedlink_path = "/v1/auth/enchantedlink/signup"
+    1:     sign_in_auth_enchantedlink_path = "/v1/auth/enchantedlink/signin"
+    1:     sign_up_or_in_auth_enchantedlink_path = "/v1/auth/enchantedlink/signup-in"
+    1:     verify_enchantedlink_auth_path = "/v1/auth/enchantedlink/verify"
+    1:     get_session_enchantedlink_auth_path = "/v1/auth/enchantedlink/pending-session"
+    1:     update_user_email_enchantedlink_path = "/v1/auth/enchantedlink/update/email"
+       
+           # oauth
+    1:     oauth_start_path = "/v1/auth/oauth/authorize"
+    1:     oauth_exchange_token_path = "/v1/auth/oauth/exchange"
+       
+           # #### DEPRECATED
+           # saml
+    1:     auth_saml_start_path = "/v1/auth/saml/authorize"
+    1:     saml_exchange_token_path = "/v1/auth/saml/exchange"
+           #################
+       
+           # sso (saml/oidc)
+    1:     auth_sso_start_path = "/v1/auth/sso/authorize"
+    1:     sso_exchange_token_path = "/v1/auth/sso/exchange"
+       
+           # totp
+    1:     sign_up_auth_totp_path = "/v1/auth/totp/signup"
+    1:     verify_totp_path = "/v1/auth/totp/verify"
+    1:     update_totp_path = "/v1/auth/totp/update"
+       
+           # webauthn
+    1:     sign_up_auth_webauthn_start_path = "/v1/auth/webauthn/signup/start"
+    1:     sign_up_auth_webauthn_finish_path = "/v1/auth/webauthn/signup/finish"
+    1:     sign_in_auth_webauthn_start_path = "/v1/auth/webauthn/signin/start"
+    1:     sign_in_auth_webauthn_finish_path = "/v1/auth/webauthn/signin/finish"
+    1:     sign_up_or_in_auth_webauthn_start_path = "/v1/auth/webauthn/signup-in/start"
+    1:     update_auth_webauthn_start_path = "/v1/auth/webauthn/update/start"
+    1:     update_auth_webauthn_finish_path = "/v1/auth/webauthn/update/finish"
+       
+           # password
+    1:     sign_up_password_path = "/v1/auth/password/signup"
+    1:     sign_in_password_path = "/v1/auth/password/signin"
+    1:     send_reset_password_path = "/v1/auth/password/reset"
+    1:     update_password_path = "/v1/auth/password/update"
+    1:     replace_password_path = "/v1/auth/password/replace"
+    1:     password_policy_path = "/v1/auth/password/policy"
+       
+       
+    2: class EndpointsV2:
+    1:     public_key_path = "/v2/keys"
+       
+       
+    2: class DeliveryMethod(Enum):
+    1:     WHATSAPP = 1
+    1:     SMS = 2
+    1:     EMAIL = 3
+    1:     EMBEDDED = 4
+    1:     VOICE = 5
+       
+       
+    2: class LoginOptions:
+    2:     def __init__(
+               self,
+    1:         stepup: bool = False,
+    1:         mfa: bool = False,
+    1:         revoke_other_sessions: Optional[bool] = None,
+    1:         custom_claims: Optional[dict] = None,
+    2:         template_options: Optional[
+    1:             dict
+               ] = None,  # for providing messaging template options (templates that are being sent via email / text message)
+    2:         template_id: Optional[
+    1:             str
+               ] = None,  # for overriding the default template (templates that are being sent via email / text message)
+           ):
+>>>>>>         self.stepup = stepup
+>>>>>>         self.customClaims = custom_claims
+>>>>>>         self.mfa = mfa
+>>>>>>         if revoke_other_sessions is not None:
+>>>>>>             self.revokeOtherSessions = revoke_other_sessions
+>>>>>>         if template_options is not None:
+>>>>>>             self.templateOptions = template_options
+>>>>>>         if template_id is not None:
+>>>>>>             self.templateId = template_id
+       
+       
+    2: class AccessKeyLoginOptions:
+    2:     def __init__(
+               self,
+    1:         custom_claims: Optional[dict] = None,
+           ):
+>>>>>>         self.customClaims = custom_claims
+       
+       
+    2: def validate_refresh_token_provided(
+    1:     login_options: Optional[LoginOptions] = None, refresh_token: Optional[str] = None
+       ):
+>>>>>>     refresh_required = login_options is not None and (
+>>>>>>         login_options.mfa or login_options.stepup
+           )
+>>>>>>     refresh_missing = refresh_token is None or refresh_token == ""
+>>>>>>     if refresh_required and refresh_missing:
+>>>>>>         raise AuthException(
+>>>>>>             400,
+>>>>>>             ERROR_TYPE_INVALID_ARGUMENT,
+>>>>>>             "Missing refresh token for stepup/mfa",
+               )
+       
+       
+    2: class SignUpOptions:
+    2:     def __init__(
+               self,
+    1:         revoke_other_sessions: Optional[bool] = None,
+    1:         custom_claims: Optional[dict] = None,
+    2:         template_options: Optional[
+    1:             dict
+               ] = None,  # for providing messaging template options (templates that are being sent via email / text message)
+    2:         template_id: Optional[
+    1:             str
+               ] = None,  # for overriding the default template (templates that are being sent via email / text message)
+           ):
+>>>>>>         self.revokeOtherSessions = revoke_other_sessions
+>>>>>>         self.customClaims = custom_claims
+>>>>>>         self.templateOptions = template_options
+>>>>>>         self.templateId = template_id
+       
+       
+    1: def signup_options_to_dict(signup_options: Optional[SignUpOptions] = None) -> dict:
+>>>>>>     res: dict[str, Any] = {}
+>>>>>>     if signup_options is not None:
+>>>>>>         if signup_options.customClaims is not None:
+>>>>>>             res["customClaims"] = signup_options.customClaims
+>>>>>>         if signup_options.templateId is not None:
+>>>>>>             res["templateId"] = signup_options.templateId
+>>>>>>         if signup_options.templateOptions is not None:
+>>>>>>             res["templateOptions"] = signup_options.templateOptions
+>>>>>>         if signup_options.revokeOtherSessions is not None:
+>>>>>>             res["revokeOtherSessions"] = signup_options.revokeOtherSessions
+>>>>>>     return res

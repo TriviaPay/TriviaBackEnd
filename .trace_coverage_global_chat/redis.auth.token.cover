@@ -1,0 +1,130 @@
+    1: from abc import ABC, abstractmethod
+    1: from datetime import datetime, timezone
+       
+    1: from redis.auth.err import InvalidTokenSchemaErr
+       
+       
+    2: class TokenInterface(ABC):
+    1:     @abstractmethod
+    1:     def is_expired(self) -> bool:
+>>>>>>         pass
+       
+    1:     @abstractmethod
+    1:     def ttl(self) -> float:
+>>>>>>         pass
+       
+    1:     @abstractmethod
+    1:     def try_get(self, key: str) -> str:
+>>>>>>         pass
+       
+    1:     @abstractmethod
+    1:     def get_value(self) -> str:
+>>>>>>         pass
+       
+    1:     @abstractmethod
+    1:     def get_expires_at_ms(self) -> float:
+>>>>>>         pass
+       
+    1:     @abstractmethod
+    1:     def get_received_at_ms(self) -> float:
+>>>>>>         pass
+       
+       
+    2: class TokenResponse:
+    1:     def __init__(self, token: TokenInterface):
+>>>>>>         self._token = token
+       
+    1:     def get_token(self) -> TokenInterface:
+>>>>>>         return self._token
+       
+    1:     def get_ttl_ms(self) -> float:
+>>>>>>         return self._token.get_expires_at_ms() - self._token.get_received_at_ms()
+       
+       
+    2: class SimpleToken(TokenInterface):
+    1:     def __init__(
+    1:         self, value: str, expires_at_ms: float, received_at_ms: float, claims: dict
+    1:     ) -> None:
+>>>>>>         self.value = value
+>>>>>>         self.expires_at = expires_at_ms
+>>>>>>         self.received_at = received_at_ms
+>>>>>>         self.claims = claims
+       
+    1:     def ttl(self) -> float:
+>>>>>>         if self.expires_at == -1:
+>>>>>>             return -1
+       
+>>>>>>         return self.expires_at - (datetime.now(timezone.utc).timestamp() * 1000)
+       
+    1:     def is_expired(self) -> bool:
+>>>>>>         if self.expires_at == -1:
+>>>>>>             return False
+       
+>>>>>>         return self.ttl() <= 0
+       
+    1:     def try_get(self, key: str) -> str:
+>>>>>>         return self.claims.get(key)
+       
+    1:     def get_value(self) -> str:
+>>>>>>         return self.value
+       
+    1:     def get_expires_at_ms(self) -> float:
+>>>>>>         return self.expires_at
+       
+    1:     def get_received_at_ms(self) -> float:
+>>>>>>         return self.received_at
+       
+       
+    2: class JWToken(TokenInterface):
+    1:     REQUIRED_FIELDS = {"exp"}
+       
+    1:     def __init__(self, token: str):
+>>>>>>         try:
+>>>>>>             import jwt
+>>>>>>         except ImportError as ie:
+>>>>>>             raise ImportError(
+>>>>>>                 f"The PyJWT library is required for {self.__class__.__name__}.",
+>>>>>>             ) from ie
+>>>>>>         self._value = token
+>>>>>>         self._decoded = jwt.decode(
+>>>>>>             self._value,
+>>>>>>             options={"verify_signature": False},
+>>>>>>             algorithms=[jwt.get_unverified_header(self._value).get("alg")],
+               )
+>>>>>>         self._validate_token()
+       
+    1:     def is_expired(self) -> bool:
+>>>>>>         exp = self._decoded["exp"]
+>>>>>>         if exp == -1:
+>>>>>>             return False
+       
+>>>>>>         return (
+>>>>>>             self._decoded["exp"] * 1000 <= datetime.now(timezone.utc).timestamp() * 1000
+               )
+       
+    1:     def ttl(self) -> float:
+>>>>>>         exp = self._decoded["exp"]
+>>>>>>         if exp == -1:
+>>>>>>             return -1
+       
+>>>>>>         return (
+>>>>>>             self._decoded["exp"] * 1000 - datetime.now(timezone.utc).timestamp() * 1000
+               )
+       
+    1:     def try_get(self, key: str) -> str:
+>>>>>>         return self._decoded.get(key)
+       
+    1:     def get_value(self) -> str:
+>>>>>>         return self._value
+       
+    1:     def get_expires_at_ms(self) -> float:
+>>>>>>         return float(self._decoded["exp"] * 1000)
+       
+    1:     def get_received_at_ms(self) -> float:
+>>>>>>         return datetime.now(timezone.utc).timestamp() * 1000
+       
+    1:     def _validate_token(self):
+>>>>>>         actual_fields = {x for x in self._decoded.keys()}
+       
+>>>>>>         if len(self.REQUIRED_FIELDS - actual_fields) != 0:
+>>>>>>             raise InvalidTokenSchemaErr(self.REQUIRED_FIELDS - actual_fields)

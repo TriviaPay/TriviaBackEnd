@@ -1,0 +1,281 @@
+       # This file is dual licensed under the terms of the Apache License, Version
+       # 2.0, and the BSD License. See the LICENSE file in the root of this repository
+       # for complete details.
+       
+    1: from __future__ import annotations
+       
+    1: import abc
+    1: import ipaddress
+    1: import typing
+    1: from email.utils import parseaddr
+       
+    1: from cryptography.x509.name import Name
+    1: from cryptography.x509.oid import ObjectIdentifier
+       
+    2: _IPAddressTypes = typing.Union[
+    2:     ipaddress.IPv4Address,
+    1:     ipaddress.IPv6Address,
+    1:     ipaddress.IPv4Network,
+    1:     ipaddress.IPv6Network,
+       ]
+       
+       
+    2: class UnsupportedGeneralNameType(Exception):
+    1:     pass
+       
+       
+    2: class GeneralName(metaclass=abc.ABCMeta):
+    1:     @property
+    1:     @abc.abstractmethod
+    1:     def value(self) -> typing.Any:
+               """
+               Return the value of the object
+               """
+       
+       
+    2: class RFC822Name(GeneralName):
+    1:     def __init__(self, value: str) -> None:
+>>>>>>         if isinstance(value, str):
+>>>>>>             try:
+>>>>>>                 value.encode("ascii")
+>>>>>>             except UnicodeEncodeError:
+>>>>>>                 raise ValueError(
+>>>>>>                     "RFC822Name values should be passed as an A-label string. "
+                           "This means unicode characters should be encoded via "
+                           "a library like idna."
+                       )
+               else:
+>>>>>>             raise TypeError("value must be string")
+       
+>>>>>>         name, address = parseaddr(value)
+>>>>>>         if name or not address:
+                   # parseaddr has found a name (e.g. Name <email>) or the entire
+                   # value is an empty string.
+>>>>>>             raise ValueError("Invalid rfc822name value")
+       
+>>>>>>         self._value = value
+       
+    1:     @property
+    1:     def value(self) -> str:
+>>>>>>         return self._value
+       
+    1:     @classmethod
+    1:     def _init_without_validation(cls, value: str) -> RFC822Name:
+>>>>>>         instance = cls.__new__(cls)
+>>>>>>         instance._value = value
+>>>>>>         return instance
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<RFC822Name(value={self.value!r})>"
+       
+    1:     def __eq__(self, other: object) -> bool:
+>>>>>>         if not isinstance(other, RFC822Name):
+>>>>>>             return NotImplemented
+       
+>>>>>>         return self.value == other.value
+       
+    1:     def __hash__(self) -> int:
+>>>>>>         return hash(self.value)
+       
+       
+    2: class DNSName(GeneralName):
+    1:     def __init__(self, value: str) -> None:
+>>>>>>         if isinstance(value, str):
+>>>>>>             try:
+>>>>>>                 value.encode("ascii")
+>>>>>>             except UnicodeEncodeError:
+>>>>>>                 raise ValueError(
+>>>>>>                     "DNSName values should be passed as an A-label string. "
+                           "This means unicode characters should be encoded via "
+                           "a library like idna."
+                       )
+               else:
+>>>>>>             raise TypeError("value must be string")
+       
+>>>>>>         self._value = value
+       
+    1:     @property
+    1:     def value(self) -> str:
+>>>>>>         return self._value
+       
+    1:     @classmethod
+    1:     def _init_without_validation(cls, value: str) -> DNSName:
+>>>>>>         instance = cls.__new__(cls)
+>>>>>>         instance._value = value
+>>>>>>         return instance
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<DNSName(value={self.value!r})>"
+       
+    1:     def __eq__(self, other: object) -> bool:
+>>>>>>         if not isinstance(other, DNSName):
+>>>>>>             return NotImplemented
+       
+>>>>>>         return self.value == other.value
+       
+    1:     def __hash__(self) -> int:
+>>>>>>         return hash(self.value)
+       
+       
+    2: class UniformResourceIdentifier(GeneralName):
+    1:     def __init__(self, value: str) -> None:
+>>>>>>         if isinstance(value, str):
+>>>>>>             try:
+>>>>>>                 value.encode("ascii")
+>>>>>>             except UnicodeEncodeError:
+>>>>>>                 raise ValueError(
+>>>>>>                     "URI values should be passed as an A-label string. "
+                           "This means unicode characters should be encoded via "
+                           "a library like idna."
+                       )
+               else:
+>>>>>>             raise TypeError("value must be string")
+       
+>>>>>>         self._value = value
+       
+    1:     @property
+    1:     def value(self) -> str:
+>>>>>>         return self._value
+       
+    1:     @classmethod
+    1:     def _init_without_validation(cls, value: str) -> UniformResourceIdentifier:
+>>>>>>         instance = cls.__new__(cls)
+>>>>>>         instance._value = value
+>>>>>>         return instance
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<UniformResourceIdentifier(value={self.value!r})>"
+       
+    1:     def __eq__(self, other: object) -> bool:
+>>>>>>         if not isinstance(other, UniformResourceIdentifier):
+>>>>>>             return NotImplemented
+       
+>>>>>>         return self.value == other.value
+       
+    1:     def __hash__(self) -> int:
+>>>>>>         return hash(self.value)
+       
+       
+    2: class DirectoryName(GeneralName):
+    1:     def __init__(self, value: Name) -> None:
+>>>>>>         if not isinstance(value, Name):
+>>>>>>             raise TypeError("value must be a Name")
+       
+>>>>>>         self._value = value
+       
+    1:     @property
+    1:     def value(self) -> Name:
+>>>>>>         return self._value
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<DirectoryName(value={self.value})>"
+       
+    1:     def __eq__(self, other: object) -> bool:
+>>>>>>         if not isinstance(other, DirectoryName):
+>>>>>>             return NotImplemented
+       
+>>>>>>         return self.value == other.value
+       
+    1:     def __hash__(self) -> int:
+>>>>>>         return hash(self.value)
+       
+       
+    2: class RegisteredID(GeneralName):
+    1:     def __init__(self, value: ObjectIdentifier) -> None:
+>>>>>>         if not isinstance(value, ObjectIdentifier):
+>>>>>>             raise TypeError("value must be an ObjectIdentifier")
+       
+>>>>>>         self._value = value
+       
+    1:     @property
+    1:     def value(self) -> ObjectIdentifier:
+>>>>>>         return self._value
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<RegisteredID(value={self.value})>"
+       
+    1:     def __eq__(self, other: object) -> bool:
+>>>>>>         if not isinstance(other, RegisteredID):
+>>>>>>             return NotImplemented
+       
+>>>>>>         return self.value == other.value
+       
+    1:     def __hash__(self) -> int:
+>>>>>>         return hash(self.value)
+       
+       
+    2: class IPAddress(GeneralName):
+    1:     def __init__(self, value: _IPAddressTypes) -> None:
+>>>>>>         if not isinstance(
+>>>>>>             value,
+>>>>>>             (
+>>>>>>                 ipaddress.IPv4Address,
+>>>>>>                 ipaddress.IPv6Address,
+>>>>>>                 ipaddress.IPv4Network,
+>>>>>>                 ipaddress.IPv6Network,
+                   ),
+               ):
+>>>>>>             raise TypeError(
+>>>>>>                 "value must be an instance of ipaddress.IPv4Address, "
+                       "ipaddress.IPv6Address, ipaddress.IPv4Network, or "
+                       "ipaddress.IPv6Network"
+                   )
+       
+>>>>>>         self._value = value
+       
+    1:     @property
+    1:     def value(self) -> _IPAddressTypes:
+>>>>>>         return self._value
+       
+    1:     def _packed(self) -> bytes:
+>>>>>>         if isinstance(
+>>>>>>             self.value, (ipaddress.IPv4Address, ipaddress.IPv6Address)
+               ):
+>>>>>>             return self.value.packed
+               else:
+>>>>>>             return (
+>>>>>>                 self.value.network_address.packed + self.value.netmask.packed
+                   )
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<IPAddress(value={self.value})>"
+       
+    1:     def __eq__(self, other: object) -> bool:
+>>>>>>         if not isinstance(other, IPAddress):
+>>>>>>             return NotImplemented
+       
+>>>>>>         return self.value == other.value
+       
+    1:     def __hash__(self) -> int:
+>>>>>>         return hash(self.value)
+       
+       
+    2: class OtherName(GeneralName):
+    1:     def __init__(self, type_id: ObjectIdentifier, value: bytes) -> None:
+>>>>>>         if not isinstance(type_id, ObjectIdentifier):
+>>>>>>             raise TypeError("type_id must be an ObjectIdentifier")
+>>>>>>         if not isinstance(value, bytes):
+>>>>>>             raise TypeError("value must be a binary string")
+       
+>>>>>>         self._type_id = type_id
+>>>>>>         self._value = value
+       
+    1:     @property
+    1:     def type_id(self) -> ObjectIdentifier:
+>>>>>>         return self._type_id
+       
+    1:     @property
+    1:     def value(self) -> bytes:
+>>>>>>         return self._value
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<OtherName(type_id={self.type_id}, value={self.value!r})>"
+       
+    1:     def __eq__(self, other: object) -> bool:
+>>>>>>         if not isinstance(other, OtherName):
+>>>>>>             return NotImplemented
+       
+>>>>>>         return self.type_id == other.type_id and self.value == other.value
+       
+    1:     def __hash__(self) -> int:
+>>>>>>         return hash((self.type_id, self.value))

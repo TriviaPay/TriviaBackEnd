@@ -1,0 +1,1209 @@
+    1: import datetime
+    1: import email.message
+    1: import json as jsonlib
+    1: import typing
+    1: import urllib.request
+    1: from collections.abc import Mapping
+    1: from http.cookiejar import Cookie, CookieJar
+       
+    1: from ._content import ByteStream, UnattachedStream, encode_request, encode_response
+    1: from ._decoders import (
+           SUPPORTED_DECODERS,
+           ByteChunker,
+           ContentDecoder,
+           IdentityDecoder,
+           LineDecoder,
+           MultiDecoder,
+           TextChunker,
+           TextDecoder,
+       )
+    1: from ._exceptions import (
+           CookieConflict,
+           HTTPStatusError,
+           RequestNotRead,
+           ResponseNotRead,
+           StreamClosed,
+           StreamConsumed,
+           request_context,
+       )
+    1: from ._multipart import get_multipart_boundary_from_content_type
+    1: from ._status_codes import codes
+    1: from ._types import (
+           AsyncByteStream,
+           CookieTypes,
+           HeaderTypes,
+           QueryParamTypes,
+           RequestContent,
+           RequestData,
+           RequestExtensions,
+           RequestFiles,
+           ResponseContent,
+           ResponseExtensions,
+           SyncByteStream,
+       )
+    1: from ._urls import URL
+    1: from ._utils import (
+           guess_json_utf,
+           is_known_encoding,
+           normalize_header_key,
+           normalize_header_value,
+           obfuscate_sensitive_headers,
+           parse_content_type_charset,
+           parse_header_links,
+       )
+       
+       
+    2: class Headers(typing.MutableMapping[str, str]):
+    1:     """
+           HTTP headers, as a case-insensitive multi-dict.
+           """
+       
+    2:     def __init__(
+               self,
+    1:         headers: typing.Optional[HeaderTypes] = None,
+    1:         encoding: typing.Optional[str] = None,
+    1:     ) -> None:
+  133:         if headers is None:
+   17:             self._list = []  # type: typing.List[typing.Tuple[bytes, bytes, bytes]]
+  116:         elif isinstance(headers, Headers):
+   50:             self._list = list(headers._list)
+   66:         elif isinstance(headers, Mapping):
+  176:             self._list = [
+   80:                 (
+   80:                     normalize_header_key(k, lower=False, encoding=encoding),
+   80:                     normalize_header_key(k, lower=True, encoding=encoding),
+   80:                     normalize_header_value(v, encoding),
+                       )
+  112:                 for k, v in headers.items()
+                   ]
+               else:
+  253:             self._list = [
+  151:                 (
+  151:                     normalize_header_key(k, lower=False, encoding=encoding),
+  151:                     normalize_header_key(k, lower=True, encoding=encoding),
+  151:                     normalize_header_value(v, encoding),
+                       )
+  185:                 for k, v in headers
+                   ]
+       
+  133:         self._encoding = encoding
+       
+    1:     @property
+    1:     def encoding(self) -> str:
+               """
+               Header encoding is mandated as ascii, but we allow fallbacks to utf-8
+               or iso-8859-1.
+               """
+  929:         if self._encoding is None:
+   83:             for encoding in ["ascii", "utf-8"]:
+  382:                 for key, value in self.raw:
+  299:                     try:
+  299:                         key.decode(encoding)
+  299:                         value.decode(encoding)
+>>>>>>                     except UnicodeDecodeError:
+>>>>>>                         break
+                       else:
+                           # The else block runs if 'break' did not occur, meaning
+                           # all values fitted the encoding.
+   83:                     self._encoding = encoding
+   83:                     break
+                   else:
+                       # The ISO-8859-1 encoding covers all 256 code points in a byte,
+                       # so will never raise decode errors.
+>>>>>>                 self._encoding = "iso-8859-1"
+  929:         return self._encoding
+       
+    1:     @encoding.setter
+    1:     def encoding(self, value: str) -> None:
+>>>>>>         self._encoding = value
+       
+    1:     @property
+    1:     def raw(self) -> typing.List[typing.Tuple[bytes, bytes]]:
+               """
+               Returns a list of the raw header items, as byte pairs.
+               """
+  591:         return [(raw_key, value) for raw_key, _, value in self._list]
+       
+    1:     def keys(self) -> typing.KeysView[str]:
+  225:         return {key.decode(self.encoding): None for _, key, value in self._list}.keys()
+       
+    1:     def values(self) -> typing.ValuesView[str]:
+>>>>>>         values_dict: typing.Dict[str, str] = {}
+>>>>>>         for _, key, value in self._list:
+>>>>>>             str_key = key.decode(self.encoding)
+>>>>>>             str_value = value.decode(self.encoding)
+>>>>>>             if str_key in values_dict:
+>>>>>>                 values_dict[str_key] += f", {str_value}"
+                   else:
+>>>>>>                 values_dict[str_key] = str_value
+>>>>>>         return values_dict.values()
+       
+    1:     def items(self) -> typing.ItemsView[str, str]:
+               """
+               Return `(key, value)` items of headers. Concatenate headers
+               into a single comma separated value when a key occurs multiple times.
+               """
+>>>>>>         values_dict: typing.Dict[str, str] = {}
+>>>>>>         for _, key, value in self._list:
+>>>>>>             str_key = key.decode(self.encoding)
+>>>>>>             str_value = value.decode(self.encoding)
+>>>>>>             if str_key in values_dict:
+>>>>>>                 values_dict[str_key] += f", {str_value}"
+                   else:
+>>>>>>                 values_dict[str_key] = str_value
+>>>>>>         return values_dict.items()
+       
+    1:     def multi_items(self) -> typing.List[typing.Tuple[str, str]]:
+               """
+               Return a list of `(key, value)` pairs of headers. Allow multiple
+               occurrences of the same key without concatenating into a single
+               comma separated value.
+               """
+  346:         return [
+  193:             (key.decode(self.encoding), value.decode(self.encoding))
+  244:             for _, key, value in self._list
+               ]
+       
+    1:     def get(self, key: str, default: typing.Any = None) -> typing.Any:
+               """
+               Return a header value. If multiple occurrences of the header occur
+               then concatenate them together with commas.
+               """
+   28:         try:
+   28:             return self[key]
+   17:         except KeyError:
+   17:             return default
+       
+    1:     def get_list(self, key: str, split_commas: bool = False) -> typing.List[str]:
+               """
+               Return a list of all header values for a given key.
+               If `split_commas=True` is passed, then any comma separated header
+               values are split into multiple return strings.
+               """
+   17:         get_header_key = key.lower().encode(self.encoding)
+       
+   93:         values = [
+>>>>>>             item_value.decode(self.encoding)
+   59:             for _, item_key, item_value in self._list
+   42:             if item_key.lower() == get_header_key
+               ]
+       
+   17:         if not split_commas:
+>>>>>>             return values
+       
+   17:         split_values = []
+   17:         for value in values:
+>>>>>>             split_values.extend([item.strip() for item in value.split(",")])
+   17:         return split_values
+       
+    1:     def update(self, headers: typing.Optional[HeaderTypes] = None) -> None:  # type: ignore
+   33:         headers = Headers(headers)
+   49:         for key in headers.keys():
+   16:             if key in self:
+   16:                 self.pop(key)
+   33:         self._list.extend(headers._list)
+       
+    1:     def copy(self) -> "Headers":
+>>>>>>         return Headers(self, encoding=self.encoding)
+       
+    1:     def __getitem__(self, key: str) -> str:
+               """
+               Return a single header value.
+       
+               If there are multiple headers with the same key, then we concatenate
+               them with commas. See: https://tools.ietf.org/html/rfc7230#section-3.2.2
+               """
+  177:         normalized_key = key.lower().encode(self.encoding)
+       
+ 1514:         items = [
+  136:             header_value.decode(self.encoding)
+ 1160:             for _, header_key, header_value in self._list
+  983:             if header_key == normalized_key
+               ]
+       
+  177:         if items:
+  136:             return ", ".join(items)
+       
+   41:         raise KeyError(key)
+       
+    1:     def __setitem__(self, key: str, value: str) -> None:
+               """
+               Set the header `key` to `value`, removing any duplicate entries.
+               Retains insertion order.
+               """
+   24:         set_key = key.encode(self._encoding or "utf-8")
+   24:         set_value = value.encode(self._encoding or "utf-8")
+   24:         lookup_key = set_key.lower()
+       
+  180:         found_indexes = [
+>>>>>>             idx
+  132:             for idx, (_, item_key, _) in enumerate(self._list)
+  108:             if item_key == lookup_key
+               ]
+       
+   24:         for idx in reversed(found_indexes[1:]):
+>>>>>>             del self._list[idx]
+       
+   24:         if found_indexes:
+>>>>>>             idx = found_indexes[0]
+>>>>>>             self._list[idx] = (set_key, lookup_key, set_value)
+               else:
+   24:             self._list.append((set_key, lookup_key, set_value))
+       
+    1:     def __delitem__(self, key: str) -> None:
+               """
+               Remove the header `key`.
+               """
+   16:         del_key = key.lower().encode(self.encoding)
+       
+  112:         pop_indexes = [
+   16:             idx
+   80:             for idx, (_, item_key, _) in enumerate(self._list)
+   64:             if item_key.lower() == del_key
+               ]
+       
+   16:         if not pop_indexes:
+>>>>>>             raise KeyError(key)
+       
+   32:         for idx in reversed(pop_indexes):
+   16:             del self._list[idx]
+       
+    1:     def __contains__(self, key: typing.Any) -> bool:
+   72:         header_key = key.lower().encode(self.encoding)
+  521:         return header_key in [key for _, key, _ in self._list]
+       
+    1:     def __iter__(self) -> typing.Iterator[typing.Any]:
+>>>>>>         return iter(self.keys())
+       
+    1:     def __len__(self) -> int:
+>>>>>>         return len(self._list)
+       
+    1:     def __eq__(self, other: typing.Any) -> bool:
+>>>>>>         try:
+>>>>>>             other_headers = Headers(other)
+>>>>>>         except ValueError:
+>>>>>>             return False
+       
+>>>>>>         self_list = [(key, value) for _, key, value in self._list]
+>>>>>>         other_list = [(key, value) for _, key, value in other_headers._list]
+>>>>>>         return sorted(self_list) == sorted(other_list)
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         class_name = self.__class__.__name__
+       
+>>>>>>         encoding_str = ""
+>>>>>>         if self.encoding != "ascii":
+>>>>>>             encoding_str = f", encoding={self.encoding!r}"
+       
+>>>>>>         as_list = list(obfuscate_sensitive_headers(self.multi_items()))
+>>>>>>         as_dict = dict(as_list)
+       
+>>>>>>         no_duplicate_keys = len(as_dict) == len(as_list)
+>>>>>>         if no_duplicate_keys:
+>>>>>>             return f"{class_name}({as_dict!r}{encoding_str})"
+>>>>>>         return f"{class_name}({as_list!r}{encoding_str})"
+       
+       
+    2: class Request:
+    2:     def __init__(
+               self,
+    1:         method: typing.Union[str, bytes],
+    1:         url: typing.Union["URL", str],
+               *,
+    2:         params: typing.Optional[QueryParamTypes] = None,
+    2:         headers: typing.Optional[HeaderTypes] = None,
+    2:         cookies: typing.Optional[CookieTypes] = None,
+    2:         content: typing.Optional[RequestContent] = None,
+    2:         data: typing.Optional[RequestData] = None,
+    2:         files: typing.Optional[RequestFiles] = None,
+    2:         json: typing.Optional[typing.Any] = None,
+    2:         stream: typing.Union[SyncByteStream, AsyncByteStream, None] = None,
+    2:         extensions: typing.Optional[RequestExtensions] = None,
+           ):
+   17:         self.method = (
+   17:             method.decode("ascii").upper()
+   17:             if isinstance(method, bytes)
+   17:             else method.upper()
+               )
+   17:         self.url = URL(url)
+   17:         if params is not None:
+>>>>>>             self.url = self.url.copy_merge_params(params=params)
+   17:         self.headers = Headers(headers)
+   17:         self.extensions = {} if extensions is None else extensions
+       
+   17:         if cookies:
+>>>>>>             Cookies(cookies).set_cookie_header(self)
+       
+   17:         if stream is None:
+   17:             content_type: typing.Optional[str] = self.headers.get("content-type")
+   34:             headers, stream = encode_request(
+   17:                 content=content,
+   17:                 data=data,
+   17:                 files=files,
+   17:                 json=json,
+   34:                 boundary=get_multipart_boundary_from_content_type(
+   17:                     content_type=content_type.encode(self.headers.encoding)
+   17:                     if content_type
+   17:                     else None
+                       ),
+                   )
+   17:             self._prepare(headers)
+   17:             self.stream = stream
+                   # Load the request body, except for streaming content.
+   17:             if isinstance(stream, ByteStream):
+   17:                 self.read()
+               else:
+                   # There's an important distinction between `Request(content=...)`,
+                   # and `Request(stream=...)`.
+                   #
+                   # Using `content=...` implies automatically populated `Host` and content
+                   # headers, of either `Content-Length: ...` or `Transfer-Encoding: chunked`.
+                   #
+                   # Using `stream=...` will not automatically include *any* auto-populated headers.
+                   #
+                   # As an end-user you don't really need `stream=...`. It's only
+                   # useful when:
+                   #
+                   # * Preserving the request stream when copying requests, eg for redirects.
+                   # * Creating request instances on the *server-side* of the transport API.
+>>>>>>             self.stream = stream
+       
+    1:     def _prepare(self, default_headers: typing.Dict[str, str]) -> None:
+   41:         for key, value in default_headers.items():
+                   # Ignore Transfer-Encoding if the Content-Length has been set explicitly.
+   24:             if key.lower() == "transfer-encoding" and "Content-Length" in self.headers:
+>>>>>>                 continue
+   24:             self.headers.setdefault(key, value)
+       
+   17:         auto_headers: typing.List[typing.Tuple[bytes, bytes]] = []
+       
+   17:         has_host = "Host" in self.headers
+   17:         has_content_length = (
+   17:             "Content-Length" in self.headers or "Transfer-Encoding" in self.headers
+               )
+       
+   17:         if not has_host and self.url.host:
+   17:             auto_headers.append((b"Host", self.url.netloc))
+   17:         if not has_content_length and self.method in ("POST", "PUT", "PATCH"):
+>>>>>>             auto_headers.append((b"Content-Length", b"0"))
+       
+   17:         self.headers = Headers(auto_headers + self.headers.raw)
+       
+    1:     @property
+    1:     def content(self) -> bytes:
+>>>>>>         if not hasattr(self, "_content"):
+>>>>>>             raise RequestNotRead()
+>>>>>>         return self._content
+       
+    1:     def read(self) -> bytes:
+               """
+               Read and return the request content.
+               """
+   29:         if not hasattr(self, "_content"):
+   17:             assert isinstance(self.stream, typing.Iterable)
+   17:             self._content = b"".join(self.stream)
+   17:             if not isinstance(self.stream, ByteStream):
+                       # If a streaming request has been read entirely into memory, then
+                       # we can replace the stream with a raw bytes implementation,
+                       # to ensure that any non-replayable streams can still be used.
+>>>>>>                 self.stream = ByteStream(self._content)
+   29:         return self._content
+       
+    1:     async def aread(self) -> bytes:
+               """
+               Read and return the request content.
+               """
+>>>>>>         if not hasattr(self, "_content"):
+>>>>>>             assert isinstance(self.stream, typing.AsyncIterable)
+>>>>>>             self._content = b"".join([part async for part in self.stream])
+>>>>>>             if not isinstance(self.stream, ByteStream):
+                       # If a streaming request has been read entirely into memory, then
+                       # we can replace the stream with a raw bytes implementation,
+                       # to ensure that any non-replayable streams can still be used.
+>>>>>>                 self.stream = ByteStream(self._content)
+>>>>>>         return self._content
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         class_name = self.__class__.__name__
+>>>>>>         url = str(self.url)
+>>>>>>         return f"<{class_name}({self.method!r}, {url!r})>"
+       
+    1:     def __getstate__(self) -> typing.Dict[str, typing.Any]:
+>>>>>>         return {
+>>>>>>             name: value
+>>>>>>             for name, value in self.__dict__.items()
+>>>>>>             if name not in ["extensions", "stream"]
+               }
+       
+    1:     def __setstate__(self, state: typing.Dict[str, typing.Any]) -> None:
+>>>>>>         for name, value in state.items():
+>>>>>>             setattr(self, name, value)
+>>>>>>         self.extensions = {}
+>>>>>>         self.stream = UnattachedStream()
+       
+       
+    2: class Response:
+    2:     def __init__(
+               self,
+    1:         status_code: int,
+               *,
+    2:         headers: typing.Optional[HeaderTypes] = None,
+    2:         content: typing.Optional[ResponseContent] = None,
+    2:         text: typing.Optional[str] = None,
+    2:         html: typing.Optional[str] = None,
+    2:         json: typing.Any = None,
+    2:         stream: typing.Union[SyncByteStream, AsyncByteStream, None] = None,
+    2:         request: typing.Optional[Request] = None,
+    2:         extensions: typing.Optional[ResponseExtensions] = None,
+    2:         history: typing.Optional[typing.List["Response"]] = None,
+    2:         default_encoding: typing.Union[str, typing.Callable[[bytes], str]] = "utf-8",
+           ):
+   17:         self.status_code = status_code
+   17:         self.headers = Headers(headers)
+       
+   17:         self._request: typing.Optional[Request] = request
+       
+               # When follow_redirects=False and a redirect is received,
+               # the client will set `response.next_request`.
+   17:         self.next_request: typing.Optional[Request] = None
+       
+   17:         self.extensions: ResponseExtensions = {} if extensions is None else extensions
+   17:         self.history = [] if history is None else list(history)
+       
+   17:         self.is_closed = False
+   17:         self.is_stream_consumed = False
+       
+   17:         self.default_encoding = default_encoding
+       
+   17:         if stream is None:
+>>>>>>             headers, stream = encode_response(content, text, html, json)
+>>>>>>             self._prepare(headers)
+>>>>>>             self.stream = stream
+>>>>>>             if isinstance(stream, ByteStream):
+                       # Load the response body, except for streaming content.
+>>>>>>                 self.read()
+               else:
+                   # There's an important distinction between `Response(content=...)`,
+                   # and `Response(stream=...)`.
+                   #
+                   # Using `content=...` implies automatically populated content headers,
+                   # of either `Content-Length: ...` or `Transfer-Encoding: chunked`.
+                   #
+                   # Using `stream=...` will not automatically include any content headers.
+                   #
+                   # As an end-user you don't really need `stream=...`. It's only
+                   # useful when creating response instances having received a stream
+                   # from the transport API.
+   17:             self.stream = stream
+       
+   17:         self._num_bytes_downloaded = 0
+       
+    1:     def _prepare(self, default_headers: typing.Dict[str, str]) -> None:
+>>>>>>         for key, value in default_headers.items():
+                   # Ignore Transfer-Encoding if the Content-Length has been set explicitly.
+>>>>>>             if key.lower() == "transfer-encoding" and "content-length" in self.headers:
+>>>>>>                 continue
+>>>>>>             self.headers.setdefault(key, value)
+       
+    1:     @property
+    1:     def elapsed(self) -> datetime.timedelta:
+               """
+               Returns the time taken for the complete request/response
+               cycle to complete.
+               """
+>>>>>>         if not hasattr(self, "_elapsed"):
+>>>>>>             raise RuntimeError(
+>>>>>>                 "'.elapsed' may only be accessed after the response "
+                       "has been read or closed."
+                   )
+>>>>>>         return self._elapsed
+       
+    1:     @elapsed.setter
+    1:     def elapsed(self, elapsed: datetime.timedelta) -> None:
+   17:         self._elapsed = elapsed
+       
+    1:     @property
+    1:     def request(self) -> Request:
+               """
+               Returns the request instance associated to the current response.
+               """
+   17:         if self._request is None:
+>>>>>>             raise RuntimeError(
+>>>>>>                 "The request instance has not been set on this response."
+                   )
+   17:         return self._request
+       
+    1:     @request.setter
+    1:     def request(self, value: Request) -> None:
+   17:         self._request = value
+       
+    1:     @property
+    1:     def http_version(self) -> str:
+   17:         try:
+   17:             http_version: bytes = self.extensions["http_version"]
+   17:         except KeyError:
+   17:             return "HTTP/1.1"
+               else:
+>>>>>>             return http_version.decode("ascii", errors="ignore")
+       
+    1:     @property
+    1:     def reason_phrase(self) -> str:
+   17:         try:
+   17:             reason_phrase: bytes = self.extensions["reason_phrase"]
+   17:         except KeyError:
+   17:             return codes.get_reason_phrase(self.status_code)
+               else:
+>>>>>>             return reason_phrase.decode("ascii", errors="ignore")
+       
+    1:     @property
+    1:     def url(self) -> URL:
+               """
+               Returns the URL for which the request was made.
+               """
+>>>>>>         return self.request.url
+       
+    1:     @property
+    1:     def content(self) -> bytes:
+   40:         if not hasattr(self, "_content"):
+>>>>>>             raise ResponseNotRead()
+   40:         return self._content
+       
+    1:     @property
+    1:     def text(self) -> str:
+>>>>>>         if not hasattr(self, "_text"):
+>>>>>>             content = self.content
+>>>>>>             if not content:
+>>>>>>                 self._text = ""
+                   else:
+>>>>>>                 decoder = TextDecoder(encoding=self.encoding or "utf-8")
+>>>>>>                 self._text = "".join([decoder.decode(self.content), decoder.flush()])
+>>>>>>         return self._text
+       
+    1:     @property
+    1:     def encoding(self) -> typing.Optional[str]:
+               """
+               Return an encoding to use for decoding the byte content into text.
+               The priority for determining this is given by...
+       
+               * `.encoding = <>` has been set explicitly.
+               * The encoding as specified by the charset parameter in the Content-Type header.
+               * The encoding as determined by `default_encoding`, which may either be
+                 a string like "utf-8" indicating the encoding to use, or may be a callable
+                 which enables charset autodetection.
+               """
+>>>>>>         if not hasattr(self, "_encoding"):
+>>>>>>             encoding = self.charset_encoding
+>>>>>>             if encoding is None or not is_known_encoding(encoding):
+>>>>>>                 if isinstance(self.default_encoding, str):
+>>>>>>                     encoding = self.default_encoding
+>>>>>>                 elif hasattr(self, "_content"):
+>>>>>>                     encoding = self.default_encoding(self._content)
+>>>>>>             self._encoding = encoding or "utf-8"
+>>>>>>         return self._encoding
+       
+    1:     @encoding.setter
+    1:     def encoding(self, value: str) -> None:
+>>>>>>         self._encoding = value
+       
+    1:     @property
+    1:     def charset_encoding(self) -> typing.Optional[str]:
+               """
+               Return the encoding, as specified by the Content-Type header.
+               """
+   10:         content_type = self.headers.get("Content-Type")
+   10:         if content_type is None:
+>>>>>>             return None
+       
+   10:         return parse_content_type_charset(content_type)
+       
+    1:     def _get_content_decoder(self) -> ContentDecoder:
+               """
+               Returns a decoder instance which can be used to decode the raw byte
+               content, depending on the Content-Encoding used in the response.
+               """
+   17:         if not hasattr(self, "_decoder"):
+   17:             decoders: typing.List[ContentDecoder] = []
+   17:             values = self.headers.get_list("content-encoding", split_commas=True)
+   17:             for value in values:
+>>>>>>                 value = value.strip().lower()
+>>>>>>                 try:
+>>>>>>                     decoder_cls = SUPPORTED_DECODERS[value]
+>>>>>>                     decoders.append(decoder_cls())
+>>>>>>                 except KeyError:
+>>>>>>                     continue
+       
+   17:             if len(decoders) == 1:
+>>>>>>                 self._decoder = decoders[0]
+   17:             elif len(decoders) > 1:
+>>>>>>                 self._decoder = MultiDecoder(children=decoders)
+                   else:
+   17:                 self._decoder = IdentityDecoder()
+       
+   17:         return self._decoder
+       
+    1:     @property
+    1:     def is_informational(self) -> bool:
+               """
+               A property which is `True` for 1xx status codes, `False` otherwise.
+               """
+>>>>>>         return codes.is_informational(self.status_code)
+       
+    1:     @property
+    1:     def is_success(self) -> bool:
+               """
+               A property which is `True` for 2xx status codes, `False` otherwise.
+               """
+>>>>>>         return codes.is_success(self.status_code)
+       
+    1:     @property
+    1:     def is_redirect(self) -> bool:
+               """
+               A property which is `True` for 3xx status codes, `False` otherwise.
+       
+               Note that not all responses with a 3xx status code indicate a URL redirect.
+       
+               Use `response.has_redirect_location` to determine responses with a properly
+               formed URL redirection.
+               """
+>>>>>>         return codes.is_redirect(self.status_code)
+       
+    1:     @property
+    1:     def is_client_error(self) -> bool:
+               """
+               A property which is `True` for 4xx status codes, `False` otherwise.
+               """
+>>>>>>         return codes.is_client_error(self.status_code)
+       
+    1:     @property
+    1:     def is_server_error(self) -> bool:
+               """
+               A property which is `True` for 5xx status codes, `False` otherwise.
+               """
+>>>>>>         return codes.is_server_error(self.status_code)
+       
+    1:     @property
+    1:     def is_error(self) -> bool:
+               """
+               A property which is `True` for 4xx and 5xx status codes, `False` otherwise.
+               """
+>>>>>>         return codes.is_error(self.status_code)
+       
+    1:     @property
+    1:     def has_redirect_location(self) -> bool:
+               """
+               Returns True for 3xx responses with a properly formed URL redirection,
+               `False` otherwise.
+               """
+   17:         return (
+   34:             self.status_code
+   17:             in (
+                       # 301 (Cacheable redirect. Method may change to GET.)
+   17:                 codes.MOVED_PERMANENTLY,
+                       # 302 (Uncacheable redirect. Method may change to GET.)
+   17:                 codes.FOUND,
+                       # 303 (Client should make a GET or HEAD request.)
+   17:                 codes.SEE_OTHER,
+                       # 307 (Equiv. 302, but retain method)
+   17:                 codes.TEMPORARY_REDIRECT,
+                       # 308 (Equiv. 301, but retain method)
+   17:                 codes.PERMANENT_REDIRECT,
+                   )
+>>>>>>             and "Location" in self.headers
+               )
+       
+    1:     def raise_for_status(self) -> "Response":
+               """
+               Raise the `HTTPStatusError` if one occurred.
+               """
+>>>>>>         request = self._request
+>>>>>>         if request is None:
+>>>>>>             raise RuntimeError(
+>>>>>>                 "Cannot call `raise_for_status` as the request "
+                       "instance has not been set on this response."
+                   )
+       
+>>>>>>         if self.is_success:
+>>>>>>             return self
+       
+>>>>>>         if self.has_redirect_location:
+>>>>>>             message = (
+>>>>>>                 "{error_type} '{0.status_code} {0.reason_phrase}' for url '{0.url}'\n"
+                       "Redirect location: '{0.headers[location]}'\n"
+                       "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{0.status_code}"
+                   )
+               else:
+>>>>>>             message = (
+>>>>>>                 "{error_type} '{0.status_code} {0.reason_phrase}' for url '{0.url}'\n"
+                       "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{0.status_code}"
+                   )
+       
+>>>>>>         status_class = self.status_code // 100
+>>>>>>         error_types = {
+>>>>>>             1: "Informational response",
+>>>>>>             3: "Redirect response",
+>>>>>>             4: "Client error",
+>>>>>>             5: "Server error",
+               }
+>>>>>>         error_type = error_types.get(status_class, "Invalid status code")
+>>>>>>         message = message.format(self, error_type=error_type)
+>>>>>>         raise HTTPStatusError(message, request=request, response=self)
+       
+    1:     def json(self, **kwargs: typing.Any) -> typing.Any:
+   10:         if self.charset_encoding is None and self.content and len(self.content) > 3:
+   10:             encoding = guess_json_utf(self.content)
+   10:             if encoding is not None:
+   10:                 return jsonlib.loads(self.content.decode(encoding), **kwargs)
+>>>>>>         return jsonlib.loads(self.text, **kwargs)
+       
+    1:     @property
+    1:     def cookies(self) -> "Cookies":
+>>>>>>         if not hasattr(self, "_cookies"):
+>>>>>>             self._cookies = Cookies()
+>>>>>>             self._cookies.extract_cookies(self)
+>>>>>>         return self._cookies
+       
+    1:     @property
+    1:     def links(self) -> typing.Dict[typing.Optional[str], typing.Dict[str, str]]:
+               """
+               Returns the parsed header links of the response, if any
+               """
+>>>>>>         header = self.headers.get("link")
+>>>>>>         ldict = {}
+>>>>>>         if header:
+>>>>>>             links = parse_header_links(header)
+>>>>>>             for link in links:
+>>>>>>                 key = link.get("rel") or link.get("url")
+>>>>>>                 ldict[key] = link
+>>>>>>         return ldict
+       
+    1:     @property
+    1:     def num_bytes_downloaded(self) -> int:
+>>>>>>         return self._num_bytes_downloaded
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         return f"<Response [{self.status_code} {self.reason_phrase}]>"
+       
+    1:     def __getstate__(self) -> typing.Dict[str, typing.Any]:
+>>>>>>         return {
+>>>>>>             name: value
+>>>>>>             for name, value in self.__dict__.items()
+>>>>>>             if name not in ["extensions", "stream", "is_closed", "_decoder"]
+               }
+       
+    1:     def __setstate__(self, state: typing.Dict[str, typing.Any]) -> None:
+>>>>>>         for name, value in state.items():
+>>>>>>             setattr(self, name, value)
+>>>>>>         self.is_closed = True
+>>>>>>         self.extensions = {}
+>>>>>>         self.stream = UnattachedStream()
+       
+    1:     def read(self) -> bytes:
+               """
+               Read and return the response content.
+               """
+   17:         if not hasattr(self, "_content"):
+   17:             self._content = b"".join(self.iter_bytes())
+   17:         return self._content
+       
+    2:     def iter_bytes(
+    1:         self, chunk_size: typing.Optional[int] = None
+    1:     ) -> typing.Iterator[bytes]:
+               """
+               A byte-iterator over the decoded response content.
+               This allows us to handle gzip, deflate, and brotli encoded responses.
+               """
+   17:         if hasattr(self, "_content"):
+>>>>>>             chunk_size = len(self._content) if chunk_size is None else chunk_size
+>>>>>>             for i in range(0, len(self._content), max(chunk_size, 1)):
+>>>>>>                 yield self._content[i : i + chunk_size]
+               else:
+   17:             decoder = self._get_content_decoder()
+   17:             chunker = ByteChunker(chunk_size=chunk_size)
+   17:             with request_context(request=self._request):
+   34:                 for raw_bytes in self.iter_raw():
+   17:                     decoded = decoder.decode(raw_bytes)
+   34:                     for chunk in chunker.decode(decoded):
+   17:                         yield chunk
+   17:                 decoded = decoder.flush()
+   17:                 for chunk in chunker.decode(decoded):
+>>>>>>                     yield chunk  # pragma: no cover
+   17:                 for chunk in chunker.flush():
+>>>>>>                     yield chunk
+       
+    2:     def iter_text(
+    1:         self, chunk_size: typing.Optional[int] = None
+    1:     ) -> typing.Iterator[str]:
+               """
+               A str-iterator over the decoded response content
+               that handles both gzip, deflate, etc but also detects the content's
+               string encoding.
+               """
+>>>>>>         decoder = TextDecoder(encoding=self.encoding or "utf-8")
+>>>>>>         chunker = TextChunker(chunk_size=chunk_size)
+>>>>>>         with request_context(request=self._request):
+>>>>>>             for byte_content in self.iter_bytes():
+>>>>>>                 text_content = decoder.decode(byte_content)
+>>>>>>                 for chunk in chunker.decode(text_content):
+>>>>>>                     yield chunk
+>>>>>>             text_content = decoder.flush()
+>>>>>>             for chunk in chunker.decode(text_content):
+>>>>>>                 yield chunk
+>>>>>>             for chunk in chunker.flush():
+>>>>>>                 yield chunk
+       
+    1:     def iter_lines(self) -> typing.Iterator[str]:
+>>>>>>         decoder = LineDecoder()
+>>>>>>         with request_context(request=self._request):
+>>>>>>             for text in self.iter_text():
+>>>>>>                 for line in decoder.decode(text):
+>>>>>>                     yield line
+>>>>>>             for line in decoder.flush():
+>>>>>>                 yield line
+       
+    2:     def iter_raw(
+    1:         self, chunk_size: typing.Optional[int] = None
+    1:     ) -> typing.Iterator[bytes]:
+               """
+               A byte-iterator over the raw response content.
+               """
+   17:         if self.is_stream_consumed:
+>>>>>>             raise StreamConsumed()
+   17:         if self.is_closed:
+>>>>>>             raise StreamClosed()
+   17:         if not isinstance(self.stream, SyncByteStream):
+>>>>>>             raise RuntimeError("Attempted to call a sync iterator on an async stream.")
+       
+   17:         self.is_stream_consumed = True
+   17:         self._num_bytes_downloaded = 0
+   17:         chunker = ByteChunker(chunk_size=chunk_size)
+       
+   17:         with request_context(request=self._request):
+   34:             for raw_stream_bytes in self.stream:
+   17:                 self._num_bytes_downloaded += len(raw_stream_bytes)
+   34:                 for chunk in chunker.decode(raw_stream_bytes):
+   17:                     yield chunk
+       
+   17:         for chunk in chunker.flush():
+>>>>>>             yield chunk
+       
+   17:         self.close()
+       
+    1:     def close(self) -> None:
+               """
+               Close the response and release the connection.
+               Automatically called if the response body is read to completion.
+               """
+   17:         if not isinstance(self.stream, SyncByteStream):
+>>>>>>             raise RuntimeError("Attempted to call an sync close on an async stream.")
+       
+   17:         if not self.is_closed:
+   17:             self.is_closed = True
+   17:             with request_context(request=self._request):
+   17:                 self.stream.close()
+       
+    1:     async def aread(self) -> bytes:
+               """
+               Read and return the response content.
+               """
+>>>>>>         if not hasattr(self, "_content"):
+>>>>>>             self._content = b"".join([part async for part in self.aiter_bytes()])
+>>>>>>         return self._content
+       
+    2:     async def aiter_bytes(
+    1:         self, chunk_size: typing.Optional[int] = None
+    1:     ) -> typing.AsyncIterator[bytes]:
+               """
+               A byte-iterator over the decoded response content.
+               This allows us to handle gzip, deflate, and brotli encoded responses.
+               """
+>>>>>>         if hasattr(self, "_content"):
+>>>>>>             chunk_size = len(self._content) if chunk_size is None else chunk_size
+>>>>>>             for i in range(0, len(self._content), max(chunk_size, 1)):
+>>>>>>                 yield self._content[i : i + chunk_size]
+               else:
+>>>>>>             decoder = self._get_content_decoder()
+>>>>>>             chunker = ByteChunker(chunk_size=chunk_size)
+>>>>>>             with request_context(request=self._request):
+>>>>>>                 async for raw_bytes in self.aiter_raw():
+>>>>>>                     decoded = decoder.decode(raw_bytes)
+>>>>>>                     for chunk in chunker.decode(decoded):
+>>>>>>                         yield chunk
+>>>>>>                 decoded = decoder.flush()
+>>>>>>                 for chunk in chunker.decode(decoded):
+>>>>>>                     yield chunk  # pragma: no cover
+>>>>>>                 for chunk in chunker.flush():
+>>>>>>                     yield chunk
+       
+    2:     async def aiter_text(
+    1:         self, chunk_size: typing.Optional[int] = None
+    1:     ) -> typing.AsyncIterator[str]:
+               """
+               A str-iterator over the decoded response content
+               that handles both gzip, deflate, etc but also detects the content's
+               string encoding.
+               """
+>>>>>>         decoder = TextDecoder(encoding=self.encoding or "utf-8")
+>>>>>>         chunker = TextChunker(chunk_size=chunk_size)
+>>>>>>         with request_context(request=self._request):
+>>>>>>             async for byte_content in self.aiter_bytes():
+>>>>>>                 text_content = decoder.decode(byte_content)
+>>>>>>                 for chunk in chunker.decode(text_content):
+>>>>>>                     yield chunk
+>>>>>>             text_content = decoder.flush()
+>>>>>>             for chunk in chunker.decode(text_content):
+>>>>>>                 yield chunk
+>>>>>>             for chunk in chunker.flush():
+>>>>>>                 yield chunk
+       
+    1:     async def aiter_lines(self) -> typing.AsyncIterator[str]:
+>>>>>>         decoder = LineDecoder()
+>>>>>>         with request_context(request=self._request):
+>>>>>>             async for text in self.aiter_text():
+>>>>>>                 for line in decoder.decode(text):
+>>>>>>                     yield line
+>>>>>>             for line in decoder.flush():
+>>>>>>                 yield line
+       
+    2:     async def aiter_raw(
+    1:         self, chunk_size: typing.Optional[int] = None
+    1:     ) -> typing.AsyncIterator[bytes]:
+               """
+               A byte-iterator over the raw response content.
+               """
+>>>>>>         if self.is_stream_consumed:
+>>>>>>             raise StreamConsumed()
+>>>>>>         if self.is_closed:
+>>>>>>             raise StreamClosed()
+>>>>>>         if not isinstance(self.stream, AsyncByteStream):
+>>>>>>             raise RuntimeError("Attempted to call an async iterator on an sync stream.")
+       
+>>>>>>         self.is_stream_consumed = True
+>>>>>>         self._num_bytes_downloaded = 0
+>>>>>>         chunker = ByteChunker(chunk_size=chunk_size)
+       
+>>>>>>         with request_context(request=self._request):
+>>>>>>             async for raw_stream_bytes in self.stream:
+>>>>>>                 self._num_bytes_downloaded += len(raw_stream_bytes)
+>>>>>>                 for chunk in chunker.decode(raw_stream_bytes):
+>>>>>>                     yield chunk
+       
+>>>>>>         for chunk in chunker.flush():
+>>>>>>             yield chunk
+       
+>>>>>>         await self.aclose()
+       
+    1:     async def aclose(self) -> None:
+               """
+               Close the response and release the connection.
+               Automatically called if the response body is read to completion.
+               """
+>>>>>>         if not isinstance(self.stream, AsyncByteStream):
+>>>>>>             raise RuntimeError("Attempted to call an async close on an sync stream.")
+       
+>>>>>>         if not self.is_closed:
+>>>>>>             self.is_closed = True
+>>>>>>             with request_context(request=self._request):
+>>>>>>                 await self.stream.aclose()
+       
+       
+    2: class Cookies(typing.MutableMapping[str, str]):
+    1:     """
+           HTTP Cookies, as a mutable mapping.
+           """
+       
+    1:     def __init__(self, cookies: typing.Optional[CookieTypes] = None) -> None:
+   16:         if cookies is None or isinstance(cookies, dict):
+   16:             self.jar = CookieJar()
+   16:             if isinstance(cookies, dict):
+>>>>>>                 for key, value in cookies.items():
+>>>>>>                     self.set(key, value)
+>>>>>>         elif isinstance(cookies, list):
+>>>>>>             self.jar = CookieJar()
+>>>>>>             for key, value in cookies:
+>>>>>>                 self.set(key, value)
+>>>>>>         elif isinstance(cookies, Cookies):
+>>>>>>             self.jar = CookieJar()
+>>>>>>             for cookie in cookies.jar:
+>>>>>>                 self.jar.set_cookie(cookie)
+               else:
+>>>>>>             self.jar = cookies
+       
+    1:     def extract_cookies(self, response: Response) -> None:
+               """
+               Loads any cookies based on the response `Set-Cookie` headers.
+               """
+   17:         urllib_response = self._CookieCompatResponse(response)
+   17:         urllib_request = self._CookieCompatRequest(response.request)
+       
+   17:         self.jar.extract_cookies(urllib_response, urllib_request)  # type: ignore
+       
+    1:     def set_cookie_header(self, request: Request) -> None:
+               """
+               Sets an appropriate 'Cookie:' HTTP header on the `Request`.
+               """
+>>>>>>         urllib_request = self._CookieCompatRequest(request)
+>>>>>>         self.jar.add_cookie_header(urllib_request)
+       
+    1:     def set(self, name: str, value: str, domain: str = "", path: str = "/") -> None:
+               """
+               Set a cookie value by name. May optionally include domain and path.
+               """
+>>>>>>         kwargs = {
+>>>>>>             "version": 0,
+>>>>>>             "name": name,
+>>>>>>             "value": value,
+>>>>>>             "port": None,
+>>>>>>             "port_specified": False,
+>>>>>>             "domain": domain,
+>>>>>>             "domain_specified": bool(domain),
+>>>>>>             "domain_initial_dot": domain.startswith("."),
+>>>>>>             "path": path,
+>>>>>>             "path_specified": bool(path),
+>>>>>>             "secure": False,
+>>>>>>             "expires": None,
+>>>>>>             "discard": True,
+>>>>>>             "comment": None,
+>>>>>>             "comment_url": None,
+>>>>>>             "rest": {"HttpOnly": None},
+>>>>>>             "rfc2109": False,
+               }
+>>>>>>         cookie = Cookie(**kwargs)  # type: ignore
+>>>>>>         self.jar.set_cookie(cookie)
+       
+    2:     def get(  # type: ignore
+               self,
+    1:         name: str,
+    1:         default: typing.Optional[str] = None,
+    1:         domain: typing.Optional[str] = None,
+    1:         path: typing.Optional[str] = None,
+    1:     ) -> typing.Optional[str]:
+               """
+               Get a cookie by name. May optionally include domain and path
+               in order to specify exactly which cookie to retrieve.
+               """
+>>>>>>         value = None
+>>>>>>         for cookie in self.jar:
+>>>>>>             if cookie.name == name:
+>>>>>>                 if domain is None or cookie.domain == domain:
+>>>>>>                     if path is None or cookie.path == path:
+>>>>>>                         if value is not None:
+>>>>>>                             message = f"Multiple cookies exist with name={name}"
+>>>>>>                             raise CookieConflict(message)
+>>>>>>                         value = cookie.value
+       
+>>>>>>         if value is None:
+>>>>>>             return default
+>>>>>>         return value
+       
+    2:     def delete(
+               self,
+    1:         name: str,
+    1:         domain: typing.Optional[str] = None,
+    1:         path: typing.Optional[str] = None,
+    1:     ) -> None:
+               """
+               Delete a cookie by name. May optionally include domain and path
+               in order to specify exactly which cookie to delete.
+               """
+>>>>>>         if domain is not None and path is not None:
+>>>>>>             return self.jar.clear(domain, path, name)
+       
+>>>>>>         remove = [
+>>>>>>             cookie
+>>>>>>             for cookie in self.jar
+>>>>>>             if cookie.name == name
+>>>>>>             and (domain is None or cookie.domain == domain)
+>>>>>>             and (path is None or cookie.path == path)
+               ]
+       
+>>>>>>         for cookie in remove:
+>>>>>>             self.jar.clear(cookie.domain, cookie.path, cookie.name)
+       
+    2:     def clear(
+    1:         self, domain: typing.Optional[str] = None, path: typing.Optional[str] = None
+    1:     ) -> None:
+               """
+               Delete all cookies. Optionally include a domain and path in
+               order to only delete a subset of all the cookies.
+               """
+>>>>>>         args = []
+>>>>>>         if domain is not None:
+>>>>>>             args.append(domain)
+>>>>>>         if path is not None:
+>>>>>>             assert domain is not None
+>>>>>>             args.append(path)
+>>>>>>         self.jar.clear(*args)
+       
+    1:     def update(self, cookies: typing.Optional[CookieTypes] = None) -> None:  # type: ignore
+>>>>>>         cookies = Cookies(cookies)
+>>>>>>         for cookie in cookies.jar:
+>>>>>>             self.jar.set_cookie(cookie)
+       
+    1:     def __setitem__(self, name: str, value: str) -> None:
+>>>>>>         return self.set(name, value)
+       
+    1:     def __getitem__(self, name: str) -> str:
+>>>>>>         value = self.get(name)
+>>>>>>         if value is None:
+>>>>>>             raise KeyError(name)
+>>>>>>         return value
+       
+    1:     def __delitem__(self, name: str) -> None:
+>>>>>>         return self.delete(name)
+       
+    1:     def __len__(self) -> int:
+>>>>>>         return len(self.jar)
+       
+    1:     def __iter__(self) -> typing.Iterator[str]:
+>>>>>>         return (cookie.name for cookie in self.jar)
+       
+    1:     def __bool__(self) -> bool:
+   17:         for _ in self.jar:
+>>>>>>             return True
+   17:         return False
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         cookies_repr = ", ".join(
+>>>>>>             [
+>>>>>>                 f"<Cookie {cookie.name}={cookie.value} for {cookie.domain} />"
+>>>>>>                 for cookie in self.jar
+                   ]
+               )
+       
+>>>>>>         return f"<Cookies[{cookies_repr}]>"
+       
+    2:     class _CookieCompatRequest(urllib.request.Request):
+    1:         """
+               Wraps a `Request` instance up in a compatibility interface suitable
+               for use with `CookieJar` operations.
+               """
+       
+    1:         def __init__(self, request: Request) -> None:
+   34:             super().__init__(
+   17:                 url=str(request.url),
+   17:                 headers=dict(request.headers),
+   17:                 method=request.method,
+                   )
+   17:             self.request = request
+       
+    1:         def add_unredirected_header(self, key: str, value: str) -> None:
+>>>>>>             super().add_unredirected_header(key, value)
+>>>>>>             self.request.headers[key] = value
+       
+    2:     class _CookieCompatResponse:
+    1:         """
+               Wraps a `Request` instance up in a compatibility interface suitable
+               for use with `CookieJar` operations.
+               """
+       
+    1:         def __init__(self, response: Response):
+   17:             self.response = response
+       
+    1:         def info(self) -> email.message.Message:
+   34:             info = email.message.Message()
+  118:             for key, value in self.response.headers.multi_items():
+                       # Note that setting `info[key]` here is an "append" operation,
+                       # not a "replace" operation.
+                       # https://docs.python.org/3/library/email.compat32-message.html#email.message.Message.__setitem__
+   84:                 info[key] = value
+   34:             return info

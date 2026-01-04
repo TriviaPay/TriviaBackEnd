@@ -1,16 +1,14 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint, Text, Enum as SQLEnum, LargeBinary
+    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, BigInteger, Date, UniqueConstraint, Text, Enum as SQLEnum, LargeBinary, Index
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ENUM as PG_ENUM
 import uuid
 from enum import Enum as PyEnum
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.mutable import MutableDict
 from db import Base
 from datetime import datetime, date
 import random
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
 
 def generate_account_id():
     """Generate a 10-digit random unique number."""
@@ -371,6 +369,11 @@ class UserSubscription(Base):
     user = relationship("User", back_populates="subscriptions")
     plan = relationship("SubscriptionPlan", backref="subscribers")
 
+    __table_args__ = (
+        Index("ix_user_subscriptions_user_status_end", "user_id", "status", "current_period_end"),
+        Index("ix_user_subscriptions_status_end", "status", "current_period_end"),
+    )
+
 
 # =================================
 #  Company Revenue Table (Monthly)
@@ -419,7 +422,7 @@ class UserPresence(Base):
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, primary_key=True)
     last_seen_at = Column(DateTime, nullable=True)
     device_online = Column(Boolean, nullable=False, default=False)
-    privacy_settings = Column(JSONB, nullable=True)  # {share_last_seen, share_online, read_receipts}
+    privacy_settings = Column(MutableDict.as_mutable(JSONB), nullable=True)  # {share_last_seen, share_online, read_receipts}
     
     # Relationships
     user = relationship("User", backref="presence", uselist=False)
@@ -494,6 +497,7 @@ class GlobalChatMessage(Base):
     __table_args__ = (
         # Unique constraint for idempotency (only when client_message_id is provided)
         # Note: PostgreSQL partial unique index will be created in migration
+        Index('ix_global_chat_messages_user_id_created_at', 'user_id', 'created_at'),
     )
 
 # =================================
@@ -651,8 +655,7 @@ class Notification(Base):
     user = relationship("User", backref="notifications")
     
     __table_args__ = (
-        # Index for efficient querying of unread notifications
-        # Note: PostgreSQL will create this automatically, but we document it here
+        Index('ix_notifications_user_read_created', 'user_id', 'read', 'created_at'),
     )
 
 
@@ -798,6 +801,10 @@ class TriviaQuestionsFreeMode(Base):
     created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     is_used = Column(Boolean, default=False, nullable=False)
 
+    __table_args__ = (
+        UniqueConstraint('question_hash', name='uq_free_mode_question_hash'),
+    )
+
 # =================================
 #  Free Mode Daily Questions Pool
 # =================================
@@ -805,7 +812,7 @@ class TriviaQuestionsFreeModeDaily(Base):
     __tablename__ = "trivia_questions_free_mode_daily"
     
     id = Column(Integer, primary_key=True, index=True)
-    date = Column(DateTime, nullable=False)
+    date = Column(DateTime, nullable=False, index=True)
     question_id = Column(Integer, ForeignKey("trivia_questions_free_mode.id"), nullable=False)
     question_order = Column(Integer, nullable=False)  # 1-3
     is_used = Column(Boolean, default=False, nullable=False)
@@ -824,7 +831,7 @@ class TriviaUserFreeModeDaily(Base):
     __tablename__ = "trivia_user_free_mode_daily"
     
     account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
-    date = Column(Date, primary_key=True, nullable=False)
+    date = Column(Date, primary_key=True, nullable=False, index=True)
     question_order = Column(Integer, primary_key=True, nullable=False)  # 1-3
     
     question_id = Column(Integer, ForeignKey("trivia_questions_free_mode.id"), nullable=False)
@@ -901,6 +908,10 @@ class TriviaQuestionsBronzeMode(Base):
     created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     is_used = Column(Boolean, default=False, nullable=False)
 
+    __table_args__ = (
+        UniqueConstraint('question_hash', name='uq_bronze_mode_question_hash'),
+    )
+
 # =================================
 #  Bronze Mode ($5) Daily Questions Pool
 # =================================
@@ -908,7 +919,7 @@ class TriviaQuestionsBronzeModeDaily(Base):
     __tablename__ = "trivia_questions_bronze_mode_daily"
     
     id = Column(Integer, primary_key=True, index=True)
-    date = Column(DateTime, nullable=False)
+    date = Column(DateTime, nullable=False, index=True)
     question_id = Column(Integer, ForeignKey("trivia_questions_bronze_mode.id"), nullable=False)
     question_order = Column(Integer, nullable=False)  # Always 1 for bronze mode
     is_used = Column(Boolean, default=False, nullable=False)
@@ -927,7 +938,7 @@ class TriviaUserBronzeModeDaily(Base):
     __tablename__ = "trivia_user_bronze_mode_daily"
     
     account_id = Column(BigInteger, ForeignKey("users.account_id"), primary_key=True)
-    date = Column(Date, primary_key=True, nullable=False)
+    date = Column(Date, primary_key=True, nullable=False, index=True)
     
     question_id = Column(Integer, ForeignKey("trivia_questions_bronze_mode.id"), nullable=False)
     user_answer = Column(String, nullable=True)
@@ -1000,6 +1011,10 @@ class TriviaQuestionsSilverMode(Base):
     created_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     is_used = Column(Boolean, default=False, nullable=False)
 
+    __table_args__ = (
+        UniqueConstraint('question_hash', name='uq_silver_mode_question_hash'),
+    )
+
 # =================================
 #  Silver Mode ($10) Daily Questions Pool
 # =================================
@@ -1007,7 +1022,7 @@ class TriviaQuestionsSilverModeDaily(Base):
     __tablename__ = "trivia_questions_silver_mode_daily"
     
     id = Column(Integer, primary_key=True, index=True)
-    date = Column(DateTime, nullable=False)
+    date = Column(DateTime, nullable=False, index=True)
     question_id = Column(Integer, ForeignKey("trivia_questions_silver_mode.id"), nullable=False)
     question_order = Column(Integer, nullable=False)  # Always 1 for silver mode
     is_used = Column(Boolean, default=False, nullable=False)

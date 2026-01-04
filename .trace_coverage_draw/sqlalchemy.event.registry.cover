@@ -1,0 +1,386 @@
+       # event/registry.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: """Provides managed registration services on behalf of :func:`.listen`
+       arguments.
+       
+       By "managed registration", we mean that event listening functions and
+       other objects can be added to various collections in such a way that their
+       membership in all those collections can be revoked at once, based on
+       an equivalent :class:`._EventKey`.
+       
+       """
+    1: from __future__ import annotations
+       
+    1: import collections
+    1: import types
+    1: import typing
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import cast
+    1: from typing import Deque
+    1: from typing import Dict
+    1: from typing import Generic
+    1: from typing import Iterable
+    1: from typing import Optional
+    1: from typing import Tuple
+    1: from typing import TypeVar
+    1: from typing import Union
+    1: import weakref
+       
+    1: from .. import exc
+    1: from .. import util
+       
+    1: if typing.TYPE_CHECKING:
+>>>>>>     from .attr import RefCollection
+>>>>>>     from .base import dispatcher
+       
+    1: _ListenerFnType = Callable[..., Any]
+    1: _ListenerFnKeyType = Union[int, Tuple[int, int]]
+    1: _EventKeyTupleType = Tuple[int, str, _ListenerFnKeyType]
+       
+       
+    1: _ET = TypeVar("_ET", bound="EventTarget")
+       
+       
+    2: class EventTarget:
+    1:     """represents an event target, that is, something we can listen on
+           either with that target as a class or as an instance.
+       
+           Examples include:  Connection, Mapper, Table, Session,
+           InstrumentedAttribute, Engine, Pool, Dialect.
+       
+           """
+       
+    1:     __slots__ = ()
+       
+    1:     dispatch: dispatcher[Any]
+       
+       
+    2: _RefCollectionToListenerType = Dict[
+    1:     "weakref.ref[RefCollection[Any]]",
+           "weakref.ref[_ListenerFnType]",
+       ]
+       
+    1: _key_to_collection: Dict[_EventKeyTupleType, _RefCollectionToListenerType] = (
+    1:     collections.defaultdict(dict)
+       )
+       """
+       Given an original listen() argument, can locate all
+       listener collections and the listener fn contained
+       
+       (target, identifier, fn) -> {
+                                   ref(listenercollection) -> ref(listener_fn)
+                                   ref(listenercollection) -> ref(listener_fn)
+                                   ref(listenercollection) -> ref(listener_fn)
+                               }
+       """
+       
+    2: _ListenerToEventKeyType = Dict[
+    2:     "weakref.ref[_ListenerFnType]",
+    1:     _EventKeyTupleType,
+       ]
+    1: _collection_to_key: Dict[
+           weakref.ref[RefCollection[Any]],
+           _ListenerToEventKeyType,
+    1: ] = collections.defaultdict(dict)
+       """
+       Given a _ListenerCollection or _ClsLevelListener, can locate
+       all the original listen() arguments and the listener fn contained
+       
+       ref(listenercollection) -> {
+                                   ref(listener_fn) -> (target, identifier, fn),
+                                   ref(listener_fn) -> (target, identifier, fn),
+                                   ref(listener_fn) -> (target, identifier, fn),
+                               }
+       """
+       
+       
+    1: def _collection_gced(ref: weakref.ref[Any]) -> None:
+           # defaultdict, so can't get a KeyError
+>>>>>>     if not _collection_to_key or ref not in _collection_to_key:
+>>>>>>         return
+       
+>>>>>>     ref = cast("weakref.ref[RefCollection[EventTarget]]", ref)
+       
+>>>>>>     listener_to_key = _collection_to_key.pop(ref)
+>>>>>>     for key in listener_to_key.values():
+>>>>>>         if key in _key_to_collection:
+                   # defaultdict, so can't get a KeyError
+>>>>>>             dispatch_reg = _key_to_collection[key]
+>>>>>>             dispatch_reg.pop(ref)
+>>>>>>             if not dispatch_reg:
+>>>>>>                 _key_to_collection.pop(key)
+       
+       
+    1: def _stored_in_collection(
+           event_key: _EventKey[_ET], owner: RefCollection[_ET]
+       ) -> bool:
+  770:     key = event_key._key
+       
+  770:     dispatch_reg = _key_to_collection[key]
+       
+  770:     owner_ref = owner.ref
+  770:     listen_ref = weakref.ref(event_key._listen_fn)
+       
+  770:     if owner_ref in dispatch_reg:
+>>>>>>         return False
+       
+  770:     dispatch_reg[owner_ref] = listen_ref
+       
+  770:     listener_to_key = _collection_to_key[owner_ref]
+  770:     listener_to_key[listen_ref] = key
+       
+  770:     return True
+       
+       
+    1: def _removed_from_collection(
+           event_key: _EventKey[_ET], owner: RefCollection[_ET]
+       ) -> None:
+>>>>>>     key = event_key._key
+       
+>>>>>>     dispatch_reg = _key_to_collection[key]
+       
+>>>>>>     listen_ref = weakref.ref(event_key._listen_fn)
+       
+>>>>>>     owner_ref = owner.ref
+>>>>>>     dispatch_reg.pop(owner_ref, None)
+>>>>>>     if not dispatch_reg:
+>>>>>>         del _key_to_collection[key]
+       
+>>>>>>     if owner_ref in _collection_to_key:
+>>>>>>         listener_to_key = _collection_to_key[owner_ref]
+>>>>>>         listener_to_key.pop(listen_ref)
+       
+       
+    1: def _stored_in_collection_multi(
+           newowner: RefCollection[_ET],
+           oldowner: RefCollection[_ET],
+           elements: Iterable[_ListenerFnType],
+       ) -> None:
+>>>>>>     if not elements:
+>>>>>>         return
+       
+>>>>>>     oldowner_ref = oldowner.ref
+>>>>>>     newowner_ref = newowner.ref
+       
+>>>>>>     old_listener_to_key = _collection_to_key[oldowner_ref]
+>>>>>>     new_listener_to_key = _collection_to_key[newowner_ref]
+       
+>>>>>>     for listen_fn in elements:
+>>>>>>         listen_ref = weakref.ref(listen_fn)
+>>>>>>         try:
+>>>>>>             key = old_listener_to_key[listen_ref]
+>>>>>>         except KeyError:
+                   # can occur during interpreter shutdown.
+                   # see #6740
+>>>>>>             continue
+       
+>>>>>>         try:
+>>>>>>             dispatch_reg = _key_to_collection[key]
+>>>>>>         except KeyError:
+>>>>>>             continue
+       
+>>>>>>         if newowner_ref in dispatch_reg:
+>>>>>>             assert dispatch_reg[newowner_ref] == listen_ref
+               else:
+>>>>>>             dispatch_reg[newowner_ref] = listen_ref
+       
+>>>>>>         new_listener_to_key[listen_ref] = key
+       
+       
+    1: def _clear(
+           owner: RefCollection[_ET],
+           elements: Iterable[_ListenerFnType],
+       ) -> None:
+>>>>>>     if not elements:
+>>>>>>         return
+       
+>>>>>>     owner_ref = owner.ref
+>>>>>>     listener_to_key = _collection_to_key[owner_ref]
+>>>>>>     for listen_fn in elements:
+>>>>>>         listen_ref = weakref.ref(listen_fn)
+>>>>>>         key = listener_to_key[listen_ref]
+>>>>>>         dispatch_reg = _key_to_collection[key]
+>>>>>>         dispatch_reg.pop(owner_ref, None)
+       
+>>>>>>         if not dispatch_reg:
+>>>>>>             del _key_to_collection[key]
+       
+       
+    2: class _EventKey(Generic[_ET]):
+    1:     """Represent :func:`.listen` arguments."""
+       
+    1:     __slots__ = (
+               "target",
+               "identifier",
+               "fn",
+               "fn_key",
+               "fn_wrap",
+               "dispatch_target",
+           )
+       
+    1:     target: _ET
+    1:     identifier: str
+    1:     fn: _ListenerFnType
+    1:     fn_key: _ListenerFnKeyType
+    1:     dispatch_target: Any
+    1:     _fn_wrap: Optional[_ListenerFnType]
+       
+    1:     def __init__(
+               self,
+               target: _ET,
+               identifier: str,
+               fn: _ListenerFnType,
+               dispatch_target: Any,
+               _fn_wrap: Optional[_ListenerFnType] = None,
+           ):
+  873:         self.target = target
+  873:         self.identifier = identifier
+  873:         self.fn = fn
+  873:         if isinstance(fn, types.MethodType):
+   50:             self.fn_key = id(fn.__func__), id(fn.__self__)
+               else:
+  823:             self.fn_key = id(fn)
+  873:         self.fn_wrap = _fn_wrap
+  873:         self.dispatch_target = dispatch_target
+       
+    1:     @property
+    1:     def _key(self) -> _EventKeyTupleType:
+  771:         return (id(self.target), self.identifier, self.fn_key)
+       
+    1:     def with_wrapper(self, fn_wrap: _ListenerFnType) -> _EventKey[_ET]:
+  874:         if fn_wrap is self._listen_fn:
+  772:             return self
+               else:
+  204:             return _EventKey(
+  102:                 self.target,
+  102:                 self.identifier,
+  102:                 self.fn,
+  102:                 self.dispatch_target,
+  102:                 _fn_wrap=fn_wrap,
+                   )
+       
+    1:     def with_dispatch_target(self, dispatch_target: Any) -> _EventKey[_ET]:
+>>>>>>         if dispatch_target is self.dispatch_target:
+>>>>>>             return self
+               else:
+>>>>>>             return _EventKey(
+>>>>>>                 self.target,
+>>>>>>                 self.identifier,
+>>>>>>                 self.fn,
+>>>>>>                 dispatch_target,
+>>>>>>                 _fn_wrap=self.fn_wrap,
+                   )
+       
+    1:     def listen(self, *args: Any, **kw: Any) -> None:
+  772:         once = kw.pop("once", False)
+  772:         once_unless_exception = kw.pop("_once_unless_exception", False)
+  772:         named = kw.pop("named", False)
+       
+  772:         target, identifier, fn = (
+  772:             self.dispatch_target,
+  772:             self.identifier,
+  772:             self._listen_fn,
+               )
+       
+  772:         dispatch_collection = getattr(target.dispatch, identifier)
+       
+  772:         adjusted_fn = dispatch_collection._adjust_fn_spec(fn, named)
+       
+  772:         self = self.with_wrapper(adjusted_fn)
+       
+ 1544:         stub_function = getattr(
+  772:             self.dispatch_target.dispatch._events, self.identifier
+               )
+  772:         if hasattr(stub_function, "_sa_warn"):
+>>>>>>             stub_function._sa_warn()
+       
+  772:         if once or once_unless_exception:
+    8:             self.with_wrapper(
+    4:                 util.only_once(
+    2:                     self._listen_fn, retry_on_exception=once_unless_exception
+                       )
+    4:             ).listen(*args, **kw)
+               else:
+  770:             self.dispatch_target.dispatch._listen(self, *args, **kw)
+       
+    1:     def remove(self) -> None:
+>>>>>>         key = self._key
+       
+>>>>>>         if key not in _key_to_collection:
+>>>>>>             raise exc.InvalidRequestError(
+>>>>>>                 "No listeners found for event %s / %r / %s "
+>>>>>>                 % (self.target, self.identifier, self.fn)
+                   )
+       
+>>>>>>         dispatch_reg = _key_to_collection.pop(key)
+       
+>>>>>>         for collection_ref, listener_ref in dispatch_reg.items():
+>>>>>>             collection = collection_ref()
+>>>>>>             listener_fn = listener_ref()
+>>>>>>             if collection is not None and listener_fn is not None:
+>>>>>>                 collection.remove(self.with_wrapper(listener_fn))
+       
+    1:     def contains(self) -> bool:
+               """Return True if this event key is registered to listen."""
+    1:         return self._key in _key_to_collection
+       
+    1:     def base_listen(
+               self,
+               propagate: bool = False,
+               insert: bool = False,
+               named: bool = False,
+               retval: Optional[bool] = None,
+               asyncio: bool = False,
+           ) -> None:
+  770:         target, identifier = self.dispatch_target, self.identifier
+       
+  770:         dispatch_collection = getattr(target.dispatch, identifier)
+       
+  770:         for_modify = dispatch_collection.for_modify(target.dispatch)
+  770:         if asyncio:
+>>>>>>             for_modify._set_asyncio()
+       
+  770:         if insert:
+>>>>>>             for_modify.insert(self, propagate)
+               else:
+  770:             for_modify.append(self, propagate)
+       
+    1:     @property
+    1:     def _listen_fn(self) -> _ListenerFnType:
+ 3825:         return self.fn_wrap or self.fn
+       
+    1:     def append_to_list(
+               self,
+               owner: RefCollection[_ET],
+               list_: Deque[_ListenerFnType],
+           ) -> bool:
+  765:         if _stored_in_collection(self, owner):
+  765:             list_.append(self._listen_fn)
+  765:             return True
+               else:
+>>>>>>             return False
+       
+    1:     def remove_from_list(
+               self,
+               owner: RefCollection[_ET],
+               list_: Deque[_ListenerFnType],
+           ) -> None:
+>>>>>>         _removed_from_collection(self, owner)
+>>>>>>         list_.remove(self._listen_fn)
+       
+    1:     def prepend_to_list(
+               self,
+               owner: RefCollection[_ET],
+               list_: Deque[_ListenerFnType],
+           ) -> bool:
+>>>>>>         if _stored_in_collection(self, owner):
+>>>>>>             list_.appendleft(self._listen_fn)
+>>>>>>             return True
+               else:
+>>>>>>             return False

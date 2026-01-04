@@ -1,0 +1,39 @@
+    1: from contextlib import asynccontextmanager as asynccontextmanager
+    1: from typing import AsyncGenerator, ContextManager, TypeVar
+       
+    1: import anyio
+    1: from anyio import CapacityLimiter
+    1: from starlette.concurrency import iterate_in_threadpool as iterate_in_threadpool  # noqa
+    1: from starlette.concurrency import run_in_threadpool as run_in_threadpool  # noqa
+    1: from starlette.concurrency import (  # noqa
+           run_until_first_complete as run_until_first_complete,
+       )
+       
+    1: _T = TypeVar("_T")
+       
+       
+    1: @asynccontextmanager
+    1: async def contextmanager_in_threadpool(
+    1:     cm: ContextManager[_T],
+    1: ) -> AsyncGenerator[_T, None]:
+           # blocking __exit__ from running waiting on a free thread
+           # can create race conditions/deadlocks if the context manager itself
+           # has its own internal pool (e.g. a database connection pool)
+           # to avoid this we let __exit__ run without a capacity limit
+           # since we're creating a new limiter for each call, any non-zero limit
+           # works (1 is arbitrary)
+    2:     exit_limiter = CapacityLimiter(1)
+    2:     try:
+    2:         yield await run_in_threadpool(cm.__enter__)
+>>>>>>     except Exception as e:
+>>>>>>         ok = bool(
+>>>>>>             await anyio.to_thread.run_sync(
+>>>>>>                 cm.__exit__, type(e), e, None, limiter=exit_limiter
+                   )
+               )
+>>>>>>         if not ok:
+>>>>>>             raise e
+           else:
+    4:         await anyio.to_thread.run_sync(
+    2:             cm.__exit__, None, None, None, limiter=exit_limiter
+               )

@@ -1,0 +1,82 @@
+    2: class PyJWTError(Exception):
+    1:     """
+           Base class for all exceptions
+           """
+       
+    1:     pass
+       
+       
+    2: class InvalidTokenError(PyJWTError):
+    1:     pass
+       
+       
+    2: class DecodeError(InvalidTokenError):
+    1:     pass
+       
+       
+    2: class InvalidSignatureError(DecodeError):
+    1:     pass
+       
+       
+    2: class ExpiredSignatureError(InvalidTokenError):
+    1:     pass
+       
+       
+    2: class InvalidAudienceError(InvalidTokenError):
+    1:     pass
+       
+       
+    2: class InvalidIssuerError(InvalidTokenError):
+    1:     pass
+       
+       
+    2: class InvalidIssuedAtError(InvalidTokenError):
+    1:     pass
+       
+       
+    2: class ImmatureSignatureError(InvalidTokenError):
+    1:     pass
+       
+       
+    2: class InvalidKeyError(PyJWTError):
+    1:     pass
+       
+       
+    2: class InvalidAlgorithmError(InvalidTokenError):
+    1:     pass
+       
+       
+    2: class MissingRequiredClaimError(InvalidTokenError):
+    1:     def __init__(self, claim: str) -> None:
+>>>>>>         self.claim = claim
+       
+    1:     def __str__(self) -> str:
+>>>>>>         return f'Token is missing the "{self.claim}" claim'
+       
+       
+    2: class PyJWKError(PyJWTError):
+    1:     pass
+       
+       
+    2: class MissingCryptographyError(PyJWKError):
+    1:     pass
+       
+       
+    2: class PyJWKSetError(PyJWTError):
+    1:     pass
+       
+       
+    2: class PyJWKClientError(PyJWTError):
+    1:     pass
+       
+       
+    2: class PyJWKClientConnectionError(PyJWKClientError):
+    1:     pass
+       
+       
+    2: class InvalidSubjectError(InvalidTokenError):
+    1:     pass
+       
+       
+    2: class InvalidJTIError(InvalidTokenError):
+    1:     pass

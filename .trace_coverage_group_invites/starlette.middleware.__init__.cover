@@ -1,0 +1,44 @@
+    1: from __future__ import annotations
+       
+    1: import sys
+    1: from typing import Any, Iterator, Protocol
+       
+    1: if sys.version_info >= (3, 10):  # pragma: no cover
+>>>>>>     from typing import ParamSpec
+       else:  # pragma: no cover
+    1:     from typing_extensions import ParamSpec
+       
+    1: from starlette.types import ASGIApp, Receive, Scope, Send
+       
+    1: P = ParamSpec("P")
+       
+       
+    2: class _MiddlewareClass(Protocol[P]):
+    1:     def __init__(self, app: ASGIApp, *args: P.args, **kwargs: P.kwargs) -> None:
+>>>>>>         ...  # pragma: no cover
+       
+    1:     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+>>>>>>         ...  # pragma: no cover
+       
+       
+    2: class Middleware:
+    1:     def __init__(
+               self,
+               cls: type[_MiddlewareClass[P]],
+               *args: P.args,
+               **kwargs: P.kwargs,
+           ) -> None:
+   24:         self.cls = cls
+   24:         self.args = args
+   24:         self.kwargs = kwargs
+       
+    1:     def __iter__(self) -> Iterator[Any]:
+   24:         as_tuple = (self.cls, self.args, self.kwargs)
+   24:         return iter(as_tuple)
+       
+    1:     def __repr__(self) -> str:
+>>>>>>         class_name = self.__class__.__name__
+>>>>>>         args_strings = [f"{value!r}" for value in self.args]
+>>>>>>         option_strings = [f"{key}={value!r}" for key, value in self.kwargs.items()]
+>>>>>>         args_repr = ", ".join([self.cls.__name__] + args_strings + option_strings)
+>>>>>>         return f"{class_name}({args_repr})"

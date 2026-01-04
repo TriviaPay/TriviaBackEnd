@@ -1,0 +1,1057 @@
+       # sql/cache_key.py
+       # Copyright (C) 2005-2024 the SQLAlchemy authors and contributors
+       # <see AUTHORS file>
+       #
+       # This module is part of SQLAlchemy and is released under
+       # the MIT License: https://www.opensource.org/licenses/mit-license.php
+       
+    1: from __future__ import annotations
+       
+    1: import enum
+    1: from itertools import zip_longest
+    1: import typing
+    1: from typing import Any
+    1: from typing import Callable
+    1: from typing import Dict
+    1: from typing import Iterable
+    1: from typing import Iterator
+    1: from typing import List
+    1: from typing import MutableMapping
+    1: from typing import NamedTuple
+    1: from typing import Optional
+    1: from typing import Sequence
+    1: from typing import Tuple
+    1: from typing import Union
+       
+    1: from .visitors import anon_map
+    1: from .visitors import HasTraversalDispatch
+    1: from .visitors import HasTraverseInternals
+    1: from .visitors import InternalTraversal
+    1: from .visitors import prefix_anon_map
+    1: from .. import util
+    1: from ..inspection import inspect
+    1: from ..util import HasMemoized
+    1: from ..util.typing import Literal
+    1: from ..util.typing import Protocol
+       
+    1: if typing.TYPE_CHECKING:
+>>>>>>     from .elements import BindParameter
+>>>>>>     from .elements import ClauseElement
+>>>>>>     from .visitors import _TraverseInternalsType
+>>>>>>     from ..engine.interfaces import _CoreSingleExecuteParams
+       
+       
+    2: class _CacheKeyTraversalDispatchType(Protocol):
+    1:     def __call__(
+               s, self: HasCacheKey, visitor: _CacheKeyTraversal
+>>>>>>     ) -> _CacheKeyTraversalDispatchTypeReturn: ...
+       
+       
+    2: class CacheConst(enum.Enum):
+    1:     NO_CACHE = 0
+       
+       
+    1: NO_CACHE = CacheConst.NO_CACHE
+       
+       
+    2: _CacheKeyTraversalType = Union[
+    1:     "_TraverseInternalsType", Literal[CacheConst.NO_CACHE], Literal[None]
+       ]
+       
+       
+    2: class CacheTraverseTarget(enum.Enum):
+    1:     CACHE_IN_PLACE = 0
+    1:     CALL_GEN_CACHE_KEY = 1
+    1:     STATIC_CACHE_KEY = 2
+    1:     PROPAGATE_ATTRS = 3
+    1:     ANON_NAME = 4
+       
+       
+    1: (
+    1:     CACHE_IN_PLACE,
+    1:     CALL_GEN_CACHE_KEY,
+    1:     STATIC_CACHE_KEY,
+    1:     PROPAGATE_ATTRS,
+    1:     ANON_NAME,
+    1: ) = tuple(CacheTraverseTarget)
+       
+    2: _CacheKeyTraversalDispatchTypeReturn = Sequence[
+    2:     Tuple[
+    2:         str,
+    1:         Any,
+    2:         Union[
+    2:             Callable[..., Tuple[Any, ...]],
+    1:             CacheTraverseTarget,
+    1:             InternalTraversal,
+               ],
+           ]
+       ]
+       
+       
+    2: class HasCacheKey:
+    1:     """Mixin for objects which can produce a cache key.
+       
+           This class is usually in a hierarchy that starts with the
+           :class:`.HasTraverseInternals` base, but this is optional.  Currently,
+           the class should be able to work on its own without including
+           :class:`.HasTraverseInternals`.
+       
+           .. seealso::
+       
+               :class:`.CacheKey`
+       
+               :ref:`sql_caching`
+       
+           """
+       
+    1:     __slots__ = ()
+       
+    1:     _cache_key_traversal: _CacheKeyTraversalType = NO_CACHE
+       
+    1:     _is_has_cache_key = True
+       
+    1:     _hierarchy_supports_caching = True
+           """private attribute which may be set to False to prevent the
+           inherit_cache warning from being emitted for a hierarchy of subclasses.
+       
+           Currently applies to the :class:`.ExecutableDDLElement` hierarchy which
+           does not implement caching.
+       
+           """
+       
+    1:     inherit_cache: Optional[bool] = None
+           """Indicate if this :class:`.HasCacheKey` instance should make use of the
+           cache key generation scheme used by its immediate superclass.
+       
+           The attribute defaults to ``None``, which indicates that a construct has
+           not yet taken into account whether or not its appropriate for it to
+           participate in caching; this is functionally equivalent to setting the
+           value to ``False``, except that a warning is also emitted.
+       
+           This flag can be set to ``True`` on a particular class, if the SQL that
+           corresponds to the object does not change based on attributes which
+           are local to this class, and not its superclass.
+       
+           .. seealso::
+       
+               :ref:`compilerext_caching` - General guideslines for setting the
+               :attr:`.HasCacheKey.inherit_cache` attribute for third-party or user
+               defined SQL constructs.
+       
+           """
+       
+    1:     __slots__ = ()
+       
+    1:     _generated_cache_key_traversal: Any
+       
+    1:     @classmethod
+    1:     def _generate_cache_attrs(
+               cls,
+           ) -> Union[_CacheKeyTraversalDispatchType, Literal[CacheConst.NO_CACHE]]:
+               """generate cache key dispatcher for a new class.
+       
+               This sets the _generated_cache_key_traversal attribute once called
+               so should only be called once per class.
+       
+               """
+   26:         inherit_cache = cls.__dict__.get("inherit_cache", None)
+   26:         inherit = bool(inherit_cache)
+       
+   26:         if inherit:
+    9:             _cache_key_traversal = getattr(cls, "_cache_key_traversal", None)
+    9:             if _cache_key_traversal is None:
+    8:                 try:
+    8:                     assert issubclass(cls, HasTraverseInternals)
+    8:                     _cache_key_traversal = cls._traverse_internals
+>>>>>>                 except AttributeError:
+>>>>>>                     cls._generated_cache_key_traversal = NO_CACHE
+>>>>>>                     return NO_CACHE
+       
+    9:             assert _cache_key_traversal is not NO_CACHE, (
+>>>>>>                 f"class {cls} has _cache_key_traversal=NO_CACHE, "
+                       "which conflicts with inherit_cache=True"
+                   )
+       
+                   # TODO: wouldn't we instead get this from our superclass?
+                   # also, our superclass may not have this yet, but in any case,
+                   # we'd generate for the superclass that has it.   this is a little
+                   # more complicated, so for the moment this is a little less
+                   # efficient on startup but simpler.
+   18:             return _cache_key_traversal_visitor.generate_dispatch(
+    9:                 cls,
+    9:                 _cache_key_traversal,
+    9:                 "_generated_cache_key_traversal",
+                   )
+               else:
+   34:             _cache_key_traversal = cls.__dict__.get(
+   17:                 "_cache_key_traversal", None
+                   )
+   17:             if _cache_key_traversal is None:
+   24:                 _cache_key_traversal = cls.__dict__.get(
+   12:                     "_traverse_internals", None
+                       )
+   12:                 if _cache_key_traversal is None:
+>>>>>>                     cls._generated_cache_key_traversal = NO_CACHE
+>>>>>>                     if (
+>>>>>>                         inherit_cache is None
+>>>>>>                         and cls._hierarchy_supports_caching
+                           ):
+>>>>>>                         util.warn(
+>>>>>>                             "Class %s will not make use of SQL compilation "
+                                   "caching as it does not set the 'inherit_cache' "
+                                   "attribute to ``True``.  This can have "
+                                   "significant performance implications including "
+                                   "some performance degradations in comparison to "
+                                   "prior SQLAlchemy versions.  Set this attribute "
+                                   "to True if this object can make use of the cache "
+                                   "key generated by the superclass.  Alternatively, "
+                                   "this attribute may be set to False which will "
+>>>>>>                             "disable this warning." % (cls.__name__),
+>>>>>>                             code="cprf",
+                               )
+>>>>>>                     return NO_CACHE
+       
+   34:             return _cache_key_traversal_visitor.generate_dispatch(
+   17:                 cls,
+   17:                 _cache_key_traversal,
+   17:                 "_generated_cache_key_traversal",
+                   )
+       
+    1:     @util.preload_module("sqlalchemy.sql.elements")
+    1:     def _gen_cache_key(
+               self, anon_map: anon_map, bindparams: List[BindParameter[Any]]
+           ) -> Optional[Tuple[Any, ...]]:
+               """return an optional cache key.
+       
+               The cache key is a tuple which can contain any series of
+               objects that are hashable and also identifies
+               this object uniquely within the presence of a larger SQL expression
+               or statement, for the purposes of caching the resulting query.
+       
+               The cache key should be based on the SQL compiled structure that would
+               ultimately be produced.   That is, two structures that are composed in
+               exactly the same way should produce the same cache key; any difference
+               in the structures that would affect the SQL string or the type handlers
+               should result in a different cache key.
+       
+               If a structure cannot produce a useful cache key, the NO_CACHE
+               symbol should be added to the anon_map and the method should
+               return None.
+       
+               """
+       
+ 1638:         cls = self.__class__
+       
+ 1638:         id_, found = anon_map.get_anon(self)
+ 1638:         if found:
+   44:             return (id_, cls)
+       
+               dispatcher: Union[
+                   Literal[CacheConst.NO_CACHE],
+                   _CacheKeyTraversalDispatchType,
+               ]
+       
+ 1594:         try:
+ 1594:             dispatcher = cls.__dict__["_generated_cache_key_traversal"]
+   26:         except KeyError:
+                   # traversals.py -> _preconfigure_traversals()
+                   # may be used to run these ahead of time, but
+                   # is not enabled right now.
+                   # this block will generate any remaining dispatchers.
+   26:             dispatcher = cls._generate_cache_attrs()
+       
+ 1594:         if dispatcher is NO_CACHE:
+>>>>>>             anon_map[NO_CACHE] = True
+>>>>>>             return None
+       
+ 1594:         result: Tuple[Any, ...] = (id_, cls)
+       
+               # inline of _cache_key_traversal_visitor.run_generated_dispatch()
+       
+11624:         for attrname, obj, meth in dispatcher(
+ 1594:             self, _cache_key_traversal_visitor
+               ):
+ 8436:             if obj is not None:
+                       # TODO: see if C code can help here as Python lacks an
+                       # efficient switch construct
+       
+ 7632:                 if meth is STATIC_CACHE_KEY:
+  323:                     sck = obj._static_cache_key
+  323:                     if sck is NO_CACHE:
+>>>>>>                         anon_map[NO_CACHE] = True
+>>>>>>                         return None
+  323:                     result += (attrname, sck)
+ 7309:                 elif meth is ANON_NAME:
+  187:                     elements = util.preloaded.sql_elements
+  187:                     if isinstance(obj, elements._anonymous_label):
+   12:                         obj = obj.apply_map(anon_map)  # type: ignore
+  187:                     result += (attrname, obj)
+ 7122:                 elif meth is CALL_GEN_CACHE_KEY:
+ 1590:                     result += (
+  795:                         attrname,
+  795:                         obj._gen_cache_key(anon_map, bindparams),
+                           )
+       
+                       # remaining cache functions are against
+                       # Python tuples, dicts, lists, etc. so we can skip
+                       # if they are empty
+ 6327:                 elif obj:
+ 2220:                     if meth is CACHE_IN_PLACE:
+ 1662:                         result += (attrname, obj)
+  558:                     elif meth is PROPAGATE_ATTRS:
+  224:                         result += (
+  112:                             attrname,
+  112:                             obj["compile_state_plugin"],
+                                   (
+  224:                                 obj["plugin_subject"]._gen_cache_key(
+  112:                                     anon_map, bindparams
+                                       )
+  112:                                 if obj["plugin_subject"]
+>>>>>>                                 else None
+                                   ),
+                               )
+  446:                     elif meth is InternalTraversal.dp_annotations_key:
+                               # obj is here is the _annotations dict.  Table uses
+                               # a memoized version of it.  however in other cases,
+                               # we generate it given anon_map as we may be from a
+                               # Join, Aliased, etc.
+                               # see #8790
+       
+  170:                         if self._gen_static_annotations_cache_key:  # type: ignore  # noqa: E501
+  138:                             result += self._annotations_cache_key  # type: ignore  # noqa: E501
+                               else:
+   32:                             result += self._gen_annotations_cache_key(anon_map)  # type: ignore  # noqa: E501
+       
+  434:                     elif (
+  276:                         meth is InternalTraversal.dp_clauseelement_list
+  149:                         or meth is InternalTraversal.dp_clauseelement_tuple
+   18:                         or meth
+    9:                         is InternalTraversal.dp_memoized_select_entities
+                           ):
+  534:                         result += (
+  267:                             attrname,
+  534:                             tuple(
+ 1130:                                 [
+  329:                                     elem._gen_cache_key(anon_map, bindparams)
+  596:                                     for elem in obj
+                                       ]
+                                   ),
+                               )
+                           else:
+   18:                         result += meth(  # type: ignore
+    9:                             attrname, obj, self, anon_map, bindparams
+                               )
+ 1594:         return result
+       
+    1:     def _generate_cache_key(self) -> Optional[CacheKey]:
+               """return a cache key.
+       
+               The cache key is a tuple which can contain any series of
+               objects that are hashable and also identifies
+               this object uniquely within the presence of a larger SQL expression
+               or statement, for the purposes of caching the resulting query.
+       
+               The cache key should be based on the SQL compiled structure that would
+               ultimately be produced.   That is, two structures that are composed in
+               exactly the same way should produce the same cache key; any difference
+               in the structures that would affect the SQL string or the type handlers
+               should result in a different cache key.
+       
+               The cache key returned by this method is an instance of
+               :class:`.CacheKey`, which consists of a tuple representing the
+               cache key, as well as a list of :class:`.BindParameter` objects
+               which are extracted from the expression.   While two expressions
+               that produce identical cache key tuples will themselves generate
+               identical SQL strings, the list of :class:`.BindParameter` objects
+               indicates the bound values which may have different values in
+               each one; these bound parameters must be consulted in order to
+               execute the statement with the correct parameters.
+       
+               a :class:`_expression.ClauseElement` structure that does not implement
+               a :meth:`._gen_cache_key` method and does not implement a
+               :attr:`.traverse_internals` attribute will not be cacheable; when
+               such an element is embedded into a larger structure, this method
+               will return None, indicating no cache key is available.
+       
+               """
+       
+  981:         bindparams: List[BindParameter[Any]] = []
+       
+  981:         _anon_map = anon_map()
+  981:         key = self._gen_cache_key(_anon_map, bindparams)
+  981:         if NO_CACHE in _anon_map:
+>>>>>>             return None
+               else:
+  981:             assert key is not None
+  981:             return CacheKey(key, bindparams)
+       
+    1:     @classmethod
+    1:     def _generate_cache_key_for_object(
+               cls, obj: HasCacheKey
+           ) -> Optional[CacheKey]:
+>>>>>>         bindparams: List[BindParameter[Any]] = []
+       
+>>>>>>         _anon_map = anon_map()
+>>>>>>         key = obj._gen_cache_key(_anon_map, bindparams)
+>>>>>>         if NO_CACHE in _anon_map:
+>>>>>>             return None
+               else:
+>>>>>>             assert key is not None
+>>>>>>             return CacheKey(key, bindparams)
+       
+       
+    2: class HasCacheKeyTraverse(HasTraverseInternals, HasCacheKey):
+    1:     pass
+       
+       
+    2: class MemoizedHasCacheKey(HasCacheKey, HasMemoized):
+    1:     __slots__ = ()
+       
+    1:     @HasMemoized.memoized_instancemethod
+    1:     def _generate_cache_key(self) -> Optional[CacheKey]:
+  981:         return HasCacheKey._generate_cache_key(self)
+       
+       
+    2: class SlotsMemoizedHasCacheKey(HasCacheKey, util.MemoizedSlots):
+    1:     __slots__ = ()
+       
+    1:     def _memoized_method__generate_cache_key(self) -> Optional[CacheKey]:
+>>>>>>         return HasCacheKey._generate_cache_key(self)
+       
+       
+    2: class CacheKey(NamedTuple):
+    1:     """The key used to identify a SQL statement construct in the
+           SQL compilation cache.
+       
+           .. seealso::
+       
+               :ref:`sql_caching`
+       
+           """
+       
+    1:     key: Tuple[Any, ...]
+    1:     bindparams: Sequence[BindParameter[Any]]
+       
+           # can't set __hash__ attribute because it interferes
+           # with namedtuple
+           # can't use "if not TYPE_CHECKING" because mypy rejects it
+           # inside of a NamedTuple
+    1:     def __hash__(self) -> Optional[int]:  # type: ignore
+               """CacheKey itself is not hashable - hash the .key portion"""
+>>>>>>         return None
+       
+    1:     def to_offline_string(
+               self,
+               statement_cache: MutableMapping[Any, str],
+               statement: ClauseElement,
+               parameters: _CoreSingleExecuteParams,
+           ) -> str:
+               """Generate an "offline string" form of this :class:`.CacheKey`
+       
+               The "offline string" is basically the string SQL for the
+               statement plus a repr of the bound parameter values in series.
+               Whereas the :class:`.CacheKey` object is dependent on in-memory
+               identities in order to work as a cache key, the "offline" version
+               is suitable for a cache that will work for other processes as well.
+       
+               The given ``statement_cache`` is a dictionary-like object where the
+               string form of the statement itself will be cached.  This dictionary
+               should be in a longer lived scope in order to reduce the time spent
+               stringifying statements.
+       
+       
+               """
+>>>>>>         if self.key not in statement_cache:
+>>>>>>             statement_cache[self.key] = sql_str = str(statement)
+               else:
+>>>>>>             sql_str = statement_cache[self.key]
+       
+>>>>>>         if not self.bindparams:
+>>>>>>             param_tuple = tuple(parameters[key] for key in sorted(parameters))
+               else:
+>>>>>>             param_tuple = tuple(
+>>>>>>                 parameters.get(bindparam.key, bindparam.value)
+>>>>>>                 for bindparam in self.bindparams
+                   )
+       
+>>>>>>         return repr((sql_str, param_tuple))
+       
+    1:     def __eq__(self, other: Any) -> bool:
+>>>>>>         return bool(self.key == other.key)
+       
+    1:     def __ne__(self, other: Any) -> bool:
+>>>>>>         return not (self.key == other.key)
+       
+    1:     @classmethod
+    1:     def _diff_tuples(cls, left: CacheKey, right: CacheKey) -> str:
+>>>>>>         ck1 = CacheKey(left, [])
+>>>>>>         ck2 = CacheKey(right, [])
+>>>>>>         return ck1._diff(ck2)
+       
+    1:     def _whats_different(self, other: CacheKey) -> Iterator[str]:
+>>>>>>         k1 = self.key
+>>>>>>         k2 = other.key
+       
+>>>>>>         stack: List[int] = []
+>>>>>>         pickup_index = 0
+               while True:
+>>>>>>             s1, s2 = k1, k2
+>>>>>>             for idx in stack:
+>>>>>>                 s1 = s1[idx]
+>>>>>>                 s2 = s2[idx]
+       
+>>>>>>             for idx, (e1, e2) in enumerate(zip_longest(s1, s2)):
+>>>>>>                 if idx < pickup_index:
+>>>>>>                     continue
+>>>>>>                 if e1 != e2:
+>>>>>>                     if isinstance(e1, tuple) and isinstance(e2, tuple):
+>>>>>>                         stack.append(idx)
+>>>>>>                         break
+                           else:
+>>>>>>                         yield "key%s[%d]:  %s != %s" % (
+>>>>>>                             "".join("[%d]" % id_ for id_ in stack),
+>>>>>>                             idx,
+>>>>>>                             e1,
+>>>>>>                             e2,
+                               )
+                   else:
+>>>>>>                 pickup_index = stack.pop(-1)
+>>>>>>                 break
+       
+    1:     def _diff(self, other: CacheKey) -> str:
+>>>>>>         return ", ".join(self._whats_different(other))
+       
+    1:     def __str__(self) -> str:
+>>>>>>         stack: List[Union[Tuple[Any, ...], HasCacheKey]] = [self.key]
+       
+>>>>>>         output = []
+>>>>>>         sentinel = object()
+>>>>>>         indent = -1
+>>>>>>         while stack:
+>>>>>>             elem = stack.pop(0)
+>>>>>>             if elem is sentinel:
+>>>>>>                 output.append((" " * (indent * 2)) + "),")
+>>>>>>                 indent -= 1
+>>>>>>             elif isinstance(elem, tuple):
+>>>>>>                 if not elem:
+>>>>>>                     output.append((" " * ((indent + 1) * 2)) + "()")
+                       else:
+>>>>>>                     indent += 1
+>>>>>>                     stack = list(elem) + [sentinel] + stack
+>>>>>>                     output.append((" " * (indent * 2)) + "(")
+                   else:
+>>>>>>                 if isinstance(elem, HasCacheKey):
+>>>>>>                     repr_ = "<%s object at %s>" % (
+>>>>>>                         type(elem).__name__,
+>>>>>>                         hex(id(elem)),
+                           )
+                       else:
+>>>>>>                     repr_ = repr(elem)
+>>>>>>                 output.append((" " * (indent * 2)) + "  " + repr_ + ", ")
+       
+>>>>>>         return "CacheKey(key=%s)" % ("\n".join(output),)
+       
+    1:     def _generate_param_dict(self) -> Dict[str, Any]:
+               """used for testing"""
+       
+>>>>>>         _anon_map = prefix_anon_map()
+>>>>>>         return {b.key % _anon_map: b.effective_value for b in self.bindparams}
+       
+    1:     def _apply_params_to_element(
+               self, original_cache_key: CacheKey, target_element: ClauseElement
+           ) -> ClauseElement:
+>>>>>>         if target_element._is_immutable:
+>>>>>>             return target_element
+       
+>>>>>>         translate = {
+>>>>>>             k.key: v.value
+>>>>>>             for k, v in zip(original_cache_key.bindparams, self.bindparams)
+               }
+       
+>>>>>>         return target_element.params(translate)
+       
+       
+    1: def _ad_hoc_cache_key_from_args(
+           tokens: Tuple[Any, ...],
+           traverse_args: Iterable[Tuple[str, InternalTraversal]],
+           args: Iterable[Any],
+       ) -> Tuple[Any, ...]:
+           """a quick cache key generator used by reflection.flexi_cache."""
+>>>>>>     bindparams: List[BindParameter[Any]] = []
+       
+>>>>>>     _anon_map = anon_map()
+       
+>>>>>>     tup = tokens
+       
+>>>>>>     for (attrname, sym), arg in zip(traverse_args, args):
+>>>>>>         key = sym.name
+>>>>>>         visit_key = key.replace("dp_", "visit_")
+       
+>>>>>>         if arg is None:
+>>>>>>             tup += (attrname, None)
+>>>>>>             continue
+       
+>>>>>>         meth = getattr(_cache_key_traversal_visitor, visit_key)
+>>>>>>         if meth is CACHE_IN_PLACE:
+>>>>>>             tup += (attrname, arg)
+>>>>>>         elif meth in (
+>>>>>>             CALL_GEN_CACHE_KEY,
+>>>>>>             STATIC_CACHE_KEY,
+>>>>>>             ANON_NAME,
+>>>>>>             PROPAGATE_ATTRS,
+               ):
+>>>>>>             raise NotImplementedError(
+>>>>>>                 f"Haven't implemented symbol {meth} for ad-hoc key from args"
+                   )
+               else:
+>>>>>>             tup += meth(attrname, arg, None, _anon_map, bindparams)
+>>>>>>     return tup
+       
+       
+    2: class _CacheKeyTraversal(HasTraversalDispatch):
+           # very common elements are inlined into the main _get_cache_key() method
+           # to produce a dramatic savings in Python function call overhead
+       
+    1:     visit_has_cache_key = visit_clauseelement = CALL_GEN_CACHE_KEY
+    1:     visit_clauseelement_list = InternalTraversal.dp_clauseelement_list
+    1:     visit_annotations_key = InternalTraversal.dp_annotations_key
+    1:     visit_clauseelement_tuple = InternalTraversal.dp_clauseelement_tuple
+    1:     visit_memoized_select_entities = (
+    1:         InternalTraversal.dp_memoized_select_entities
+           )
+       
+    1:     visit_string = visit_boolean = visit_operator = visit_plain_obj = (
+    1:         CACHE_IN_PLACE
+           )
+    1:     visit_statement_hint_list = CACHE_IN_PLACE
+    1:     visit_type = STATIC_CACHE_KEY
+    1:     visit_anon_name = ANON_NAME
+       
+    1:     visit_propagate_attrs = PROPAGATE_ATTRS
+       
+    1:     def visit_with_context_options(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return tuple((fn.__code__, c_key) for fn, c_key in obj)
+       
+    1:     def visit_inspectable(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return (attrname, inspect(obj)._gen_cache_key(anon_map, bindparams))
+       
+    1:     def visit_string_list(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return tuple(obj)
+       
+    1:     def visit_multi(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return (
+>>>>>>             attrname,
+                   (
+>>>>>>                 obj._gen_cache_key(anon_map, bindparams)
+>>>>>>                 if isinstance(obj, HasCacheKey)
+>>>>>>                 else obj
+                   ),
+               )
+       
+    1:     def visit_multi_list(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+                       (
+>>>>>>                     elem._gen_cache_key(anon_map, bindparams)
+>>>>>>                     if isinstance(elem, HasCacheKey)
+>>>>>>                     else elem
+                       )
+>>>>>>                 for elem in obj
+                   ),
+               )
+       
+    1:     def visit_has_cache_key_tuples(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         if not obj:
+>>>>>>             return ()
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 tuple(
+>>>>>>                     elem._gen_cache_key(anon_map, bindparams)
+>>>>>>                     for elem in tup_elem
+                       )
+>>>>>>                 for tup_elem in obj
+                   ),
+               )
+       
+    1:     def visit_has_cache_key_list(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         if not obj:
+>>>>>>             return ()
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(elem._gen_cache_key(anon_map, bindparams) for elem in obj),
+               )
+       
+    1:     def visit_executable_options(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         if not obj:
+>>>>>>             return ()
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 elem._gen_cache_key(anon_map, bindparams)
+>>>>>>                 for elem in obj
+>>>>>>                 if elem._is_has_cache_key
+                   ),
+               )
+       
+    1:     def visit_inspectable_list(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return self.visit_has_cache_key_list(
+>>>>>>             attrname, [inspect(o) for o in obj], parent, anon_map, bindparams
+               )
+       
+    1:     def visit_clauseelement_tuples(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return self.visit_has_cache_key_tuples(
+>>>>>>             attrname, obj, parent, anon_map, bindparams
+               )
+       
+    1:     def visit_fromclause_ordered_set(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         if not obj:
+>>>>>>             return ()
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple([elem._gen_cache_key(anon_map, bindparams) for elem in obj]),
+               )
+       
+    1:     def visit_clauseelement_unordered_set(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         if not obj:
+>>>>>>             return ()
+>>>>>>         cache_keys = [
+>>>>>>             elem._gen_cache_key(anon_map, bindparams) for elem in obj
+               ]
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 sorted(cache_keys)
+                   ),  # cache keys all start with (id_, class)
+               )
+       
+    1:     def visit_named_ddl_element(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return (attrname, obj.name)
+       
+    1:     def visit_prefix_sequence(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         if not obj:
+>>>>>>             return ()
+       
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 [
+>>>>>>                     (clause._gen_cache_key(anon_map, bindparams), strval)
+>>>>>>                     for clause, strval in obj
+                       ]
+                   ),
+               )
+       
+    1:     def visit_setup_join_tuple(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+   26:         return tuple(
+    8:             (
+    8:                 target._gen_cache_key(anon_map, bindparams),
+                       (
+    8:                     onclause._gen_cache_key(anon_map, bindparams)
+    8:                     if onclause is not None
+>>>>>>                     else None
+                       ),
+                       (
+    8:                     from_._gen_cache_key(anon_map, bindparams)
+    8:                     if from_ is not None
+    8:                     else None
+                       ),
+   32:                 tuple([(key, flags[key]) for key in sorted(flags)]),
+                   )
+   14:             for (target, onclause, from_, flags) in obj
+               )
+       
+    1:     def visit_table_hint_list(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         if not obj:
+>>>>>>             return ()
+       
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 [
+>>>>>>                     (
+>>>>>>                         clause._gen_cache_key(anon_map, bindparams),
+>>>>>>                         dialect_name,
+>>>>>>                         text,
+                           )
+>>>>>>                     for (clause, dialect_name), text in obj.items()
+                       ]
+                   ),
+               )
+       
+    1:     def visit_plain_dict(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return (attrname, tuple([(key, obj[key]) for key in sorted(obj)]))
+       
+    1:     def visit_dialect_options(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 (
+>>>>>>                     dialect_name,
+>>>>>>                     tuple(
+>>>>>>                         [
+>>>>>>                             (key, obj[dialect_name][key])
+>>>>>>                             for key in sorted(obj[dialect_name])
+                               ]
+                           ),
+                       )
+>>>>>>                 for dialect_name in sorted(obj)
+                   ),
+               )
+       
+    1:     def visit_string_clauseelement_dict(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 (key, obj[key]._gen_cache_key(anon_map, bindparams))
+>>>>>>                 for key in sorted(obj)
+                   ),
+               )
+       
+    1:     def visit_string_multi_dict(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 (
+>>>>>>                     key,
+                           (
+>>>>>>                         value._gen_cache_key(anon_map, bindparams)
+>>>>>>                         if isinstance(value, HasCacheKey)
+>>>>>>                         else value
+                           ),
+                       )
+>>>>>>                 for key, value in [(key, obj[key]) for key in sorted(obj)]
+                   ),
+               )
+       
+    1:     def visit_fromclause_canonical_column_collection(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+               # inlining into the internals of ColumnCollection
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 col._gen_cache_key(anon_map, bindparams)
+>>>>>>                 for k, col, _ in obj._collection
+                   ),
+               )
+       
+    1:     def visit_unknown_structure(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         anon_map[NO_CACHE] = True
+>>>>>>         return ()
+       
+    1:     def visit_dml_ordered_values(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+>>>>>>         return (
+>>>>>>             attrname,
+>>>>>>             tuple(
+>>>>>>                 (
+                           (
+>>>>>>                         key._gen_cache_key(anon_map, bindparams)
+>>>>>>                         if hasattr(key, "__clause_element__")
+>>>>>>                         else key
+                           ),
+>>>>>>                     value._gen_cache_key(anon_map, bindparams),
+                       )
+>>>>>>                 for key, value in obj
+                   ),
+               )
+       
+    1:     def visit_dml_values(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+               # in py37 we can assume two dictionaries created in the same
+               # insert ordering will retain that sorting
+    3:         return (
+    3:             attrname,
+   12:             tuple(
+    3:                 (
+                           (
+    3:                         k._gen_cache_key(anon_map, bindparams)
+    3:                         if hasattr(k, "__clause_element__")
+>>>>>>                         else k
+                           ),
+    3:                     obj[k]._gen_cache_key(anon_map, bindparams),
+                       )
+    6:                 for k in obj
+                   ),
+               )
+       
+    1:     def visit_dml_multi_values(
+               self,
+               attrname: str,
+               obj: Any,
+               parent: Any,
+               anon_map: anon_map,
+               bindparams: List[BindParameter[Any]],
+           ) -> Tuple[Any, ...]:
+               # multivalues are simply not cacheable right now
+>>>>>>         anon_map[NO_CACHE] = True
+>>>>>>         return ()
+       
+       
+    1: _cache_key_traversal_visitor = _CacheKeyTraversal()

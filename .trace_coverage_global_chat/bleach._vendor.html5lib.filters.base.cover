@@ -1,0 +1,12 @@
+    1: from __future__ import absolute_import, division, unicode_literals
+       
+       
+    2: class Filter(object):
+    1:     def __init__(self, source):
+    5:         self.source = source
+       
+    1:     def __iter__(self):
+    5:         return iter(self.source)
+       
+    1:     def __getattr__(self, name):
+>>>>>>         return getattr(self.source, name)

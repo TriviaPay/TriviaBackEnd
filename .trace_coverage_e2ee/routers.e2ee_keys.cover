@@ -1,0 +1,548 @@
+    2: from fastapi import APIRouter, Depends, HTTPException, status
+    2: from pydantic import BaseModel, Field
+    2: from sqlalchemy.orm import Session
+    2: from sqlalchemy import and_, or_, func, update
+    2: from datetime import datetime, timedelta
+    2: from typing import List, Optional
+    2: import uuid
+    2: import logging
+    2: import hashlib
+       
+    2: from db import get_db
+    2: from models import User, E2EEDevice, E2EEKeyBundle, E2EEOneTimePrekey, DeviceRevocation
+    2: import models as models_module
+    2: from routers.dependencies import get_current_user
+    2: from config import (
+           E2EE_DM_ENABLED, 
+           E2EE_DM_PREKEY_POOL_SIZE,
+           E2EE_DM_OTPK_LOW_WATERMARK,
+           E2EE_DM_OTPK_CRITICAL_WATERMARK,
+           E2EE_DM_SIGNED_PREKEY_ROTATION_DAYS,
+           E2EE_DM_SIGNED_PREKEY_MAX_AGE_DAYS,
+           E2EE_DM_IDENTITY_CHANGE_ALERT_THRESHOLD,
+           E2EE_DM_IDENTITY_CHANGE_BLOCK_THRESHOLD
+       )
+       
+    2: logger = logging.getLogger(__name__)
+       
+    2: router = APIRouter(prefix="/e2ee", tags=["E2EE Keys"])
+       
+       
+    4: class OneTimePrekeyRequest(BaseModel):
+    2:     prekey_pub: str = Field(..., description="Base64 encoded one-time prekey public key", example="dGVzdF9wcmVrZXlfcHVibGljX2tleV8xMjM0NTY3ODkwYWJjZGVm")
+           
+    4:     class Config:
+    2:         json_schema_extra = {
+    4:             "example": {
+    2:                 "prekey_pub": "dGVzdF9wcmVrZXlfcHVibGljX2tleV8xMjM0NTY3ODkwYWJjZGVm"
+                   }
+               }
+       
+       
+    4: class UploadKeyBundleRequest(BaseModel):
+    2:     device_id: Optional[str] = Field(None, description="Device UUID (optional, will be generated if not provided)", example="550e8400-e29b-41d4-a716-446655440000")
+    2:     device_name: str = Field(..., description="Device name/identifier", example="iPhone 15 Pro")
+    2:     identity_key_pub: str = Field(..., description="Base64 encoded identity public key", example="dGVzdF9pZGVudGl0eV9wdWJsaWNfa2V5XzEyMzQ1Njc4OTBhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5eg==")
+    2:     signed_prekey_pub: str = Field(..., description="Base64 encoded signed prekey public key", example="dGVzdF9zaWduZWRfcHJla2V5X3B1YmxpY19rZXlfMTIzNDU2Nzg5MGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6")
+    2:     signed_prekey_sig: str = Field(..., description="Base64 encoded signature of signed prekey", example="dGVzdF9zaWduYXR1cmVfb2Zfc2lnbmVkX3ByZWtleV8xMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=")
+    2:     one_time_prekeys: List[OneTimePrekeyRequest] = Field(..., description="List of one-time prekeys", min_items=1)
+           
+    4:     class Config:
+    2:         json_schema_extra = {
+    4:             "example": {
+    2:                 "device_id": "550e8400-e29b-41d4-a716-446655440000",
+    2:                 "device_name": "iPhone 15 Pro",
+    2:                 "identity_key_pub": "dGVzdF9pZGVudGl0eV9wdWJsaWNfa2V5XzEyMzQ1Njc4OTBhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5eg==",
+    2:                 "signed_prekey_pub": "dGVzdF9zaWduZWRfcHJla2V5X3B1YmxpY19rZXlfMTIzNDU2Nzg5MGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6",
+    2:                 "signed_prekey_sig": "dGVzdF9zaWduYXR1cmVfb2Zfc2lnbmVkX3ByZWtleV8xMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=",
+    2:                 "one_time_prekeys": [
+    2:                     {"prekey_pub": "dGVzdF9wcmVrZXlfcHVibGljX2tleV8xMjM0NTY3ODkwYWJjZGVm"}
+                       ]
+                   }
+               }
+       
+       
+    4: class RevokeDeviceRequest(BaseModel):
+    2:     device_id: str = Field(..., description="Device UUID to revoke", example="550e8400-e29b-41d4-a716-446655440000")
+    2:     reason: Optional[str] = Field(None, description="Reason for revocation", example="Device lost or stolen")
+           
+    4:     class Config:
+    2:         json_schema_extra = {
+    4:             "example": {
+    2:                 "device_id": "550e8400-e29b-41d4-a716-446655440000",
+    2:                 "reason": "Device lost or stolen"
+                   }
+               }
+       
+       
+    4: class ClaimPrekeyRequest(BaseModel):
+    2:     device_id: str = Field(..., description="Device UUID", example="550e8400-e29b-41d4-a716-446655440000")
+    2:     prekey_id: int = Field(..., description="One-time prekey ID to claim", example=1)
+           
+    4:     class Config:
+    2:         json_schema_extra = {
+    4:             "example": {
+    2:                 "device_id": "550e8400-e29b-41d4-a716-446655440000",
+    2:                 "prekey_id": 1
+                   }
+               }
+       
+       
+    2: def _has_dm_relationship(db: Session, user_a: int, user_b: int) -> bool:
+           """Check if two users share a DM conversation when models are available."""
+    3:     dm_participant = getattr(models_module, "DMParticipant", None)
+    3:     dm_conversation = getattr(models_module, "DMConversation", None)
+    3:     if not dm_participant:
+>>>>>>         logger.warning("DMParticipant model not available; skipping relationship check")
+>>>>>>         return True
+       
+   12:     query = db.query(dm_participant.conversation_id).filter(
+    3:         dm_participant.user_id.in_([user_a, user_b])
+    6:     ).group_by(dm_participant.conversation_id).having(func.count() == 2)
+       
+    3:     if dm_conversation:
+    6:         query = query.join(
+    3:             dm_conversation,
+    3:             dm_conversation.id == dm_participant.conversation_id
+               )
+       
+    3:     return query.first() is not None
+       
+       
+    2: @router.post("/keys/upload")
+    4: def upload_key_bundle(
+    2:     request: UploadKeyBundleRequest,
+    4:     db: Session = Depends(get_db),
+    4:     current_user: User = Depends(get_current_user)
+       ):
+           """
+           Upload or update device key bundle and one-time prekeys.
+           Creates device if it doesn't exist.
+           """
+    5:     if not E2EE_DM_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
+           
+           # Validate request
+    5:     if not request.one_time_prekeys or len(request.one_time_prekeys) == 0:
+>>>>>>         raise HTTPException(status_code=400, detail="At least one one-time prekey is required")
+    5:     if len(request.one_time_prekeys) > E2EE_DM_PREKEY_POOL_SIZE:
+    2:         raise HTTPException(
+    1:             status_code=400,
+    1:             detail=f"Too many one-time prekeys (max {E2EE_DM_PREKEY_POOL_SIZE})"
+               )
+           
+    4:     try:
+               # Parse device_id or generate new one
+    4:         if request.device_id:
+    3:             try:
+    3:                 device_uuid = uuid.UUID(request.device_id)
+    1:             except ValueError:
+    1:                 raise HTTPException(status_code=400, detail=f"Invalid device_id format: {request.device_id}")
+               else:
+    1:             device_uuid = uuid.uuid4()
+               
+               # Find device by device_id first (device_id is globally unique)
+    6:         device = db.query(E2EEDevice).filter(
+    3:             E2EEDevice.device_id == device_uuid
+               ).first()
+               
+    3:         if not device:
+                   # Device doesn't exist, create new one
+    4:             device = E2EEDevice(
+    2:                 device_id=device_uuid,
+    2:                 user_id=current_user.account_id,
+    2:                 device_name=request.device_name,
+    2:                 status="active"
+                   )
+    2:             db.add(device)
+    2:             db.flush()
+               else:
+                   # Device exists - check ownership
+    1:             if device.user_id != current_user.account_id:
+>>>>>>                 raise HTTPException(
+>>>>>>                     status_code=403, 
+>>>>>>                     detail="Device belongs to another user. Cannot upload keys for this device."
+                       )
+                   
+                   # Update device name and last seen
+    1:             device.device_name = request.device_name
+    1:             device.last_seen_at = datetime.utcnow()
+    1:             if device.status == "revoked":
+>>>>>>                 raise HTTPException(status_code=403, detail="Device has been revoked")
+               
+               # Find or create key bundle
+    6:         key_bundle = db.query(E2EEKeyBundle).filter(
+    3:             E2EEKeyBundle.device_id == device_uuid
+               ).first()
+               
+               # Track identity key changes for security monitoring
+    3:         identity_changed = False
+    3:         old_identity_key = None
+               
+    3:         if key_bundle:
+    1:             old_identity_key = key_bundle.identity_key_pub
+    1:             if key_bundle.identity_key_pub != request.identity_key_pub:
+    1:                 identity_changed = True
+                       # Log identity key change as security event
+    2:                 logger.warning(
+    4:                     f"Identity key change detected: device={device_uuid}, "
+    1:                     f"user={current_user.account_id}, "
+    1:                     f"old_fingerprint={hashlib.sha256(old_identity_key.encode()).hexdigest()[:16]}, "
+    1:                     f"new_fingerprint={hashlib.sha256(request.identity_key_pub.encode()).hexdigest()[:16]}"
+                       )
+       
+    1:             if identity_changed:
+    3:                 identity_change_count = db.query(DeviceRevocation).filter(
+    1:                     DeviceRevocation.device_id == device_uuid,
+    1:                     DeviceRevocation.reason.in_(["identity_change", "identity_change_block"])
+    1:                 ).count() + 1
+       
+    2:                 if (E2EE_DM_IDENTITY_CHANGE_BLOCK_THRESHOLD > 0 and
+    1:                         identity_change_count >= E2EE_DM_IDENTITY_CHANGE_BLOCK_THRESHOLD):
+    1:                     device.status = "revoked"
+    2:                     db.add(DeviceRevocation(
+    1:                         user_id=current_user.account_id,
+    1:                         device_id=device_uuid,
+    1:                         reason="identity_change_block"
+                           ))
+    1:                     db.commit()
+    2:                     raise HTTPException(
+    1:                         status_code=409,
+    1:                         detail="IDENTITY_CHANGE_BLOCKED",
+    1:                         headers={"X-Error-Code": "IDENTITY_CHANGE_BLOCKED"}
+                           )
+       
+>>>>>>                 if (E2EE_DM_IDENTITY_CHANGE_ALERT_THRESHOLD > 0 and
+>>>>>>                         identity_change_count >= E2EE_DM_IDENTITY_CHANGE_ALERT_THRESHOLD):
+>>>>>>                     logger.warning(
+>>>>>>                         "Identity key change alert threshold reached",
+>>>>>>                         extra={
+>>>>>>                             "user_id": current_user.account_id,
+>>>>>>                             "device_id": str(device_uuid),
+>>>>>>                             "count": identity_change_count
+                               }
+                           )
+>>>>>>                 db.add(DeviceRevocation(
+>>>>>>                     user_id=current_user.account_id,
+>>>>>>                     device_id=device_uuid,
+>>>>>>                     reason="identity_change"
+                       ))
+       
+                   # Update existing bundle
+>>>>>>             key_bundle.identity_key_pub = request.identity_key_pub
+>>>>>>             key_bundle.signed_prekey_pub = request.signed_prekey_pub
+>>>>>>             key_bundle.signed_prekey_sig = request.signed_prekey_sig
+>>>>>>             key_bundle.bundle_version += 1
+>>>>>>             key_bundle.updated_at = datetime.utcnow()
+               else:
+                   # Create new bundle
+    4:             key_bundle = E2EEKeyBundle(
+    2:                 device_id=device_uuid,
+    2:                 identity_key_pub=request.identity_key_pub,
+    2:                 signed_prekey_pub=request.signed_prekey_pub,
+    2:                 signed_prekey_sig=request.signed_prekey_sig,
+    2:                 bundle_version=1,
+    2:                 prekeys_remaining=0
+                   )
+    2:             db.add(key_bundle)
+               
+               # Delete old unclaimed prekeys (optional cleanup)
+               # Keep claimed ones for audit, but we'll focus on unclaimed
+    6:         db.query(E2EEOneTimePrekey).filter(
+    2:             E2EEOneTimePrekey.device_id == device_uuid,
+    2:             E2EEOneTimePrekey.claimed == False
+    2:         ).delete(synchronize_session=False)
+               
+               # Add new one-time prekeys in bulk
+    9:         prekey_objects = [
+    6:             E2EEOneTimePrekey(
+    3:                 device_id=device_uuid,
+    3:                 prekey_pub=prekey_req.prekey_pub,
+    3:                 claimed=False
+                   )
+    5:             for prekey_req in request.one_time_prekeys
+               ]
+    2:         db.bulk_save_objects(prekey_objects)
+    2:         prekeys_stored = len(prekey_objects)
+               
+               # Update prekeys_remaining count
+    2:         key_bundle.prekeys_remaining = prekeys_stored
+               
+    2:         db.commit()
+    2:         db.refresh(key_bundle)
+               
+    2:         logger.info(f"Key bundle uploaded for device {device_uuid} (user {current_user.account_id})")
+               
+    2:         return {
+    2:             "device_id": str(device_uuid),
+    2:             "bundle_version": key_bundle.bundle_version,
+    2:             "prekeys_stored": prekeys_stored
+               }
+               
+    2:     except ValueError as e:
+>>>>>>         db.rollback()
+>>>>>>         logger.error(f"Invalid UUID in upload_key_bundle: {str(e)}")
+>>>>>>         raise HTTPException(status_code=400, detail=f"Invalid UUID: {str(e)}")
+    2:     except HTTPException:
+    2:         db.rollback()
+    2:         raise
+>>>>>>     except Exception as e:
+>>>>>>         db.rollback()
+>>>>>>         logger.error(f"Error uploading key bundle: {str(e)}", exc_info=True)
+>>>>>>         raise HTTPException(status_code=500, detail=f"Failed to upload key bundle: {str(e)}")
+       
+       
+    2: @router.get("/keys/bundle")
+    4: def get_key_bundle(
+    2:     user_id: int,
+    4:     bundle_version: Optional[int] = None,
+    4:     db: Session = Depends(get_db),
+    4:     current_user: User = Depends(get_current_user)
+       ):
+           """
+           Get key bundles for all active devices of a user.
+           Excludes revoked devices.
+           If bundle_version provided, checks for staleness.
+           """
+    4:     if not E2EE_DM_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
+           
+           # Check if user is blocked (either direction)
+    4:     from models import Block
+    8:     is_blocked = db.query(Block).filter(
+    8:         or_(
+    4:             and_(Block.blocker_id == user_id, Block.blocked_id == current_user.account_id),
+    4:             and_(Block.blocker_id == current_user.account_id, Block.blocked_id == user_id)
+               )
+           ).first()
+    4:     if is_blocked:
+    1:         raise HTTPException(status_code=403, detail="BLOCKED", headers={"X-Error-Code": "BLOCKED"})
+           
+    3:     if user_id != current_user.account_id and not _has_dm_relationship(db, user_id, current_user.account_id):
+    1:         raise HTTPException(status_code=403, detail="RELATIONSHIP_REQUIRED")
+           
+           # Get all active devices for the user (exclude revoked) with bundles and prekey counts
+   12:     rows = db.query(
+    2:         E2EEDevice.device_id,
+    2:         E2EEDevice.device_name,
+    2:         E2EEKeyBundle.identity_key_pub,
+    2:         E2EEKeyBundle.signed_prekey_pub,
+    2:         E2EEKeyBundle.signed_prekey_sig,
+    2:         E2EEKeyBundle.bundle_version,
+    2:         func.count(E2EEOneTimePrekey.id).filter(E2EEOneTimePrekey.claimed == False).label("available")
+           ).join(
+    2:         E2EEKeyBundle, E2EEKeyBundle.device_id == E2EEDevice.device_id
+           ).outerjoin(
+    2:         E2EEOneTimePrekey, E2EEOneTimePrekey.device_id == E2EEDevice.device_id
+           ).filter(
+    2:         E2EEDevice.user_id == user_id,
+    2:         E2EEDevice.status == "active"
+           ).group_by(
+    2:         E2EEDevice.device_id,
+    2:         E2EEDevice.device_name,
+    2:         E2EEKeyBundle.identity_key_pub,
+    2:         E2EEKeyBundle.signed_prekey_pub,
+    2:         E2EEKeyBundle.signed_prekey_sig,
+    2:         E2EEKeyBundle.bundle_version
+           ).all()
+           
+    2:     result_devices = []
+    3:     for row in rows:
+    2:         if bundle_version is not None and row.bundle_version > bundle_version:
+    2:             raise HTTPException(
+    1:                 status_code=409,
+    1:                 detail="BUNDLE_STALE",
+    1:                 headers={
+    1:                     "X-Error-Code": "BUNDLE_STALE",
+    1:                     "X-Bundle-Version": str(row.bundle_version)
+                       }
+                   )
+       
+    2:         result_devices.append({
+    1:             "device_id": str(row.device_id),
+    1:             "device_name": row.device_name,
+    1:             "identity_key_pub": row.identity_key_pub,
+    1:             "signed_prekey_pub": row.signed_prekey_pub,
+    1:             "signed_prekey_sig": row.signed_prekey_sig,
+    1:             "bundle_version": row.bundle_version,
+    1:             "prekeys_available": int(row.available or 0)
+               })
+           
+    1:     return {
+    1:         "devices": result_devices
+           }
+       
+       
+    2: @router.get("/devices")
+    4: def list_devices(
+    4:     db: Session = Depends(get_db),
+    4:     current_user: User = Depends(get_current_user)
+       ):
+           """
+           List all devices for the current user.
+           """
+    1:     if not E2EE_DM_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
+           
+    3:     devices = db.query(E2EEDevice).filter(
+    1:         E2EEDevice.user_id == current_user.account_id
+    1:     ).order_by(E2EEDevice.created_at.desc()).all()
+           
+    1:     return {
+    4:         "devices": [
+    1:             {
+    1:                 "device_id": str(device.device_id),
+    1:                 "device_name": device.device_name,
+    1:                 "created_at": device.created_at.isoformat(),
+    1:                 "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
+    1:                 "status": device.status
+                   }
+    2:             for device in devices
+               ]
+           }
+       
+       
+    2: @router.post("/devices/revoke")
+    4: def revoke_device(
+    2:     request: RevokeDeviceRequest,
+    4:     db: Session = Depends(get_db),
+    4:     current_user: User = Depends(get_current_user)
+       ):
+           """
+           Revoke a device. Marks it as revoked and logs the revocation.
+           """
+    1:     if not E2EE_DM_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
+           
+    1:     try:
+    1:         device_uuid = uuid.UUID(request.device_id)
+>>>>>>     except ValueError:
+>>>>>>         raise HTTPException(status_code=400, detail="Invalid device UUID")
+           
+    2:     device = db.query(E2EEDevice).filter(
+    1:         E2EEDevice.device_id == device_uuid,
+    1:         E2EEDevice.user_id == current_user.account_id
+           ).first()
+           
+    1:     if not device:
+>>>>>>         raise HTTPException(status_code=404, detail="Device not found")
+           
+    1:     if device.status == "revoked":
+>>>>>>         return {"success": True, "message": "Device already revoked"}
+           
+           # Mark device as revoked
+    1:     device.status = "revoked"
+           
+           # Log revocation
+    2:     revocation = DeviceRevocation(
+    1:         user_id=current_user.account_id,
+    1:         device_id=device_uuid,
+    1:         reason=request.reason
+           )
+    1:     db.add(revocation)
+           
+    1:     db.commit()
+           
+    1:     logger.info(f"Device {device_uuid} revoked by user {current_user.account_id}")
+           
+    1:     return {"success": True}
+       
+       
+    2: @router.post("/prekeys/claim")
+    4: def claim_prekey(
+    2:     request: ClaimPrekeyRequest,
+    4:     db: Session = Depends(get_db),
+    4:     current_user: User = Depends(get_current_user)
+       ):
+           """
+           Claim a one-time prekey during X3DH session setup.
+           Marks the prekey as claimed atomically.
+           """
+    6:     if not E2EE_DM_ENABLED:
+>>>>>>         raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
+           
+    6:     try:
+    6:         device_uuid = uuid.UUID(request.device_id)
+>>>>>>     except ValueError:
+>>>>>>         raise HTTPException(status_code=400, detail="Invalid device UUID")
+           
+           # Check if device is revoked
+    6:     device = db.query(E2EEDevice).filter(E2EEDevice.device_id == device_uuid).first()
+    6:     if not device:
+>>>>>>         raise HTTPException(status_code=404, detail="Device not found")
+    6:     if device.status == "revoked":
+    2:         raise HTTPException(
+    1:             status_code=409,
+    1:             detail="DEVICE_REVOKED",
+    1:             headers={"X-Error-Code": "DEVICE_REVOKED"}
+               )
+       
+    5:     if device.user_id != current_user.account_id:
+    2:         from models import Block
+    4:         is_blocked = db.query(Block).filter(
+    4:             or_(
+    2:                 and_(Block.blocker_id == device.user_id, Block.blocked_id == current_user.account_id),
+    2:                 and_(Block.blocker_id == current_user.account_id, Block.blocked_id == device.user_id)
+                   )
+               ).first()
+    2:         if is_blocked:
+    1:             raise HTTPException(status_code=403, detail="BLOCKED", headers={"X-Error-Code": "BLOCKED"})
+       
+    1:         if not _has_dm_relationship(db, device.user_id, current_user.account_id):
+    1:             raise HTTPException(status_code=403, detail="RELATIONSHIP_REQUIRED")
+           
+           # Atomically claim the prekey
+    6:     result = db.execute(
+   12:         update(E2EEOneTimePrekey)
+               .where(
+    3:             E2EEOneTimePrekey.id == request.prekey_id,
+    3:             E2EEOneTimePrekey.device_id == device_uuid,
+    3:             E2EEOneTimePrekey.claimed == False
+               )
+    3:         .values(claimed=True)
+    3:         .returning(E2EEOneTimePrekey.id)
+           )
+    3:     claimed_id = result.scalar_one_or_none()
+           
+    3:     if not claimed_id:
+               # Check if pool is exhausted
+    4:         available_count = db.query(E2EEOneTimePrekey).filter(
+    2:             E2EEOneTimePrekey.device_id == device_uuid,
+    2:             E2EEOneTimePrekey.claimed == False
+               ).count()
+               
+    2:         if available_count == 0:
+    2:             key_bundle = db.query(E2EEKeyBundle).filter(
+    1:                 E2EEKeyBundle.device_id == device_uuid
+                   ).first()
+    1:             bundle_version = key_bundle.bundle_version if key_bundle else 1
+                   
+    2:             raise HTTPException(
+    1:                 status_code=409,
+    1:                 detail="PREKEYS_EXHAUSTED",
+    1:                 headers={
+    1:                     "X-Error-Code": "PREKEYS_EXHAUSTED",
+    1:                     "X-Bundle-Version": str(bundle_version)
+                       }
+                   )
+               else:
+    1:             raise HTTPException(status_code=404, detail="Prekey not found or already claimed")
+       
+           # Update bundle's prekeys_remaining count
+    3:     remaining = db.query(func.count(E2EEOneTimePrekey.id)).filter(
+    1:         E2EEOneTimePrekey.device_id == device_uuid,
+    1:         E2EEOneTimePrekey.claimed == False
+    1:     ).scalar() or 0
+    2:     key_bundle = db.query(E2EEKeyBundle).filter(
+    1:         E2EEKeyBundle.device_id == device_uuid
+           ).first()
+           
+    1:     if key_bundle:
+    1:         key_bundle.prekeys_remaining = remaining
+           
+    1:     db.commit()
+           
+    1:     return {
+    1:         "claimed": True,
+    1:         "prekey_id": request.prekey_id
+           }

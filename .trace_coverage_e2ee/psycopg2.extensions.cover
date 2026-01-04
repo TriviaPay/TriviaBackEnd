@@ -1,0 +1,213 @@
+    1: """psycopg extensions to the DBAPI-2.0
+       
+       This module holds all the extensions to the DBAPI-2.0 provided by psycopg.
+       
+       - `connection` -- the new-type inheritable connection class
+       - `cursor` -- the new-type inheritable cursor class
+       - `lobject` -- the new-type inheritable large object class
+       - `adapt()` -- exposes the PEP-246_ compatible adapting mechanism used
+         by psycopg to adapt Python types to PostgreSQL ones
+       
+       .. _PEP-246: https://www.python.org/dev/peps/pep-0246/
+       """
+       # psycopg/extensions.py - DBAPI-2.0 extensions specific to psycopg
+       #
+       # Copyright (C) 2003-2019 Federico Di Gregorio  <fog@debian.org>
+       # Copyright (C) 2020-2021 The Psycopg Team
+       #
+       # psycopg2 is free software: you can redistribute it and/or modify it
+       # under the terms of the GNU Lesser General Public License as published
+       # by the Free Software Foundation, either version 3 of the License, or
+       # (at your option) any later version.
+       #
+       # In addition, as a special exception, the copyright holders give
+       # permission to link this program with the OpenSSL library (or with
+       # modified versions of OpenSSL that use the same license as OpenSSL),
+       # and distribute linked combinations including the two.
+       #
+       # You must obey the GNU Lesser General Public License in all respects for
+       # all of the code used other than OpenSSL.
+       #
+       # psycopg2 is distributed in the hope that it will be useful, but WITHOUT
+       # ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+       # FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+       # License for more details.
+       
+    1: import re as _re
+       
+    1: from psycopg2._psycopg import (                             # noqa
+           BINARYARRAY, BOOLEAN, BOOLEANARRAY, BYTES, BYTESARRAY, DATE, DATEARRAY,
+           DATETIMEARRAY, DECIMAL, DECIMALARRAY, FLOAT, FLOATARRAY, INTEGER,
+           INTEGERARRAY, INTERVAL, INTERVALARRAY, LONGINTEGER, LONGINTEGERARRAY,
+           ROWIDARRAY, STRINGARRAY, TIME, TIMEARRAY, UNICODE, UNICODEARRAY,
+           AsIs, Binary, Boolean, Float, Int, QuotedString, )
+       
+    1: from psycopg2._psycopg import (                         # noqa
+           PYDATE, PYDATETIME, PYDATETIMETZ, PYINTERVAL, PYTIME, PYDATEARRAY,
+           PYDATETIMEARRAY, PYDATETIMETZARRAY, PYINTERVALARRAY, PYTIMEARRAY,
+           DateFromPy, TimeFromPy, TimestampFromPy, IntervalFromPy, )
+       
+    1: from psycopg2._psycopg import (                             # noqa
+           adapt, adapters, encodings, connection, cursor,
+           lobject, Xid, libpq_version, parse_dsn, quote_ident,
+           string_types, binary_types, new_type, new_array_type, register_type,
+           ISQLQuote, Notify, Diagnostics, Column, ConnectionInfo,
+           QueryCanceledError, TransactionRollbackError,
+           set_wait_callback, get_wait_callback, encrypt_password, )
+       
+       
+       """Isolation level values."""
+    1: ISOLATION_LEVEL_AUTOCOMMIT = 0
+    1: ISOLATION_LEVEL_READ_UNCOMMITTED = 4
+    1: ISOLATION_LEVEL_READ_COMMITTED = 1
+    1: ISOLATION_LEVEL_REPEATABLE_READ = 2
+    1: ISOLATION_LEVEL_SERIALIZABLE = 3
+    1: ISOLATION_LEVEL_DEFAULT = None
+       
+       
+       """psycopg connection status values."""
+    1: STATUS_SETUP = 0
+    1: STATUS_READY = 1
+    1: STATUS_BEGIN = 2
+    1: STATUS_SYNC = 3  # currently unused
+    1: STATUS_ASYNC = 4  # currently unused
+    1: STATUS_PREPARED = 5
+       
+       # This is a useful mnemonic to check if the connection is in a transaction
+    1: STATUS_IN_TRANSACTION = STATUS_BEGIN
+       
+       
+       """psycopg asynchronous connection polling values"""
+    1: POLL_OK = 0
+    1: POLL_READ = 1
+    1: POLL_WRITE = 2
+    1: POLL_ERROR = 3
+       
+       
+       """Backend transaction status values."""
+    1: TRANSACTION_STATUS_IDLE = 0
+    1: TRANSACTION_STATUS_ACTIVE = 1
+    1: TRANSACTION_STATUS_INTRANS = 2
+    1: TRANSACTION_STATUS_INERROR = 3
+    1: TRANSACTION_STATUS_UNKNOWN = 4
+       
+       
+    1: def register_adapter(typ, callable):
+           """Register 'callable' as an ISQLQuote adapter for type 'typ'."""
+   11:     adapters[(typ, ISQLQuote)] = callable
+       
+       
+       # The SQL_IN class is the official adapter for tuples starting from 2.0.6.
+    2: class SQL_IN:
+    1:     """Adapt any iterable to an SQL quotable object."""
+    1:     def __init__(self, seq):
+>>>>>>         self._seq = seq
+>>>>>>         self._conn = None
+       
+    1:     def prepare(self, conn):
+>>>>>>         self._conn = conn
+       
+    1:     def getquoted(self):
+               # this is the important line: note how every object in the
+               # list is adapted and then how getquoted() is called on it
+>>>>>>         pobjs = [adapt(o) for o in self._seq]
+>>>>>>         if self._conn is not None:
+>>>>>>             for obj in pobjs:
+>>>>>>                 if hasattr(obj, 'prepare'):
+>>>>>>                     obj.prepare(self._conn)
+>>>>>>         qobjs = [o.getquoted() for o in pobjs]
+>>>>>>         return b'(' + b', '.join(qobjs) + b')'
+       
+    1:     def __str__(self):
+>>>>>>         return str(self.getquoted())
+       
+       
+    2: class NoneAdapter:
+    1:     """Adapt None to NULL.
+       
+           This adapter is not used normally as a fast path in mogrify uses NULL,
+           but it makes easier to adapt composite types.
+           """
+    1:     def __init__(self, obj):
+>>>>>>         pass
+       
+    1:     def getquoted(self, _null=b"NULL"):
+>>>>>>         return _null
+       
+       
+    1: def make_dsn(dsn=None, **kwargs):
+           """Convert a set of keywords into a connection strings."""
+    2:     if dsn is None and not kwargs:
+>>>>>>         return ''
+       
+           # If no kwarg is specified don't mung the dsn, but verify it
+    2:     if not kwargs:
+>>>>>>         parse_dsn(dsn)
+>>>>>>         return dsn
+       
+           # Override the dsn with the parameters
+    2:     if 'database' in kwargs:
+>>>>>>         if 'dbname' in kwargs:
+>>>>>>             raise TypeError(
+>>>>>>                 "you can't specify both 'database' and 'dbname' arguments")
+>>>>>>         kwargs['dbname'] = kwargs.pop('database')
+       
+           # Drop the None arguments
+   16:     kwargs = {k: v for (k, v) in kwargs.items() if v is not None}
+       
+    2:     if dsn is not None:
+>>>>>>         tmp = parse_dsn(dsn)
+>>>>>>         tmp.update(kwargs)
+>>>>>>         kwargs = tmp
+       
+   30:     dsn = " ".join(["{}={}".format(k, _param_escape(str(v)))
+   14:         for (k, v) in kwargs.items()])
+       
+           # verify that the returned dsn is valid
+    2:     parse_dsn(dsn)
+       
+    2:     return dsn
+       
+       
+    1: def _param_escape(s,
+    1:         re_escape=_re.compile(r"([\\'])"),
+    1:         re_space=_re.compile(r'\s')):
+           """
+           Apply the escaping rule required by PQconnectdb
+           """
+   12:     if not s:
+>>>>>>         return "''"
+       
+   12:     s = re_escape.sub(r'\\\1', s)
+   12:     if re_space.search(s):
+>>>>>>         s = "'" + s + "'"
+       
+   12:     return s
+       
+       
+       # Create default json typecasters for PostgreSQL 9.2 oids
+    1: from psycopg2._json import register_default_json, register_default_jsonb    # noqa
+       
+    1: try:
+    1:     JSON, JSONARRAY = register_default_json()
+    1:     JSONB, JSONBARRAY = register_default_jsonb()
+>>>>>> except ImportError:
+>>>>>>     pass
+       
+    1: del register_default_json, register_default_jsonb
+       
+       
+       # Create default Range typecasters
+    1: from psycopg2. _range import Range                              # noqa
+    1: del Range
+       
+       
+       # Add the "cleaned" version of the encodings to the key.
+       # When the encoding is set its name is cleaned up from - and _ and turned
+       # uppercase, so an encoding not respecting these rules wouldn't be found in the
+       # encodings keys and would raise an exception with the unicode typecaster
+   68: for k, v in list(encodings.items()):
+   67:     k = k.replace('_', '').replace('-', '').upper()
+   67:     encodings[k] = v
+       
+    1: del k, v

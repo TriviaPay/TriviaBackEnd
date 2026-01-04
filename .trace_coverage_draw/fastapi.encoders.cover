@@ -1,0 +1,341 @@
+    1: import dataclasses
+    1: import datetime
+    1: from collections import defaultdict, deque
+    1: from decimal import Decimal
+    1: from enum import Enum
+    1: from ipaddress import (
+           IPv4Address,
+           IPv4Interface,
+           IPv4Network,
+           IPv6Address,
+           IPv6Interface,
+           IPv6Network,
+       )
+    1: from pathlib import Path, PurePath
+    1: from re import Pattern
+    1: from types import GeneratorType
+    1: from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+    1: from uuid import UUID
+       
+    1: from fastapi.types import IncEx
+    1: from pydantic import BaseModel
+    1: from pydantic.color import Color
+    1: from pydantic.networks import AnyUrl, NameEmail
+    1: from pydantic.types import SecretBytes, SecretStr
+    1: from typing_extensions import Annotated, Doc  # type: ignore [attr-defined]
+       
+    1: from ._compat import PYDANTIC_V2, Url, _model_dump
+       
+       
+       # Taken from Pydantic v1 as is
+    1: def isoformat(o: Union[datetime.date, datetime.time]) -> str:
+>>>>>>     return o.isoformat()
+       
+       
+       # Taken from Pydantic v1 as is
+       # TODO: pv2 should this return strings instead?
+    1: def decimal_encoder(dec_value: Decimal) -> Union[int, float]:
+           """
+           Encodes a Decimal as int of there's no exponent, otherwise float
+       
+           This is useful when we use ConstrainedDecimal to represent Numeric(x,0)
+           where a integer (but not int typed) is used. Encoding this as a float
+           results in failed round-tripping between encode and parse.
+           Our Id type is a prime example of this.
+       
+           >>> decimal_encoder(Decimal("1.0"))
+           1.0
+       
+           >>> decimal_encoder(Decimal("1"))
+           1
+           """
+>>>>>>     if dec_value.as_tuple().exponent >= 0:  # type: ignore[operator]
+>>>>>>         return int(dec_value)
+           else:
+>>>>>>         return float(dec_value)
+       
+       
+    1: ENCODERS_BY_TYPE: Dict[Type[Any], Callable[[Any], Any]] = {
+    1:     bytes: lambda o: o.decode(),
+    1:     Color: str,
+    1:     datetime.date: isoformat,
+    1:     datetime.datetime: isoformat,
+    1:     datetime.time: isoformat,
+    1:     datetime.timedelta: lambda td: td.total_seconds(),
+    1:     Decimal: decimal_encoder,
+    1:     Enum: lambda o: o.value,
+    1:     frozenset: list,
+    1:     deque: list,
+    1:     GeneratorType: list,
+    1:     IPv4Address: str,
+    1:     IPv4Interface: str,
+    1:     IPv4Network: str,
+    1:     IPv6Address: str,
+    1:     IPv6Interface: str,
+    1:     IPv6Network: str,
+    1:     NameEmail: str,
+    1:     Path: str,
+    1:     Pattern: lambda o: o.pattern,
+    1:     SecretBytes: str,
+    1:     SecretStr: str,
+    1:     set: list,
+    1:     UUID: str,
+    1:     Url: str,
+    1:     AnyUrl: str,
+       }
+       
+       
+    1: def generate_encoders_by_class_tuples(
+    1:     type_encoder_map: Dict[Any, Callable[[Any], Any]]
+    1: ) -> Dict[Callable[[Any], Any], Tuple[Any, ...]]:
+    2:     encoders_by_class_tuples: Dict[Callable[[Any], Any], Tuple[Any, ...]] = defaultdict(
+    1:         tuple
+           )
+   26:     for type_, encoder in type_encoder_map.items():
+   25:         encoders_by_class_tuples[encoder] += (type_,)
+    1:     return encoders_by_class_tuples
+       
+       
+    1: encoders_by_class_tuples = generate_encoders_by_class_tuples(ENCODERS_BY_TYPE)
+       
+       
+    2: def jsonable_encoder(
+    2:     obj: Annotated[
+    2:         Any,
+    2:         Doc(
+    1:             """
+                   The input object to convert to JSON.
+                   """
+               ),
+           ],
+    2:     include: Annotated[
+    2:         Optional[IncEx],
+    2:         Doc(
+    1:             """
+                   Pydantic's `include` parameter, passed to Pydantic models to set the
+                   fields to include.
+                   """
+               ),
+           ] = None,
+    2:     exclude: Annotated[
+    2:         Optional[IncEx],
+    2:         Doc(
+    1:             """
+                   Pydantic's `exclude` parameter, passed to Pydantic models to set the
+                   fields to exclude.
+                   """
+               ),
+           ] = None,
+    2:     by_alias: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   Pydantic's `by_alias` parameter, passed to Pydantic models to define if
+                   the output should use the alias names (when provided) or the Python
+                   attribute names. In an API, if you set an alias, it's probably because you
+                   want to use it in the result, so you probably want to leave this set to
+                   `True`.
+                   """
+               ),
+           ] = True,
+    2:     exclude_unset: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   Pydantic's `exclude_unset` parameter, passed to Pydantic models to define
+                   if it should exclude from the output the fields that were not explicitly
+                   set (and that only had their default values).
+                   """
+               ),
+           ] = False,
+    2:     exclude_defaults: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   Pydantic's `exclude_defaults` parameter, passed to Pydantic models to define
+                   if it should exclude from the output the fields that had the same default
+                   value, even when they were explicitly set.
+                   """
+               ),
+           ] = False,
+    2:     exclude_none: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   Pydantic's `exclude_none` parameter, passed to Pydantic models to define
+                   if it should exclude from the output any fields that have a `None` value.
+                   """
+               ),
+           ] = False,
+    2:     custom_encoder: Annotated[
+    2:         Optional[Dict[Any, Callable[[Any], Any]]],
+    2:         Doc(
+    1:             """
+                   Pydantic's `custom_encoder` parameter, passed to Pydantic models to define
+                   a custom encoder.
+                   """
+               ),
+           ] = None,
+    2:     sqlalchemy_safe: Annotated[
+    2:         bool,
+    2:         Doc(
+    1:             """
+                   Exclude from the output any fields that start with the name `_sa`.
+       
+                   This is mainly a hack for compatibility with SQLAlchemy objects, they
+                   store internal SQLAlchemy-specific state in attributes named with `_sa`,
+                   and those objects can't (and shouldn't be) serialized to JSON.
+                   """
+               ),
+           ] = True,
+    1: ) -> Any:
+           """
+           Convert any object to something that can be encoded in JSON.
+       
+           This is used internally by FastAPI to make sure anything you return can be
+           encoded as JSON before it is sent to the client.
+       
+           You can also use it yourself, for example to convert objects before saving them
+           in a database that supports only JSON.
+       
+           Read more about it in the
+           [FastAPI docs for JSON Compatible Encoder](https://fastapi.tiangolo.com/tutorial/encoder/).
+           """
+   10:     custom_encoder = custom_encoder or {}
+   10:     if custom_encoder:
+>>>>>>         if type(obj) in custom_encoder:
+>>>>>>             return custom_encoder[type(obj)](obj)
+               else:
+>>>>>>             for encoder_type, encoder_instance in custom_encoder.items():
+>>>>>>                 if isinstance(obj, encoder_type):
+>>>>>>                     return encoder_instance(obj)
+   10:     if include is not None and not isinstance(include, (set, dict)):
+>>>>>>         include = set(include)
+   10:     if exclude is not None and not isinstance(exclude, (set, dict)):
+>>>>>>         exclude = set(exclude)
+   10:     if isinstance(obj, BaseModel):
+               # TODO: remove when deprecating Pydantic v1
+>>>>>>         encoders: Dict[Any, Any] = {}
+>>>>>>         if not PYDANTIC_V2:
+>>>>>>             encoders = getattr(obj.__config__, "json_encoders", {})  # type: ignore[attr-defined]
+>>>>>>             if custom_encoder:
+>>>>>>                 encoders.update(custom_encoder)
+>>>>>>         obj_dict = _model_dump(
+>>>>>>             obj,
+>>>>>>             mode="json",
+>>>>>>             include=include,
+>>>>>>             exclude=exclude,
+>>>>>>             by_alias=by_alias,
+>>>>>>             exclude_unset=exclude_unset,
+>>>>>>             exclude_none=exclude_none,
+>>>>>>             exclude_defaults=exclude_defaults,
+               )
+>>>>>>         if "__root__" in obj_dict:
+>>>>>>             obj_dict = obj_dict["__root__"]
+>>>>>>         return jsonable_encoder(
+>>>>>>             obj_dict,
+>>>>>>             exclude_none=exclude_none,
+>>>>>>             exclude_defaults=exclude_defaults,
+                   # TODO: remove when deprecating Pydantic v1
+>>>>>>             custom_encoder=encoders,
+>>>>>>             sqlalchemy_safe=sqlalchemy_safe,
+               )
+   10:     if dataclasses.is_dataclass(obj):
+>>>>>>         obj_dict = dataclasses.asdict(obj)
+>>>>>>         return jsonable_encoder(
+>>>>>>             obj_dict,
+>>>>>>             include=include,
+>>>>>>             exclude=exclude,
+>>>>>>             by_alias=by_alias,
+>>>>>>             exclude_unset=exclude_unset,
+>>>>>>             exclude_defaults=exclude_defaults,
+>>>>>>             exclude_none=exclude_none,
+>>>>>>             custom_encoder=custom_encoder,
+>>>>>>             sqlalchemy_safe=sqlalchemy_safe,
+               )
+   10:     if isinstance(obj, Enum):
+>>>>>>         return obj.value
+   10:     if isinstance(obj, PurePath):
+>>>>>>         return str(obj)
+   10:     if isinstance(obj, (str, int, float, type(None))):
+    8:         return obj
+    2:     if isinstance(obj, dict):
+    2:         encoded_dict = {}
+    2:         allowed_keys = set(obj.keys())
+    2:         if include is not None:
+>>>>>>             allowed_keys &= set(include)
+    2:         if exclude is not None:
+>>>>>>             allowed_keys -= set(exclude)
+    6:         for key, value in obj.items():
+   20:             if (
+                       (
+    4:                     not sqlalchemy_safe
+    4:                     or (not isinstance(key, str))
+    4:                     or (not key.startswith("_sa"))
+                       )
+    4:                 and (value is not None or not exclude_none)
+    4:                 and key in allowed_keys
+                   ):
+    8:                 encoded_key = jsonable_encoder(
+    4:                     key,
+    4:                     by_alias=by_alias,
+    4:                     exclude_unset=exclude_unset,
+    4:                     exclude_none=exclude_none,
+    4:                     custom_encoder=custom_encoder,
+    4:                     sqlalchemy_safe=sqlalchemy_safe,
+                       )
+    8:                 encoded_value = jsonable_encoder(
+    4:                     value,
+    4:                     by_alias=by_alias,
+    4:                     exclude_unset=exclude_unset,
+    4:                     exclude_none=exclude_none,
+    4:                     custom_encoder=custom_encoder,
+    4:                     sqlalchemy_safe=sqlalchemy_safe,
+                       )
+    4:                 encoded_dict[encoded_key] = encoded_value
+    2:         return encoded_dict
+>>>>>>     if isinstance(obj, (list, set, frozenset, GeneratorType, tuple, deque)):
+>>>>>>         encoded_list = []
+>>>>>>         for item in obj:
+>>>>>>             encoded_list.append(
+>>>>>>                 jsonable_encoder(
+>>>>>>                     item,
+>>>>>>                     include=include,
+>>>>>>                     exclude=exclude,
+>>>>>>                     by_alias=by_alias,
+>>>>>>                     exclude_unset=exclude_unset,
+>>>>>>                     exclude_defaults=exclude_defaults,
+>>>>>>                     exclude_none=exclude_none,
+>>>>>>                     custom_encoder=custom_encoder,
+>>>>>>                     sqlalchemy_safe=sqlalchemy_safe,
+                       )
+                   )
+>>>>>>         return encoded_list
+       
+>>>>>>     if type(obj) in ENCODERS_BY_TYPE:
+>>>>>>         return ENCODERS_BY_TYPE[type(obj)](obj)
+>>>>>>     for encoder, classes_tuple in encoders_by_class_tuples.items():
+>>>>>>         if isinstance(obj, classes_tuple):
+>>>>>>             return encoder(obj)
+       
+>>>>>>     try:
+>>>>>>         data = dict(obj)
+>>>>>>     except Exception as e:
+>>>>>>         errors: List[Exception] = []
+>>>>>>         errors.append(e)
+>>>>>>         try:
+>>>>>>             data = vars(obj)
+>>>>>>         except Exception as e:
+>>>>>>             errors.append(e)
+>>>>>>             raise ValueError(errors) from e
+>>>>>>     return jsonable_encoder(
+>>>>>>         data,
+>>>>>>         include=include,
+>>>>>>         exclude=exclude,
+>>>>>>         by_alias=by_alias,
+>>>>>>         exclude_unset=exclude_unset,
+>>>>>>         exclude_defaults=exclude_defaults,
+>>>>>>         exclude_none=exclude_none,
+>>>>>>         custom_encoder=custom_encoder,
+>>>>>>         sqlalchemy_safe=sqlalchemy_safe,
+           )

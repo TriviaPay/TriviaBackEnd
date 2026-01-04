@@ -1,0 +1,87 @@
+    1: from __future__ import annotations
+       
+    1: import typing
+       
+    1: from starlette._utils import is_async_callable
+    1: from starlette.concurrency import run_in_threadpool
+    1: from starlette.exceptions import HTTPException
+    1: from starlette.requests import Request
+    1: from starlette.types import (
+           ASGIApp,
+           ExceptionHandler,
+           HTTPExceptionHandler,
+           Message,
+           Receive,
+           Scope,
+           Send,
+           WebSocketExceptionHandler,
+       )
+    1: from starlette.websockets import WebSocket
+       
+    1: ExceptionHandlers = typing.Dict[typing.Any, ExceptionHandler]
+    1: StatusHandlers = typing.Dict[int, ExceptionHandler]
+       
+       
+    1: def _lookup_exception_handler(
+           exc_handlers: ExceptionHandlers, exc: Exception
+       ) -> ExceptionHandler | None:
+   16:     for cls in type(exc).__mro__:
+   16:         if cls in exc_handlers:
+    8:             return exc_handlers[cls]
+>>>>>>     return None
+       
+       
+    1: def wrap_app_handling_exceptions(app: ASGIApp, conn: Request | WebSocket) -> ASGIApp:
+           exception_handlers: ExceptionHandlers
+           status_handlers: StatusHandlers
+   24:     try:
+   24:         exception_handlers, status_handlers = conn.scope["starlette.exception_handlers"]
+>>>>>>     except KeyError:
+>>>>>>         exception_handlers, status_handlers = {}, {}
+       
+   24:     async def wrapped_app(scope: Scope, receive: Receive, send: Send) -> None:
+   24:         response_started = False
+       
+   24:         async def sender(message: Message) -> None:
+                   nonlocal response_started
+       
+   48:             if message["type"] == "http.response.start":
+   24:                 response_started = True
+   48:             await send(message)
+       
+   24:         try:
+   24:             await app(scope, receive, sender)
+    8:         except Exception as exc:
+    8:             handler = None
+       
+    8:             if isinstance(exc, HTTPException):
+    8:                 handler = status_handlers.get(exc.status_code)
+       
+    8:             if handler is None:
+    8:                 handler = _lookup_exception_handler(exception_handlers, exc)
+       
+    8:             if handler is None:
+>>>>>>                 raise exc
+       
+    8:             if response_started:
+>>>>>>                 msg = "Caught handled exception, but response already started."
+>>>>>>                 raise RuntimeError(msg) from exc
+       
+    8:             if scope["type"] == "http":
+                       nonlocal conn
+    8:                 handler = typing.cast(HTTPExceptionHandler, handler)
+    8:                 conn = typing.cast(Request, conn)
+    8:                 if is_async_callable(handler):
+    8:                     response = await handler(conn, exc)
+                       else:
+>>>>>>                     response = await run_in_threadpool(handler, conn, exc)
+    8:                 await response(scope, receive, sender)
+>>>>>>             elif scope["type"] == "websocket":
+>>>>>>                 handler = typing.cast(WebSocketExceptionHandler, handler)
+>>>>>>                 conn = typing.cast(WebSocket, conn)
+>>>>>>                 if is_async_callable(handler):
+>>>>>>                     await handler(conn, exc)
+                       else:
+>>>>>>                     await run_in_threadpool(handler, conn, exc)
+       
+   24:     return wrapped_app

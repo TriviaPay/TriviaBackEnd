@@ -1,0 +1,5 @@
+    1: from typing import Any, Callable, Dict
+       
+    1: JWKDict = Dict[str, Any]
+       
+    1: HashlibHash = Callable[..., Any]

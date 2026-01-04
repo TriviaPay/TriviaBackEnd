@@ -1,0 +1,420 @@
+    1: import binascii
+    1: from base64 import b64decode
+    1: from typing import Optional
+       
+    1: from fastapi.exceptions import HTTPException
+    1: from fastapi.openapi.models import HTTPBase as HTTPBaseModel
+    1: from fastapi.openapi.models import HTTPBearer as HTTPBearerModel
+    1: from fastapi.security.base import SecurityBase
+    1: from fastapi.security.utils import get_authorization_scheme_param
+    1: from pydantic import BaseModel
+    1: from starlette.requests import Request
+    1: from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
+    1: from typing_extensions import Annotated, Doc  # type: ignore [attr-defined]
+       
+       
+    2: class HTTPBasicCredentials(BaseModel):
+    1:     """
+           The HTTP Basic credendials given as the result of using `HTTPBasic` in a
+           dependency.
+       
+           Read more about it in the
+           [FastAPI docs for HTTP Basic Auth](https://fastapi.tiangolo.com/advanced/security/http-basic-auth/).
+           """
+       
+    1:     username: Annotated[str, Doc("The HTTP Basic username.")]
+    1:     password: Annotated[str, Doc("The HTTP Basic password.")]
+       
+       
+    2: class HTTPAuthorizationCredentials(BaseModel):
+    1:     """
+           The HTTP authorization credentials in the result of using `HTTPBearer` or
+           `HTTPDigest` in a dependency.
+       
+           The HTTP authorization header value is split by the first space.
+       
+           The first part is the `scheme`, the second part is the `credentials`.
+       
+           For example, in an HTTP Bearer token scheme, the client will send a header
+           like:
+       
+           ```
+           Authorization: Bearer deadbeef12346
+           ```
+       
+           In this case:
+       
+           * `scheme` will have the value `"Bearer"`
+           * `credentials` will have the value `"deadbeef12346"`
+           """
+       
+    2:     scheme: Annotated[
+    2:         str,
+    2:         Doc(
+    1:             """
+                   The HTTP authorization scheme extracted from the header value.
+                   """
+               ),
+           ]
+    2:     credentials: Annotated[
+    2:         str,
+    2:         Doc(
+    1:             """
+                   The HTTP authorization credentials extracted from the header value.
+                   """
+               ),
+           ]
+       
+       
+    2: class HTTPBase(SecurityBase):
+    2:     def __init__(
+               self,
+               *,
+    1:         scheme: str,
+    2:         scheme_name: Optional[str] = None,
+    2:         description: Optional[str] = None,
+    2:         auto_error: bool = True,
+           ):
+>>>>>>         self.model = HTTPBaseModel(scheme=scheme, description=description)
+>>>>>>         self.scheme_name = scheme_name or self.__class__.__name__
+>>>>>>         self.auto_error = auto_error
+       
+    1:     async def __call__(
+    1:         self, request: Request
+    1:     ) -> Optional[HTTPAuthorizationCredentials]:
+>>>>>>         authorization = request.headers.get("Authorization")
+>>>>>>         scheme, credentials = get_authorization_scheme_param(authorization)
+>>>>>>         if not (authorization and scheme and credentials):
+>>>>>>             if self.auto_error:
+>>>>>>                 raise HTTPException(
+>>>>>>                     status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
+                       )
+                   else:
+>>>>>>                 return None
+>>>>>>         return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
+       
+       
+    2: class HTTPBasic(HTTPBase):
+    1:     """
+           HTTP Basic authentication.
+       
+           ## Usage
+       
+           Create an instance object and use that object as the dependency in `Depends()`.
+       
+           The dependency result will be an `HTTPBasicCredentials` object containing the
+           `username` and the `password`.
+       
+           Read more about it in the
+           [FastAPI docs for HTTP Basic Auth](https://fastapi.tiangolo.com/advanced/security/http-basic-auth/).
+       
+           ## Example
+       
+           ```python
+           from typing import Annotated
+       
+           from fastapi import Depends, FastAPI
+           from fastapi.security import HTTPBasic, HTTPBasicCredentials
+       
+           app = FastAPI()
+       
+           security = HTTPBasic()
+       
+       
+           @app.get("/users/me")
+           def read_current_user(credentials: Annotated[HTTPBasicCredentials, Depends(security)]):
+               return {"username": credentials.username, "password": credentials.password}
+           ```
+           """
+       
+    2:     def __init__(
+               self,
+               *,
+    2:         scheme_name: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme name.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         realm: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       HTTP Basic authentication realm.
+                       """
+                   ),
+    1:         ] = None,
+    2:         description: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme description.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         auto_error: Annotated[
+    2:             bool,
+    2:             Doc(
+    1:                 """
+                       By default, if the HTTP Basic authentication is not provided (a
+                       header), `HTTPBasic` will automatically cancel the request and send the
+                       client an error.
+       
+                       If `auto_error` is set to `False`, when the HTTP Basic authentication
+                       is not available, instead of erroring out, the dependency result will
+                       be `None`.
+       
+                       This is useful when you want to have optional authentication.
+       
+                       It is also useful when you want to have authentication that can be
+                       provided in one of multiple optional ways (for example, in HTTP Basic
+                       authentication or in an HTTP Bearer token).
+                       """
+                   ),
+    1:         ] = True,
+           ):
+>>>>>>         self.model = HTTPBaseModel(scheme="basic", description=description)
+>>>>>>         self.scheme_name = scheme_name or self.__class__.__name__
+>>>>>>         self.realm = realm
+>>>>>>         self.auto_error = auto_error
+       
+    1:     async def __call__(  # type: ignore
+    1:         self, request: Request
+    1:     ) -> Optional[HTTPBasicCredentials]:
+>>>>>>         authorization = request.headers.get("Authorization")
+>>>>>>         scheme, param = get_authorization_scheme_param(authorization)
+>>>>>>         if self.realm:
+>>>>>>             unauthorized_headers = {"WWW-Authenticate": f'Basic realm="{self.realm}"'}
+               else:
+>>>>>>             unauthorized_headers = {"WWW-Authenticate": "Basic"}
+>>>>>>         if not authorization or scheme.lower() != "basic":
+>>>>>>             if self.auto_error:
+>>>>>>                 raise HTTPException(
+>>>>>>                     status_code=HTTP_401_UNAUTHORIZED,
+>>>>>>                     detail="Not authenticated",
+>>>>>>                     headers=unauthorized_headers,
+                       )
+                   else:
+>>>>>>                 return None
+>>>>>>         invalid_user_credentials_exc = HTTPException(
+>>>>>>             status_code=HTTP_401_UNAUTHORIZED,
+>>>>>>             detail="Invalid authentication credentials",
+>>>>>>             headers=unauthorized_headers,
+               )
+>>>>>>         try:
+>>>>>>             data = b64decode(param).decode("ascii")
+>>>>>>         except (ValueError, UnicodeDecodeError, binascii.Error):
+>>>>>>             raise invalid_user_credentials_exc  # noqa: B904
+>>>>>>         username, separator, password = data.partition(":")
+>>>>>>         if not separator:
+>>>>>>             raise invalid_user_credentials_exc
+>>>>>>         return HTTPBasicCredentials(username=username, password=password)
+       
+       
+    2: class HTTPBearer(HTTPBase):
+    1:     """
+           HTTP Bearer token authentication.
+       
+           ## Usage
+       
+           Create an instance object and use that object as the dependency in `Depends()`.
+       
+           The dependency result will be an `HTTPAuthorizationCredentials` object containing
+           the `scheme` and the `credentials`.
+       
+           ## Example
+       
+           ```python
+           from typing import Annotated
+       
+           from fastapi import Depends, FastAPI
+           from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+       
+           app = FastAPI()
+       
+           security = HTTPBearer()
+       
+       
+           @app.get("/users/me")
+           def read_current_user(
+               credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]
+           ):
+               return {"scheme": credentials.scheme, "credentials": credentials.credentials}
+           ```
+           """
+       
+    2:     def __init__(
+               self,
+               *,
+    2:         bearerFormat: Annotated[Optional[str], Doc("Bearer token format.")] = None,
+    2:         scheme_name: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme name.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         description: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme description.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         auto_error: Annotated[
+    2:             bool,
+    2:             Doc(
+    1:                 """
+                       By default, if the HTTP Bearer token not provided (in an
+                       `Authorization` header), `HTTPBearer` will automatically cancel the
+                       request and send the client an error.
+       
+                       If `auto_error` is set to `False`, when the HTTP Bearer token
+                       is not available, instead of erroring out, the dependency result will
+                       be `None`.
+       
+                       This is useful when you want to have optional authentication.
+       
+                       It is also useful when you want to have authentication that can be
+                       provided in one of multiple optional ways (for example, in an HTTP
+                       Bearer token or in a cookie).
+                       """
+                   ),
+    1:         ] = True,
+           ):
+>>>>>>         self.model = HTTPBearerModel(bearerFormat=bearerFormat, description=description)
+>>>>>>         self.scheme_name = scheme_name or self.__class__.__name__
+>>>>>>         self.auto_error = auto_error
+       
+    1:     async def __call__(
+    1:         self, request: Request
+    1:     ) -> Optional[HTTPAuthorizationCredentials]:
+>>>>>>         authorization = request.headers.get("Authorization")
+>>>>>>         scheme, credentials = get_authorization_scheme_param(authorization)
+>>>>>>         if not (authorization and scheme and credentials):
+>>>>>>             if self.auto_error:
+>>>>>>                 raise HTTPException(
+>>>>>>                     status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
+                       )
+                   else:
+>>>>>>                 return None
+>>>>>>         if scheme.lower() != "bearer":
+>>>>>>             if self.auto_error:
+>>>>>>                 raise HTTPException(
+>>>>>>                     status_code=HTTP_403_FORBIDDEN,
+>>>>>>                     detail="Invalid authentication credentials",
+                       )
+                   else:
+>>>>>>                 return None
+>>>>>>         return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
+       
+       
+    2: class HTTPDigest(HTTPBase):
+    1:     """
+           HTTP Digest authentication.
+       
+           ## Usage
+       
+           Create an instance object and use that object as the dependency in `Depends()`.
+       
+           The dependency result will be an `HTTPAuthorizationCredentials` object containing
+           the `scheme` and the `credentials`.
+       
+           ## Example
+       
+           ```python
+           from typing import Annotated
+       
+           from fastapi import Depends, FastAPI
+           from fastapi.security import HTTPAuthorizationCredentials, HTTPDigest
+       
+           app = FastAPI()
+       
+           security = HTTPDigest()
+       
+       
+           @app.get("/users/me")
+           def read_current_user(
+               credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]
+           ):
+               return {"scheme": credentials.scheme, "credentials": credentials.credentials}
+           ```
+           """
+       
+    2:     def __init__(
+               self,
+               *,
+    2:         scheme_name: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme name.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         description: Annotated[
+    2:             Optional[str],
+    2:             Doc(
+    1:                 """
+                       Security scheme description.
+       
+                       It will be included in the generated OpenAPI (e.g. visible at `/docs`).
+                       """
+                   ),
+    1:         ] = None,
+    2:         auto_error: Annotated[
+    2:             bool,
+    2:             Doc(
+    1:                 """
+                       By default, if the HTTP Digest not provided, `HTTPDigest` will
+                       automatically cancel the request and send the client an error.
+       
+                       If `auto_error` is set to `False`, when the HTTP Digest is not
+                       available, instead of erroring out, the dependency result will
+                       be `None`.
+       
+                       This is useful when you want to have optional authentication.
+       
+                       It is also useful when you want to have authentication that can be
+                       provided in one of multiple optional ways (for example, in HTTP
+                       Digest or in a cookie).
+                       """
+                   ),
+    1:         ] = True,
+           ):
+>>>>>>         self.model = HTTPBaseModel(scheme="digest", description=description)
+>>>>>>         self.scheme_name = scheme_name or self.__class__.__name__
+>>>>>>         self.auto_error = auto_error
+       
+    1:     async def __call__(
+    1:         self, request: Request
+    1:     ) -> Optional[HTTPAuthorizationCredentials]:
+>>>>>>         authorization = request.headers.get("Authorization")
+>>>>>>         scheme, credentials = get_authorization_scheme_param(authorization)
+>>>>>>         if not (authorization and scheme and credentials):
+>>>>>>             if self.auto_error:
+>>>>>>                 raise HTTPException(
+>>>>>>                     status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
+                       )
+                   else:
+>>>>>>                 return None
+>>>>>>         if scheme.lower() != "digest":
+>>>>>>             raise HTTPException(
+>>>>>>                 status_code=HTTP_403_FORBIDDEN,
+>>>>>>                 detail="Invalid authentication credentials",
+                   )
+>>>>>>         return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
