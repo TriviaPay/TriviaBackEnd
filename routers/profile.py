@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime, date
-from sqlalchemy import and_, or_, text
+from sqlalchemy import and_, or_, text, func, select, union_all
 import uuid
 import os
 from db import get_db
@@ -27,7 +27,7 @@ from config import (
     REFERRAL_APP_LINK,
 )
 from utils.referrals import get_unique_referral_code
-from utils.user_level_service import get_level_progress
+from utils.user_level_service import get_level_progress, count_total_correct_answers
 from utils.trivia_mode_service import get_active_draw_date, get_today_in_app_timezone
 from utils.subscription_service import check_mode_access, get_modes_access_status
 
@@ -47,13 +47,30 @@ def _ensure_gender_column(db: Session) -> None:
     connection = None
     try:
         connection = db.bind.connect()
-        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR"))
+        exists = connection.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name='users' AND column_name='gender'"
+            )
+        ).scalar()
+        if exists:
+            _gender_column_checked = True
+            return
+
+        allow_ddl = os.getenv("PROFILE_ALLOW_GENDER_DDL", "false").lower() in {"1", "true", "yes"}
+        if allow_ddl:
+            with connection.begin():
+                connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR"))
+            logging.info("Added missing gender column via runtime DDL")
+        else:
+            logging.error("Gender column missing; set PROFILE_ALLOW_GENDER_DDL=true or run migrations")
+        _gender_column_checked = True
     except Exception as e:
-        logging.error(f"Failed to ensure gender column exists: {e}")
+        logging.error(f"Failed to ensure gender column exists: {e}", exc_info=True)
+        _gender_column_checked = True
     finally:
         if connection is not None:
             connection.close()
-        _gender_column_checked = True
 
 def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
     """
@@ -85,49 +102,27 @@ def get_badge_info(user: User, db: Session) -> Optional[Dict[str, Any]]:
 
 def get_recent_draw_earnings(user: User, db: Session) -> float:
     """
-    Get the amount earned by the user in the most recent completed draw.
-    Checks both bronze and silver mode leaderboards.
-    
-    Args:
-        user: User object
-        db: Database session
-        
-    Returns:
-        Total amount earned in the most recent draw (0 if no earnings)
+    Get the sum of money awarded to the user in the most recent completed draw (bronze + silver).
+    Uses a single UNION ALL query for performance.
     """
     try:
-        # Get the most recent completed draw date
         active_date = get_active_draw_date()
         today = get_today_in_app_timezone()
-        
-        # Determine the draw date for winners
-        if active_date == today:
-            # After draw time, show today's completed draw
-            draw_date = active_date
-        else:
-            # Before draw time, show yesterday's completed draw
-            draw_date = active_date
-        
-        # Check bronze mode leaderboard
-        bronze_entry = db.query(TriviaBronzeModeLeaderboard).filter(
+        draw_date = active_date if active_date == today else active_date
+
+        bronze_query = select(TriviaBronzeModeLeaderboard.money_awarded.label("amount")).where(
             TriviaBronzeModeLeaderboard.account_id == user.account_id,
             TriviaBronzeModeLeaderboard.draw_date == draw_date
-        ).first()
-        
-        # Check silver mode leaderboard
-        silver_entry = db.query(TriviaSilverModeLeaderboard).filter(
+        )
+        silver_query = select(TriviaSilverModeLeaderboard.money_awarded.label("amount")).where(
             TriviaSilverModeLeaderboard.account_id == user.account_id,
             TriviaSilverModeLeaderboard.draw_date == draw_date
-        ).first()
-        
-        # Sum up earnings from both modes
-        total_earnings = 0.0
-        if bronze_entry:
-            total_earnings += float(bronze_entry.money_awarded or 0)
-        if silver_entry:
-            total_earnings += float(silver_entry.money_awarded or 0)
-        
-        return round(total_earnings, 2)
+        )
+
+        earnings_union = union_all(bronze_query, silver_query).alias("earnings")
+        sum_stmt = select(func.coalesce(func.sum(earnings_union.c.amount), 0.0))
+        total = db.execute(sum_stmt).scalar() or 0.0
+        return round(float(total), 2)
     except Exception as e:
         logging.error(f"Error getting recent draw earnings for user {user.account_id}: {str(e)}")
         return 0.0
@@ -356,6 +351,10 @@ async def update_extended_profile(
             wallet_balance_minor = user.wallet_balance_minor if hasattr(user, 'wallet_balance_minor') and user.wallet_balance_minor is not None else int((user.wallet_balance or 0) * 100)
             wallet_balance_usd = wallet_balance_minor / 100.0 if wallet_balance_minor else 0.0
 
+            total_correct = count_total_correct_answers(user, db)
+            level_info = get_level_progress(user, db, total_correct=total_correct)
+            recent_draw_earnings = get_recent_draw_earnings(user, db)
+
             # Return success response with updated profile details
             return {
                 "status": "success",
@@ -475,11 +474,11 @@ async def get_complete_profile(
                 "subscription_badges": subscription_badges,  # Array of subscription badge URLs
                 "total_gems": user.gems or 0,  # Total gem count
                 "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
-                "level": user.level if user.level else 1,  # User level (increases by 1 for every 100 correct answers)
-                "level_progress": get_level_progress(user, db)["progress"],  # Level progress string (e.g., "2/100")
-                "recent_draw_earnings": recent_draw_earnings  # Amount earned in most recent draw
+                    "level": level_info["level"],
+                    "level_progress": level_info["progress"],
+                    "recent_draw_earnings": recent_draw_earnings
+                }
             }
-        }
     except HTTPException:
         raise
     except Exception as e:

@@ -3,9 +3,10 @@ Service for tracking user level based on trivia questions answered correctly.
 Level increases by 1 for every 100 CORRECT answers across all modes.
 """
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, select
+from sqlalchemy import union_all
 from models import (
     User,
     TriviaUserFreeModeDaily,
@@ -29,46 +30,35 @@ def count_total_correct_answers(user: User, db: Session) -> int:
     Returns:
         Total count of CORRECT questions answered
     """
-    total_count = 0
-    
-    # Count free mode CORRECT answers only
-    free_mode_count = db.query(func.count(TriviaUserFreeModeDaily.account_id)).filter(
-        and_(
-            TriviaUserFreeModeDaily.account_id == user.account_id,
-            TriviaUserFreeModeDaily.status == 'answered_correct',
-            TriviaUserFreeModeDaily.is_correct == True
-        )
-    ).scalar() or 0
-    
-    # Count bronze mode CORRECT answers only
-    bronze_mode_count = db.query(func.count(TriviaUserBronzeModeDaily.account_id)).filter(
-        and_(
-            TriviaUserBronzeModeDaily.account_id == user.account_id,
-            TriviaUserBronzeModeDaily.submitted_at.isnot(None),
-            TriviaUserBronzeModeDaily.is_correct == True
-        )
-    ).scalar() or 0
-    
-    # Count silver mode CORRECT answers only
-    silver_mode_count = db.query(func.count(TriviaUserSilverModeDaily.account_id)).filter(
-        and_(
-            TriviaUserSilverModeDaily.account_id == user.account_id,
-            TriviaUserSilverModeDaily.submitted_at.isnot(None),
-            TriviaUserSilverModeDaily.is_correct == True
-        )
-    ).scalar() or 0
-    
-    # Legacy TriviaUserDaily removed - only count mode-specific tables
-    total_count = free_mode_count + bronze_mode_count + silver_mode_count
-    
-    logger.debug(f"User {user.account_id} has {total_count} CORRECT answers total "
-                f"(free: {free_mode_count}, bronze: {bronze_mode_count}, "
-                f"silver: {silver_mode_count})")
-    
+    free_query = select(TriviaUserFreeModeDaily.account_id).where(
+        TriviaUserFreeModeDaily.account_id == user.account_id,
+        TriviaUserFreeModeDaily.status == 'answered_correct',
+        TriviaUserFreeModeDaily.is_correct.is_(True)
+    )
+    bronze_query = select(TriviaUserBronzeModeDaily.account_id).where(
+        TriviaUserBronzeModeDaily.account_id == user.account_id,
+        TriviaUserBronzeModeDaily.submitted_at.isnot(None),
+        TriviaUserBronzeModeDaily.is_correct.is_(True)
+    )
+    silver_query = select(TriviaUserSilverModeDaily.account_id).where(
+        TriviaUserSilverModeDaily.account_id == user.account_id,
+        TriviaUserSilverModeDaily.submitted_at.isnot(None),
+        TriviaUserSilverModeDaily.is_correct.is_(True)
+    )
+
+    union_stmt = union_all(free_query, bronze_query, silver_query).alias("correct_answers")
+    count_stmt = select(func.count()).select_from(union_stmt)
+    total_count = db.execute(count_stmt).scalar() or 0
+
+    logger.debug(
+        f"User {user.account_id} has {total_count} CORRECT answers "
+        f"(computed via union query)"
+    )
+
     return total_count
 
 
-def get_level_progress(user: User, db: Session) -> dict:
+def get_level_progress(user: User, db: Session, total_correct: Optional[int] = None) -> dict:
     """
     Get user's level progress information.
     
@@ -84,7 +74,8 @@ def get_level_progress(user: User, db: Session) -> dict:
         - progress: str (e.g., "2/100", "120/200", "430/500")
     """
     current_level = user.level if user.level else 1
-    total_correct = count_total_correct_answers(user, db)
+    if total_correct is None:
+        total_correct = count_total_correct_answers(user, db)
     
     # Calculate correct answers for current level (total - (level-1)*100)
     current_level_correct = total_correct - ((current_level - 1) * 100)
@@ -216,7 +207,7 @@ def update_user_level(user: User, db: Session) -> dict:
     correct_until_next = 100 - (total_correct % 100)
     
     # Get progress info
-    progress = get_level_progress(user, db)
+    progress = get_level_progress(user, db, total_correct=total_correct)
     
     return {
         'level_increased': level_increased,
