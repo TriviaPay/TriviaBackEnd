@@ -447,8 +447,10 @@ def submit_free_mode_answer(
             'is_correct': user_attempt.is_correct
         }
     
-    # Check answer
-    is_correct = answer.strip().upper() == question.correct_answer.strip().upper()
+    # Check answer (compare normalized letters)
+    correct_letter = get_correct_answer_letter(question)
+    submitted_letter = (answer or "").strip().lower()
+    is_correct = submitted_letter == correct_letter
     
     # Update attempt
     user_attempt.user_answer = answer

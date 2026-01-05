@@ -351,14 +351,11 @@ async def update_extended_profile(
             
             # Get badge information
             badge_info = get_badge_info(user, db)
-            
+
             # Get wallet balance (trivia coins) - use wallet_balance_minor if available, otherwise convert wallet_balance
             wallet_balance_minor = user.wallet_balance_minor if hasattr(user, 'wallet_balance_minor') and user.wallet_balance_minor is not None else int((user.wallet_balance or 0) * 100)
             wallet_balance_usd = wallet_balance_minor / 100.0 if wallet_balance_minor else 0.0
-            
-            # Get recent draw earnings
-            recent_draw_earnings = get_recent_draw_earnings(user, db)
-            
+
             # Return success response with updated profile details
             return {
                 "status": "success",
@@ -382,9 +379,7 @@ async def update_extended_profile(
                     "badge": badge_info,
                     "total_gems": user.gems or 0,  # Total gem count
                     "total_trivia_coins": wallet_balance_usd,  # Total trivia coins (wallet balance in USD)
-                    "level": user.level if user.level else 1,  # User level (increases by 1 for every 100 correct answers)
-                    "level_progress": get_level_progress(user, db)["progress"],  # Level progress string (e.g., "2/100")
-                    "recent_draw_earnings": recent_draw_earnings  # Amount earned in most recent draw
+                    "level": user.level if user.level else 1  # User level (increases by 1 for every 100 correct answers)
                 }
             }
         except IntegrityError as e:

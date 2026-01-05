@@ -308,8 +308,9 @@ async def submit_silver_mode_answer(
             detail="Question submission is closed"
         )
     
-    # Check if answer is correct
-    is_correct = request.answer.strip().lower() == question.correct_answer.strip().lower()
+    correct_letter = get_correct_answer_letter(question)
+    submitted_letter = (request.answer or "").strip().lower()
+    is_correct = submitted_letter == correct_letter
     
     # Create or update user attempt
     if existing_attempt:
