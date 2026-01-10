@@ -49,3 +49,9 @@ ignore_missing_imports = true
 
 [tool.mypy-redis.exceptions]
 ignore_missing_imports = true
+
+[project]
+name = "triviapay-backend"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = []
