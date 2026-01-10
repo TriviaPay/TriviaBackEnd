@@ -1,8 +1,7 @@
 from datetime import datetime, timedelta
+
 import pytz
-from db import get_db
-# Letter model removed - letters table deleted
-import logging
+
 
 def get_next_draw_time():
     """
@@ -19,21 +18,25 @@ def get_next_draw_time():
     last_day_of_this_month = first_of_next_month - timedelta(days=1)
 
     # Set draw time to 8 PM EST on the last day of the current month
-    draw_time = last_day_of_this_month.replace(hour=20, minute=0, second=0, microsecond=0)
+    draw_time = last_day_of_this_month.replace(
+        hour=20, minute=0, second=0, microsecond=0
+    )
 
     return draw_time
+
 
 def get_letter_profile_pic(username: str, db=None) -> str:
     """
     Get profile picture URL based on first letter of username.
-    
+
     Note: Letters table has been removed. This function now returns None.
     Use custom profile pictures or avatars instead.
-    
+
     Args:
         username (str): The username to get a profile picture for
-        db (Session, optional): Database session (no longer used, kept for compatibility)
-        
+        db (Session, optional): Database session (no longer used, kept for
+            compatibility)
+
     Returns:
         str: None (letters table removed)
     """

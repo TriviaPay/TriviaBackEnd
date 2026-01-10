@@ -5,12 +5,18 @@ import pytest
 import pytz
 from fastapi.testclient import TestClient
 
+import db as db_module
 from db import get_db
 from main import app
-from models import ChatMutePreferences, OneSignalPlayer, TriviaLiveChatLike, TriviaLiveChatMessage, User
-from routers.trivia_live_chat import send_push_for_trivia_live_chat_sync
-import db as db_module
+from models import (
+    ChatMutePreferences,
+    OneSignalPlayer,
+    TriviaLiveChatLike,
+    TriviaLiveChatMessage,
+    User,
+)
 from routers.dependencies import get_current_user
+from routers.trivia.trivia_live_chat import send_push_for_trivia_live_chat_sync
 
 
 @pytest.fixture
@@ -37,38 +43,49 @@ def client(test_db, current_user):
 def _patch_trivia_live_chat_window():
     tz = pytz.UTC
     now = datetime.now(tz)
-    return patch("routers.trivia_live_chat.TRIVIA_LIVE_CHAT_ENABLED", True), patch(
-        "routers.trivia_live_chat.TRIVIA_LIVE_CHAT_PRE_HOURS", 1
-    ), patch(
-        "routers.trivia_live_chat.TRIVIA_LIVE_CHAT_POST_HOURS", 1
-    ), patch(
-        "routers.trivia_live_chat.get_next_draw_time", return_value=now
-    ), patch(
-        "routers.trivia_live_chat.is_trivia_live_chat_active", return_value=True
-    ), now
+    return (
+        patch("routers.trivia.trivia_live_chat.TRIVIA_LIVE_CHAT_ENABLED", True),
+        patch("routers.trivia.trivia_live_chat.TRIVIA_LIVE_CHAT_PRE_HOURS", 1),
+        patch("routers.trivia.trivia_live_chat.TRIVIA_LIVE_CHAT_POST_HOURS", 1),
+        patch("routers.trivia.trivia_live_chat.get_next_draw_time", return_value=now),
+        patch(
+            "routers.trivia.trivia_live_chat.is_trivia_live_chat_active",
+            return_value=True,
+        ),
+        now,
+    )
 
 
 def test_trivia_live_chat_send_message(client, test_db):
-    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = _patch_trivia_live_chat_window()
+    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = (
+        _patch_trivia_live_chat_window()
+    )
     with enabled_patch, pre_patch, post_patch, draw_patch, active_patch, patch(
-        "routers.trivia_live_chat.enqueue_chat_event", new=AsyncMock(return_value=True)
+        "routers.trivia.trivia_live_chat.enqueue_chat_event",
+        new=AsyncMock(return_value=True),
     ):
-        response = client.post("/trivia-live-chat/send", json={"message": "Hello live chat"})
+        response = client.post(
+            "/trivia-live-chat/send", json={"message": "Hello live chat"}
+        )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["duplicate"] is False
 
     draw_date = now.astimezone(pytz.UTC).replace(tzinfo=None).date()
-    message = test_db.query(TriviaLiveChatMessage).filter(
-        TriviaLiveChatMessage.id == payload["message_id"]
-    ).first()
+    message = (
+        test_db.query(TriviaLiveChatMessage)
+        .filter(TriviaLiveChatMessage.id == payload["message_id"])
+        .first()
+    )
     assert message is not None
     assert message.draw_date == draw_date
 
 
 def test_trivia_live_chat_messages_include_reply(client, test_db, current_user):
-    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = _patch_trivia_live_chat_window()
+    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = (
+        _patch_trivia_live_chat_window()
+    )
     window_time = now.astimezone(pytz.UTC).replace(tzinfo=None)
 
     with enabled_patch, pre_patch, post_patch, draw_patch, active_patch:
@@ -102,9 +119,12 @@ def test_trivia_live_chat_messages_include_reply(client, test_db, current_user):
 
 
 def test_trivia_live_chat_send_idempotent(client):
-    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, _ = _patch_trivia_live_chat_window()
+    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, _ = (
+        _patch_trivia_live_chat_window()
+    )
     with enabled_patch, pre_patch, post_patch, draw_patch, active_patch, patch(
-        "routers.trivia_live_chat.enqueue_chat_event", new=AsyncMock(return_value=True)
+        "routers.trivia.trivia_live_chat.enqueue_chat_event",
+        new=AsyncMock(return_value=True),
     ):
         response = client.post(
             "/trivia-live-chat/send",
@@ -124,9 +144,12 @@ def test_trivia_live_chat_send_idempotent(client):
 
 
 def test_trivia_live_chat_reply_not_found(client):
-    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, _ = _patch_trivia_live_chat_window()
+    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, _ = (
+        _patch_trivia_live_chat_window()
+    )
     with enabled_patch, pre_patch, post_patch, draw_patch, active_patch, patch(
-        "routers.trivia_live_chat.enqueue_chat_event", new=AsyncMock(return_value=True)
+        "routers.trivia.trivia_live_chat.enqueue_chat_event",
+        new=AsyncMock(return_value=True),
     ):
         response = client.post(
             "/trivia-live-chat/send",
@@ -137,8 +160,8 @@ def test_trivia_live_chat_reply_not_found(client):
 
 
 def test_trivia_live_chat_messages_inactive_window(client):
-    with patch("routers.trivia_live_chat.TRIVIA_LIVE_CHAT_ENABLED", True), patch(
-        "routers.trivia_live_chat.is_trivia_live_chat_active", return_value=False
+    with patch("routers.trivia.trivia_live_chat.TRIVIA_LIVE_CHAT_ENABLED", True), patch(
+        "routers.trivia.trivia_live_chat.is_trivia_live_chat_active", return_value=False
     ):
         response = client.get("/trivia-live-chat/messages?limit=10")
 
@@ -149,7 +172,7 @@ def test_trivia_live_chat_messages_inactive_window(client):
 
 
 def test_trivia_live_chat_status_disabled(client):
-    with patch("routers.trivia_live_chat.TRIVIA_LIVE_CHAT_ENABLED", False):
+    with patch("routers.trivia.trivia_live_chat.TRIVIA_LIVE_CHAT_ENABLED", False):
         response = client.get("/trivia-live-chat/status")
 
     assert response.status_code == 200
@@ -158,7 +181,9 @@ def test_trivia_live_chat_status_disabled(client):
 
 
 def test_trivia_live_chat_like_idempotent(client, test_db, current_user):
-    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = _patch_trivia_live_chat_window()
+    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = (
+        _patch_trivia_live_chat_window()
+    )
     draw_date = now.astimezone(pytz.UTC).replace(tzinfo=None).date()
     test_db.add(
         TriviaLiveChatLike(
@@ -178,7 +203,9 @@ def test_trivia_live_chat_like_idempotent(client, test_db, current_user):
 
 
 def test_trivia_live_chat_likes_user_liked(client, test_db, current_user):
-    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = _patch_trivia_live_chat_window()
+    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = (
+        _patch_trivia_live_chat_window()
+    )
     draw_date = now.astimezone(pytz.UTC).replace(tzinfo=None).date()
     test_db.add(
         TriviaLiveChatLike(
@@ -198,7 +225,9 @@ def test_trivia_live_chat_likes_user_liked(client, test_db, current_user):
 
 
 def test_trivia_live_chat_rate_limit_fallback(client, test_db, current_user):
-    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = _patch_trivia_live_chat_window()
+    enabled_patch, pre_patch, post_patch, draw_patch, active_patch, now = (
+        _patch_trivia_live_chat_window()
+    )
     draw_date = now.astimezone(pytz.UTC).replace(tzinfo=None).date()
     test_db.add(
         TriviaLiveChatMessage(
@@ -211,11 +240,13 @@ def test_trivia_live_chat_rate_limit_fallback(client, test_db, current_user):
     test_db.commit()
 
     with enabled_patch, pre_patch, post_patch, draw_patch, active_patch, patch(
-        "routers.trivia_live_chat.check_burst_limit", new=AsyncMock(return_value=True)
+        "routers.trivia.trivia_live_chat.check_burst_limit",
+        new=AsyncMock(return_value=True),
     ), patch(
-        "routers.trivia_live_chat.check_rate_limit", new=AsyncMock(return_value=None)
+        "routers.trivia.trivia_live_chat.check_rate_limit",
+        new=AsyncMock(return_value=None),
     ), patch(
-        "routers.trivia_live_chat.TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE", 1
+        "routers.trivia.trivia_live_chat.TRIVIA_LIVE_CHAT_MAX_MESSAGES_PER_MINUTE", 1
     ):
         response = client.post("/trivia-live-chat/send", json={"message": "Hello"})
 
@@ -258,10 +289,8 @@ def test_trivia_live_chat_push_respects_mutes(test_db):
         yield test_db
 
     with patch.object(db_module, "get_db", _override_get_db), patch(
-        "routers.trivia_live_chat.send_push_notification_async", async_mock
-    ), patch(
-        "utils.notification_storage.create_notifications_batch"
-    ):
+        "routers.trivia.trivia_live_chat.send_push_notification_async", async_mock
+    ), patch("utils.notification_storage.create_notifications_batch"):
         send_push_for_trivia_live_chat_sync(
             message_id=1,
             sender_id=user1.account_id,

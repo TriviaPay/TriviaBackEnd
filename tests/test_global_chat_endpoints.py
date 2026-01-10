@@ -1,18 +1,23 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from db import get_db
-from models import ChatMutePreferences, GlobalChatMessage, GlobalChatViewer, OneSignalPlayer, User
-from routers.dependencies import get_current_user
-from routers.global_chat import send_push_for_global_chat_sync
-import routers.global_chat as global_chat
 import db as db_module
+import routers.messaging.global_chat as global_chat
+from db import get_db
+from models import (
+    ChatMutePreferences,
+    GlobalChatMessage,
+    GlobalChatViewer,
+    OneSignalPlayer,
+    User,
+)
+from routers.dependencies import get_current_user
+from routers.messaging.global_chat import send_push_for_global_chat_sync
 
 
 @pytest.fixture
@@ -107,9 +112,11 @@ def test_global_chat_messages_updates_viewer(client, test_db, current_user):
     response = client.get("/global-chat/messages?limit=10")
 
     assert response.status_code == 200
-    viewer = test_db.query(GlobalChatViewer).filter(
-        GlobalChatViewer.user_id == current_user.account_id
-    ).first()
+    viewer = (
+        test_db.query(GlobalChatViewer)
+        .filter(GlobalChatViewer.user_id == current_user.account_id)
+        .first()
+    )
     assert viewer is not None
 
 
@@ -180,7 +187,7 @@ def test_global_chat_push_respects_mutes(test_db):
         yield test_db
 
     with patch.object(db_module, "get_db", _override_get_db), patch(
-        "routers.global_chat.send_push_notification_async", async_mock
+        "routers.messaging.global_chat.send_push_notification_async", async_mock
     ), patch(
         "utils.notification_storage.create_notifications_batch"
     ) as create_notifications_batch:
@@ -212,7 +219,9 @@ class _FakeRedis:
         self.set_calls.append((key, value, ex))
 
 
-def test_global_chat_online_count_uses_cache(client, test_db, current_user, monkeypatch):
+def test_global_chat_online_count_uses_cache(
+    client, test_db, current_user, monkeypatch
+):
     viewer = GlobalChatViewer(
         user_id=current_user.account_id,
         last_seen=datetime.utcnow(),
@@ -234,7 +243,9 @@ def test_global_chat_online_count_uses_cache(client, test_db, current_user, monk
     assert redis.set_calls == []
 
 
-def test_global_chat_online_count_sets_cache(client, test_db, current_user, monkeypatch):
+def test_global_chat_online_count_sets_cache(
+    client, test_db, current_user, monkeypatch
+):
     viewer = GlobalChatViewer(
         user_id=current_user.account_id,
         last_seen=datetime.utcnow(),
@@ -257,7 +268,9 @@ def test_global_chat_online_count_sets_cache(client, test_db, current_user, monk
 
 
 def test_get_display_username_fallbacks():
-    user_with_email = SimpleNamespace(account_id=1, username="", email="user@example.com")
+    user_with_email = SimpleNamespace(
+        account_id=1, username="", email="user@example.com"
+    )
     assert global_chat.get_display_username(user_with_email) == "user"
 
     user_without_email = SimpleNamespace(account_id=99, username=None, email=None)
@@ -318,7 +331,9 @@ def test_send_global_message_duplicate(client, test_db, current_user):
     assert response.json()["duplicate"] is True
 
 
-def test_send_global_message_success_with_reply(client, test_db, current_user, monkeypatch):
+def test_send_global_message_success_with_reply(
+    client, test_db, current_user, monkeypatch
+):
     base_message = GlobalChatMessage(
         user_id=current_user.account_id,
         message="Base",
@@ -327,7 +342,9 @@ def test_send_global_message_success_with_reply(client, test_db, current_user, m
     test_db.add(base_message)
     test_db.commit()
 
-    monkeypatch.setattr(global_chat, "enqueue_chat_event", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        global_chat, "enqueue_chat_event", AsyncMock(return_value=False)
+    )
     monkeypatch.setattr(
         global_chat,
         "get_user_chat_profile_data",
@@ -348,7 +365,9 @@ def test_send_global_message_success_with_reply(client, test_db, current_user, m
     assert response.json()["duplicate"] is False
 
 
-def test_send_global_message_burst_limit_fallback(client, test_db, current_user, monkeypatch):
+def test_send_global_message_burst_limit_fallback(
+    client, test_db, current_user, monkeypatch
+):
     monkeypatch.setattr(global_chat, "check_burst_limit", AsyncMock(return_value=None))
     monkeypatch.setattr(global_chat, "check_rate_limit", AsyncMock(return_value=True))
     monkeypatch.setattr(global_chat, "GLOBAL_CHAT_MAX_MESSAGES_PER_BURST", 1)
@@ -368,7 +387,9 @@ def test_send_global_message_burst_limit_fallback(client, test_db, current_user,
     assert response.status_code == 429
 
 
-def test_send_global_message_rate_limit_fallback(client, test_db, current_user, monkeypatch):
+def test_send_global_message_rate_limit_fallback(
+    client, test_db, current_user, monkeypatch
+):
     monkeypatch.setattr(global_chat, "check_burst_limit", AsyncMock(return_value=True))
     monkeypatch.setattr(global_chat, "check_rate_limit", AsyncMock(return_value=None))
     monkeypatch.setattr(global_chat, "GLOBAL_CHAT_MAX_MESSAGES_PER_MINUTE", 1)

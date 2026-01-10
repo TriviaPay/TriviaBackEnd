@@ -5,7 +5,15 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+)
 from sqlalchemy.dialects.postgresql import UUID
 
 import models
@@ -16,6 +24,7 @@ from routers.dependencies import get_current_user
 
 def _define_group_models():
     if not hasattr(models, "Group"):
+
         class Group(Base):
             __tablename__ = "groups"
 
@@ -23,7 +32,9 @@ def _define_group_models():
             title = Column(String, nullable=False)
             about = Column(String, nullable=True)
             photo_url = Column(String, nullable=True)
-            created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            created_by = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             created_at = Column(DateTime, default=datetime.utcnow)
             updated_at = Column(DateTime, default=datetime.utcnow)
             max_participants = Column(Integer, default=100, nullable=False)
@@ -33,11 +44,14 @@ def _define_group_models():
         models.Group = Group
 
     if not hasattr(models, "GroupParticipant"):
+
         class GroupParticipant(Base):
             __tablename__ = "group_participants"
 
             id = Column(Integer, primary_key=True)
-            group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
+            group_id = Column(
+                UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False
+            )
             user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
             role = Column(String, nullable=False, default="member")
             joined_at = Column(DateTime, default=datetime.utcnow)
@@ -46,22 +60,30 @@ def _define_group_models():
         models.GroupParticipant = GroupParticipant
 
     if not hasattr(models, "GroupMessage"):
+
         class GroupMessage(Base):
             __tablename__ = "group_messages"
 
             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
-            sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            group_id = Column(
+                UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False
+            )
+            sender_user_id = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             created_at = Column(DateTime, default=datetime.utcnow)
 
         models.GroupMessage = GroupMessage
 
     if not hasattr(models, "GroupSenderKey"):
+
         class GroupSenderKey(Base):
             __tablename__ = "group_sender_keys"
 
             id = Column(Integer, primary_key=True)
-            group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
+            group_id = Column(
+                UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False
+            )
             created_at = Column(DateTime, default=datetime.utcnow)
 
         models.GroupSenderKey = GroupSenderKey
@@ -69,7 +91,7 @@ def _define_group_models():
 
 _define_group_models()
 
-group_metrics = importlib.import_module("routers.group_metrics")
+group_metrics = importlib.import_module("routers.messaging.group_metrics")
 group_metrics = importlib.reload(group_metrics)
 
 Group = models.Group
@@ -129,19 +151,41 @@ def test_group_metrics_payload_cached(test_db, monkeypatch):
     test_db.add_all([group1, group2])
 
     participants = [
-        GroupParticipant(group_id=group1.id, user_id=user.account_id, role="owner", is_banned=False),
-        GroupParticipant(group_id=group1.id, user_id=999, role="member", is_banned=False),
-        GroupParticipant(group_id=group2.id, user_id=1000, role="member", is_banned=False),
-        GroupParticipant(group_id=group2.id, user_id=1001, role="member", is_banned=False),
-        GroupParticipant(group_id=group2.id, user_id=1002, role="member", is_banned=True),
+        GroupParticipant(
+            group_id=group1.id, user_id=user.account_id, role="owner", is_banned=False
+        ),
+        GroupParticipant(
+            group_id=group1.id, user_id=999, role="member", is_banned=False
+        ),
+        GroupParticipant(
+            group_id=group2.id, user_id=1000, role="member", is_banned=False
+        ),
+        GroupParticipant(
+            group_id=group2.id, user_id=1001, role="member", is_banned=False
+        ),
+        GroupParticipant(
+            group_id=group2.id, user_id=1002, role="member", is_banned=True
+        ),
     ]
     test_db.add_all(participants)
 
     now = datetime.utcnow()
     messages = [
-        GroupMessage(group_id=group1.id, sender_user_id=user.account_id, created_at=now - timedelta(minutes=30)),
-        GroupMessage(group_id=group1.id, sender_user_id=user.account_id, created_at=now - timedelta(minutes=10)),
-        GroupMessage(group_id=group2.id, sender_user_id=user.account_id, created_at=now - timedelta(days=1)),
+        GroupMessage(
+            group_id=group1.id,
+            sender_user_id=user.account_id,
+            created_at=now - timedelta(minutes=30),
+        ),
+        GroupMessage(
+            group_id=group1.id,
+            sender_user_id=user.account_id,
+            created_at=now - timedelta(minutes=10),
+        ),
+        GroupMessage(
+            group_id=group2.id,
+            sender_user_id=user.account_id,
+            created_at=now - timedelta(days=1),
+        ),
     ]
     test_db.add_all(messages)
     test_db.add(GroupSenderKey(group_id=group1.id))

@@ -18,7 +18,7 @@ def drop_columns_if_exist():
         # Helper to check if column exists
         def column_exists(table: str, column: str) -> bool:
             check_query = text("""
-                SELECT 1 FROM information_schema.columns 
+                SELECT 1 FROM information_schema.columns
                 WHERE table_name=:table AND column_name=:column
             """)
             result = connection.execute(check_query, {"table": table, "column": column})
@@ -56,4 +56,4 @@ if __name__ == "__main__":
         print("Migration completed successfully")
     else:
         logger.error("Migration failed")
-        print("Migration failed") 
+        print("Migration failed")

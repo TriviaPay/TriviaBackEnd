@@ -4,10 +4,10 @@ import logging
 from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
-from redis.exceptions import ConnectionError, TimeoutError, RedisError
+from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
 from config import REDIS_URL
-from utils.logging_helpers import log_info, log_warning, log_error, log_debug, get_request_id
+from utils.logging_helpers import log_error, log_info, log_warning
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,13 @@ async def _check_connection_health(client: redis.Redis) -> bool:
     try:
         await asyncio.wait_for(client.ping(), timeout=2.0)
         return True
-    except (ConnectionError, TimeoutError, RedisError, asyncio.TimeoutError, OSError) as exc:
+    except (
+        ConnectionError,
+        TimeoutError,
+        RedisError,
+        asyncio.TimeoutError,
+        OSError,
+    ) as exc:
         logger.debug(f"Redis connection health check failed: {exc}")
         return False
     except Exception as exc:
@@ -49,7 +55,13 @@ async def _create_redis_client() -> Optional[redis.Redis]:
             await asyncio.wait_for(client.ping(), timeout=2.0)
             log_info(logger, "Chat Redis client initialized and connected")
             return client
-        except (ConnectionError, TimeoutError, RedisError, OSError, asyncio.TimeoutError) as exc:
+        except (
+            ConnectionError,
+            TimeoutError,
+            RedisError,
+            OSError,
+            asyncio.TimeoutError,
+        ) as exc:
             log_warning(
                 logger,
                 "Chat Redis initialization attempt failed",
@@ -60,7 +72,12 @@ async def _create_redis_client() -> Optional[redis.Redis]:
             )
             await asyncio.sleep(0.1 * (attempt + 1))
         except Exception as exc:
-            log_error(logger, "Unexpected error while initializing chat Redis client", exc_info=True, error=str(exc))
+            log_error(
+                logger,
+                "Unexpected error while initializing chat Redis client",
+                exc_info=True,
+                error=str(exc),
+            )
             return None
 
     log_error(
@@ -93,7 +110,7 @@ async def get_chat_redis() -> Optional[redis.Redis]:
         # Double-check after acquiring lock
         if _redis_client and await _check_connection_health(_redis_client):
             return _redis_client
-        
+
         # Create new connection
         _redis_client = await _create_redis_client()
         return _redis_client
@@ -111,8 +128,13 @@ async def _run_pipeline(commands_cb):
             commands_cb(pipe)
             return await pipe.execute()
         except (ConnectionError, TimeoutError, RedisError, OSError) as exc:
-            log_warning(logger, f"Chat Redis pipeline connection error", 
-                       attempt=attempt + 1, max_retries=max_retries, error=str(exc))
+            log_warning(
+                logger,
+                "Chat Redis pipeline connection error",
+                attempt=attempt + 1,
+                max_retries=max_retries,
+                error=str(exc),
+            )
             # Reset client to force reconnection on next attempt
             global _redis_client
             async with _redis_lock:
@@ -127,16 +149,15 @@ async def _run_pipeline(commands_cb):
                 continue
             return None
         except Exception as exc:
-            log_warning(logger, f"Chat Redis pipeline error", error=str(exc), exc_info=True)
+            log_warning(
+                logger, "Chat Redis pipeline error", error=str(exc), exc_info=True
+            )
             return None
     return None
 
 
 async def check_rate_limit(
-    namespace: str,
-    identifier: Any,
-    limit: int,
-    window_seconds: int
+    namespace: str, identifier: Any, limit: int, window_seconds: int
 ) -> Optional[bool]:
     """
     Increment rate limit counter for identifier and return True if allowed.
@@ -157,19 +178,16 @@ async def check_rate_limit(
 
 
 async def check_burst_limit(
-    namespace: str,
-    identifier: Any,
-    limit: int,
-    window_seconds: int
+    namespace: str, identifier: Any, limit: int, window_seconds: int
 ) -> Optional[bool]:
     """Wrapper around check_rate_limit for burst windows."""
-    return await check_rate_limit(f"{namespace}:burst", identifier, limit, window_seconds)
+    return await check_rate_limit(
+        f"{namespace}:burst", identifier, limit, window_seconds
+    )
 
 
 async def should_emit_typing_event(
-    channel_key: str,
-    user_id: Any,
-    dedup_ms: int = DEFAULT_TYPING_DEDUP_MS
+    channel_key: str, user_id: Any, dedup_ms: int = DEFAULT_TYPING_DEDUP_MS
 ) -> bool:
     """
     Returns True if typing event should be emitted. Stores a short-lived key
@@ -221,8 +239,13 @@ async def enqueue_chat_event(event_type: str, payload: Dict[str, Any]) -> bool:
             await client.rpush(CHAT_EVENT_QUEUE_KEY, entry)
             return True
         except (ConnectionError, TimeoutError, RedisError, OSError) as exc:
-            log_warning(logger, f"Chat Redis connection error during enqueue", 
-                       attempt=attempt + 1, max_retries=max_retries, error=str(exc))
+            log_warning(
+                logger,
+                "Chat Redis connection error during enqueue",
+                attempt=attempt + 1,
+                max_retries=max_retries,
+                error=str(exc),
+            )
             # Reset client to force reconnection on next attempt
             global _redis_client
             async with _redis_lock:
@@ -235,11 +258,22 @@ async def enqueue_chat_event(event_type: str, payload: Dict[str, Any]) -> bool:
             if attempt < max_retries - 1:
                 await asyncio.sleep(0.1)  # Brief delay before retry
                 continue
-            log_error(logger, f"Failed to enqueue chat event after max retries", 
-                     event_type=event_type, max_retries=max_retries, error=str(exc))
+            log_error(
+                logger,
+                "Failed to enqueue chat event after max retries",
+                event_type=event_type,
+                max_retries=max_retries,
+                error=str(exc),
+            )
             return False
         except Exception as exc:
-            log_error(logger, f"Failed to enqueue chat event", event_type=event_type, error=str(exc), exc_info=True)
+            log_error(
+                logger,
+                "Failed to enqueue chat event",
+                event_type=event_type,
+                error=str(exc),
+                exc_info=True,
+            )
             return False
     return False
 

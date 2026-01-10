@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-import os
-from dotenv import load_dotenv
-from descope.descope_client import DescopeClient
 import logging
+import os
+
+from descope.descope_client import DescopeClient
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -29,22 +30,26 @@ try:
     # Create client with project ID only and higher leeway
     client = DescopeClient(project_id=project_id, jwt_validation_leeway=300)
     print("Created Descope client successfully")
-    
+
     # Try to validate the session
     print("Attempting to validate session...")
     session = client.validate_session(test_token)
     print("✅ Session validation successful!")
     print(f"User info: {session.get('user', {})}")
-    
+
 except Exception as e:
     print(f"❌ Session validation failed: {e}")
     print(f"Error type: {type(e).__name__}")
-    
+
     # Try with management key
     if management_key:
         try:
             print("\nTrying with management key...")
-            mgmt_client = DescopeClient(project_id=project_id, management_key=management_key, jwt_validation_leeway=300)
+            mgmt_client = DescopeClient(
+                project_id=project_id,
+                management_key=management_key,
+                jwt_validation_leeway=300,
+            )
             session = mgmt_client.validate_session(test_token)
             print("✅ Session validation with management key successful!")
             print(f"User info: {session.get('user', {})}")
@@ -56,16 +61,18 @@ except Exception as e:
 
 print("\nTesting dependencies function...")
 try:
-    from routers.dependencies import get_current_user
-    from fastapi import Request
     from unittest.mock import Mock
-    
+
+    from fastapi import Request
+
+    from routers.dependencies import get_current_user
+
     # Create a mock request
     mock_request = Mock()
     mock_request.headers = {"Authorization": f"Bearer {test_token}"}
-    
+
     # This will test the dependencies without needing a full FastAPI app
     print("✅ Dependencies function imported successfully")
-    
+
 except Exception as e:
-    print(f"❌ Dependencies test failed: {e}") 
+    print(f"❌ Dependencies test failed: {e}")

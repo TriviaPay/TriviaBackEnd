@@ -14,29 +14,29 @@ def remove_is_referred_column():
     try:
         connection = engine.connect()
         trans = connection.begin()
-        
+
         logger.info("Removing is_referred column from users table...")
-        
+
         # Check if column exists first
         result = connection.execute(text("""
-            SELECT column_name 
-            FROM information_schema.columns 
+            SELECT column_name
+            FROM information_schema.columns
             WHERE table_name = 'users' AND column_name = 'is_referred'
         """))
-        
+
         if result.fetchone():
             # Column exists, remove it
             connection.execute(text("""
-                ALTER TABLE users 
+                ALTER TABLE users
                 DROP COLUMN is_referred
             """))
             logger.info("Successfully removed is_referred column")
         else:
             logger.info("is_referred column does not exist, nothing to remove")
-        
+
         trans.commit()
         logger.info("Migration completed successfully")
-        
+
     except Exception as e:
         trans.rollback()
         logger.error(f"Error removing is_referred column: {e}")

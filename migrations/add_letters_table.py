@@ -14,9 +14,9 @@ def add_letters_table():
     try:
         connection = engine.connect()
         trans = connection.begin()
-        
+
         logger.info("Creating letters table...")
-        
+
         # Create letters table
         connection.execute(text("""
             CREATE TABLE IF NOT EXISTS letters (
@@ -24,7 +24,7 @@ def add_letters_table():
                 image_url VARCHAR NOT NULL
             );
         """))
-        
+
         # Insert default letter images
         letters = [chr(i) for i in range(ord('a'), ord('z')+1)]
         for letter in letters:
@@ -34,10 +34,10 @@ def add_letters_table():
                 "letter": letter,
                 "url": f"https://example.com/{letter}.png"
             })
-        
+
         trans.commit()
         logger.info("Letters table created and populated successfully")
-        
+
     except Exception as e:
         logger.error(f"Error creating letters table: {str(e)}")
         if trans:
@@ -47,4 +47,4 @@ def add_letters_table():
         connection.close()
 
 if __name__ == "__main__":
-    add_letters_table() 
+    add_letters_table()

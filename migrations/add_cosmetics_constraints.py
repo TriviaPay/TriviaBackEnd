@@ -77,5 +77,3 @@ def add_constraints():
 
 if __name__ == "__main__":
     add_constraints()
-
-

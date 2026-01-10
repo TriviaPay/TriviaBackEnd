@@ -7,9 +7,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from models import User, UserPresence
 import auth
-import routers.dm_sse as dm_sse
+import routers.messaging.dm_sse as dm_sse
+from models import User, UserPresence
 
 
 def _make_client(monkeypatch):
@@ -63,7 +63,11 @@ def test_get_token_expiry_and_missing_token(monkeypatch):
     monkeypatch.setattr(auth, "decode_jwt_payload", lambda _token: {"exp": 123})
     assert dm_sse.get_token_expiry("token") == 123
 
-    monkeypatch.setattr(auth, "decode_jwt_payload", lambda _token: (_ for _ in ()).throw(Exception("bad")))
+    monkeypatch.setattr(
+        auth,
+        "decode_jwt_payload",
+        lambda _token: (_ for _ in ()).throw(Exception("bad")),
+    )
     assert dm_sse.get_token_expiry("token") is None
 
     with pytest.raises(Exception):
@@ -82,11 +86,19 @@ def test_update_presence_creates_and_updates(test_db, monkeypatch):
 
     now = datetime.utcnow()
     dm_sse._update_presence(user.account_id, now, True, True)
-    presence = test_db.query(UserPresence).filter(UserPresence.user_id == user.account_id).first()
+    presence = (
+        test_db.query(UserPresence)
+        .filter(UserPresence.user_id == user.account_id)
+        .first()
+    )
     assert presence is not None
     assert presence.device_online is True
 
     later = datetime.utcnow()
     dm_sse._update_presence(user.account_id, later, None, False)
-    presence = test_db.query(UserPresence).filter(UserPresence.user_id == user.account_id).first()
+    presence = (
+        test_db.query(UserPresence)
+        .filter(UserPresence.user_id == user.account_id)
+        .first()
+    )
     assert presence.last_seen_at == later

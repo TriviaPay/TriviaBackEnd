@@ -1,7 +1,7 @@
 import base64
-from datetime import datetime, timedelta
 import importlib
 import uuid
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,13 +21,13 @@ from sqlalchemy.dialects.postgresql import UUID
 
 import models
 from db import get_db
-from models import Base, User
+from models import Base, Block, User
 from routers.dependencies import get_current_user
-from models import Block
 
 
 def _define_group_and_dm_models():
     if not hasattr(models, "E2EEDevice"):
+
         class E2EEDevice(Base):
             __tablename__ = "e2ee_devices"
 
@@ -40,12 +40,15 @@ def _define_group_and_dm_models():
         models.E2EEDevice = E2EEDevice
 
     if not hasattr(models, "Group"):
+
         class Group(Base):
             __tablename__ = "groups"
 
             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
             title = Column(String, nullable=False)
-            created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            created_by = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             created_at = Column(DateTime, default=datetime.utcnow)
             updated_at = Column(DateTime, default=datetime.utcnow)
             max_participants = Column(Integer, default=100, nullable=False)
@@ -55,11 +58,14 @@ def _define_group_and_dm_models():
         models.Group = Group
 
     if not hasattr(models, "GroupParticipant"):
+
         class GroupParticipant(Base):
             __tablename__ = "group_participants"
 
             id = Column(Integer, primary_key=True)
-            group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
+            group_id = Column(
+                UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False
+            )
             user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
             role = Column(String, nullable=False, default="member")
             joined_at = Column(DateTime, default=datetime.utcnow)
@@ -69,12 +75,17 @@ def _define_group_and_dm_models():
         models.GroupParticipant = GroupParticipant
 
     if not hasattr(models, "GroupMessage"):
+
         class GroupMessage(Base):
             __tablename__ = "group_messages"
 
             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
-            sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            group_id = Column(
+                UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False
+            )
+            sender_user_id = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             sender_device_id = Column(UUID(as_uuid=True), nullable=False)
             ciphertext = Column(LargeBinary, nullable=False)
             proto = Column(Integer, nullable=False)
@@ -86,18 +97,24 @@ def _define_group_and_dm_models():
         models.GroupMessage = GroupMessage
 
     if not hasattr(models, "GroupDelivery"):
+
         class GroupDelivery(Base):
             __tablename__ = "group_delivery"
 
             id = Column(Integer, primary_key=True)
-            message_id = Column(UUID(as_uuid=True), ForeignKey("group_messages.id"), nullable=False)
-            recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            message_id = Column(
+                UUID(as_uuid=True), ForeignKey("group_messages.id"), nullable=False
+            )
+            recipient_user_id = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             delivered_at = Column(DateTime, nullable=True)
             read_at = Column(DateTime, nullable=True)
 
         models.GroupDelivery = GroupDelivery
 
     if not hasattr(models, "GroupBan"):
+
         class GroupBan(Base):
             __tablename__ = "group_bans"
 
@@ -110,6 +127,7 @@ def _define_group_and_dm_models():
         models.GroupBan = GroupBan
 
     if not hasattr(models, "DMConversation"):
+
         class DMConversation(Base):
             __tablename__ = "dm_conversations"
 
@@ -120,22 +138,30 @@ def _define_group_and_dm_models():
         models.DMConversation = DMConversation
 
     if not hasattr(models, "DMParticipant"):
+
         class DMParticipant(Base):
             __tablename__ = "dm_participants"
 
             id = Column(Integer, primary_key=True)
-            conversation_id = Column(UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False)
+            conversation_id = Column(
+                UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False
+            )
             user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
 
         models.DMParticipant = DMParticipant
 
     if not hasattr(models, "DMMessage"):
+
         class DMMessage(Base):
             __tablename__ = "dm_messages"
 
             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            conversation_id = Column(UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False)
-            sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            conversation_id = Column(
+                UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False
+            )
+            sender_user_id = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             sender_device_id = Column(UUID(as_uuid=True), nullable=False)
             ciphertext = Column(LargeBinary, nullable=False)
             proto = Column(Integer, nullable=False)
@@ -145,12 +171,17 @@ def _define_group_and_dm_models():
         models.DMMessage = DMMessage
 
     if not hasattr(models, "DMDelivery"):
+
         class DMDelivery(Base):
             __tablename__ = "dm_delivery"
 
             id = Column(Integer, primary_key=True)
-            message_id = Column(UUID(as_uuid=True), ForeignKey("dm_messages.id"), nullable=False)
-            recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            message_id = Column(
+                UUID(as_uuid=True), ForeignKey("dm_messages.id"), nullable=False
+            )
+            recipient_user_id = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             delivered_at = Column(DateTime, nullable=True)
             read_at = Column(DateTime, nullable=True)
 
@@ -159,8 +190,8 @@ def _define_group_and_dm_models():
 
 _define_group_and_dm_models()
 
-group_messages = importlib.import_module("routers.group_messages")
-dm_messages = importlib.import_module("routers.dm_messages")
+group_messages = importlib.import_module("routers.messaging.group_messages")
+dm_messages = importlib.import_module("routers.messaging.dm_messages")
 
 Group = models.Group
 GroupParticipant = models.GroupParticipant
@@ -193,7 +224,9 @@ def group_client(test_db, users, monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: user
 
     monkeypatch.setattr(group_messages, "GROUPS_ENABLED", True)
-    monkeypatch.setattr(group_messages, "publish_group_message", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        group_messages, "publish_group_message", lambda *args, **kwargs: None
+    )
 
     with TestClient(app) as test_client:
         yield test_client
@@ -256,7 +289,9 @@ def group_client_user2(test_db, users, monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: user2
 
     monkeypatch.setattr(group_messages, "GROUPS_ENABLED", True)
-    monkeypatch.setattr(group_messages, "publish_group_message", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        group_messages, "publish_group_message", lambda *args, **kwargs: None
+    )
 
     with TestClient(app) as test_client:
         yield test_client
@@ -431,9 +466,11 @@ def test_group_send_idempotent(group_client, test_db, users):
 
 def test_group_send_device_revoked(group_client, test_db, users):
     group, _device = _seed_group_owner_only(test_db, users)
-    device = test_db.query(E2EEDevice).filter(
-        E2EEDevice.user_id == users[0].account_id
-    ).first()
+    device = (
+        test_db.query(E2EEDevice)
+        .filter(E2EEDevice.user_id == users[0].account_id)
+        .first()
+    )
     device.status = "revoked"
     test_db.commit()
 
@@ -665,12 +702,16 @@ def test_dm_get_messages_returns_ciphertext(dm_client_user1, test_db, users):
     test_db.add(message)
     test_db.commit()
 
-    response = dm_client_user1.get(f"/dm/conversations/{conversation.id}/messages?limit=10")
+    response = dm_client_user1.get(
+        f"/dm/conversations/{conversation.id}/messages?limit=10"
+    )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["messages"][0]["id"] == str(message.id)
-    assert payload["messages"][0]["ciphertext"] == base64.b64encode(b"payload").decode("utf-8")
+    assert payload["messages"][0]["ciphertext"] == base64.b64encode(b"payload").decode(
+        "utf-8"
+    )
 
 
 def test_dm_send_disabled(dm_client_user1, test_db, users, monkeypatch):

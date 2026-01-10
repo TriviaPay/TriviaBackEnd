@@ -5,8 +5,8 @@ from fastapi.testclient import TestClient
 
 from db import get_db
 from main import app
+from models import GemPackageConfig, User, UserGemPurchase
 from routers.dependencies import get_current_user
-from models import User, GemPackageConfig, UserGemPurchase
 
 
 @pytest.fixture

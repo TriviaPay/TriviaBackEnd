@@ -1,6 +1,7 @@
+import datetime
 import os
 import sys
-import datetime
+
 import jwt
 from dotenv import load_dotenv
 
@@ -9,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Load environment variables
 load_dotenv()
+
 
 def generate_admin_token():
     """
@@ -39,19 +41,15 @@ def generate_admin_token():
         "email_verified": True,
         "name": "Admin User",
         "azp": "test_client_id",
-        "scope": "openid profile email"
+        "scope": "openid profile email",
     }
 
     # Generate token
     headers = {"kid": "local_test_key", "typ": "JWT", "alg": "HS256"}
-    token = jwt.encode(
-        payload,
-        auth0_client_secret,
-        algorithm="HS256",
-        headers=headers
-    )
+    token = jwt.encode(payload, auth0_client_secret, algorithm="HS256", headers=headers)
 
     return token
+
 
 if __name__ == "__main__":
     token = generate_admin_token()
@@ -60,6 +58,6 @@ if __name__ == "__main__":
     print(token)
     print("----------------------------------------------------")
     print("\nUse this token for authorization with the header:")
-    print('Authorization: Bearer <token>')
+    print("Authorization: Bearer <token>")
     print("\nOr for testing with curl:")
-    print(f'curl -H "Authorization: Bearer {token}" ...') 
+    print(f'curl -H "Authorization: Bearer {token}" ...')

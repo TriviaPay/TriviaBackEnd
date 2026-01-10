@@ -23,19 +23,22 @@ def _make_client(test_db, internal_module):
 
 
 def test_trivia_reminder_queued(test_db, monkeypatch):
-    internal = importlib.import_module("routers.internal")
+    internal = importlib.import_module("routers.trivia.internal")
     internal = importlib.reload(internal)
 
     today = date.today()
-    fake_trivia = types.ModuleType("routers.trivia")
+    fake_trivia = types.ModuleType("routers.trivia.trivia")
     fake_trivia.get_active_draw_date = lambda: today
-    monkeypatch.setitem(sys.modules, "routers.trivia", fake_trivia)
+    monkeypatch.setitem(sys.modules, "routers.trivia.trivia", fake_trivia)
 
     monkeypatch.setattr(internal, "ONESIGNAL_ENABLED", True)
-    monkeypatch.setattr(internal, "_send_trivia_reminder_job", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        internal, "_send_trivia_reminder_job", lambda *args, **kwargs: None
+    )
     monkeypatch.setenv("INTERNAL_SECRET", "secret")
 
     import config
+
     monkeypatch.setattr(config, "ONESIGNAL_APP_ID", "app")
     monkeypatch.setattr(config, "ONESIGNAL_REST_API_KEY", "key")
 
@@ -44,10 +47,22 @@ def test_trivia_reminder_queued(test_db, monkeypatch):
     user1.notification_on = True
     user2.notification_on = True
 
-    test_db.add_all([
-        OneSignalPlayer(user_id=user1.account_id, player_id="player-1", platform="ios", is_valid=True),
-        OneSignalPlayer(user_id=user2.account_id, player_id="player-2", platform="android", is_valid=True),
-    ])
+    test_db.add_all(
+        [
+            OneSignalPlayer(
+                user_id=user1.account_id,
+                player_id="player-1",
+                platform="ios",
+                is_valid=True,
+            ),
+            OneSignalPlayer(
+                user_id=user2.account_id,
+                player_id="player-2",
+                platform="android",
+                is_valid=True,
+            ),
+        ]
+    )
     test_db.add(
         TriviaUserFreeModeDaily(
             account_id=user1.account_id,
@@ -75,7 +90,7 @@ def test_trivia_reminder_queued(test_db, monkeypatch):
 
 
 def test_internal_secret_required(test_db, monkeypatch):
-    internal = importlib.import_module("routers.internal")
+    internal = importlib.import_module("routers.trivia.internal")
     internal = importlib.reload(internal)
 
     monkeypatch.setattr(internal, "ONESIGNAL_ENABLED", True)

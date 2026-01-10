@@ -18,12 +18,13 @@ from sqlalchemy.dialects.postgresql import UUID
 
 import models
 from db import get_db
-from models import Base, User, Block
+from models import Base, Block, User
 from routers.dependencies import get_current_user
 
 
 def _define_e2ee_models():
     if not hasattr(models, "E2EEDevice"):
+
         class E2EEDevice(Base):
             __tablename__ = "e2ee_devices"
 
@@ -37,10 +38,15 @@ def _define_e2ee_models():
         models.E2EEDevice = E2EEDevice
 
     if not hasattr(models, "E2EEKeyBundle"):
+
         class E2EEKeyBundle(Base):
             __tablename__ = "e2ee_key_bundles"
 
-            device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), primary_key=True)
+            device_id = Column(
+                UUID(as_uuid=True),
+                ForeignKey("e2ee_devices.device_id"),
+                primary_key=True,
+            )
             identity_key_pub = Column(String, nullable=False)
             signed_prekey_pub = Column(String, nullable=False)
             signed_prekey_sig = Column(String, nullable=False)
@@ -52,11 +58,14 @@ def _define_e2ee_models():
         models.E2EEKeyBundle = E2EEKeyBundle
 
     if not hasattr(models, "E2EEOneTimePrekey"):
+
         class E2EEOneTimePrekey(Base):
             __tablename__ = "e2ee_one_time_prekeys"
 
             id = Column(Integer, primary_key=True)
-            device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False)
+            device_id = Column(
+                UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False
+            )
             prekey_pub = Column(String, nullable=False)
             claimed = Column(Boolean, default=False, nullable=False)
             created_at = Column(DateTime, default=datetime.utcnow)
@@ -64,6 +73,7 @@ def _define_e2ee_models():
         models.E2EEOneTimePrekey = E2EEOneTimePrekey
 
     if not hasattr(models, "DeviceRevocation"):
+
         class DeviceRevocation(Base):
             __tablename__ = "device_revocations"
 
@@ -76,6 +86,7 @@ def _define_e2ee_models():
         models.DeviceRevocation = DeviceRevocation
 
     if not hasattr(models, "DMConversation"):
+
         class DMConversation(Base):
             __tablename__ = "dm_conversations"
 
@@ -85,11 +96,14 @@ def _define_e2ee_models():
         models.DMConversation = DMConversation
 
     if not hasattr(models, "DMParticipant"):
+
         class DMParticipant(Base):
             __tablename__ = "dm_participants"
 
             id = Column(Integer, primary_key=True)
-            conversation_id = Column(UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False)
+            conversation_id = Column(
+                UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False
+            )
             user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
 
         models.DMParticipant = DMParticipant
@@ -97,7 +111,7 @@ def _define_e2ee_models():
 
 _define_e2ee_models()
 
-e2ee_keys = importlib.import_module("routers.e2ee_keys")
+e2ee_keys = importlib.import_module("routers.messaging.e2ee_keys")
 e2ee_keys = importlib.reload(e2ee_keys)
 
 E2EEDevice = models.E2EEDevice
@@ -141,7 +155,9 @@ def _payload(device_id=None, identity="identity-1", prekeys=1):
     }
 
 
-def _create_device_bundle(test_db, user_id, prekeys=1, bundle_version=1, device_id=None):
+def _create_device_bundle(
+    test_db, user_id, prekeys=1, bundle_version=1, device_id=None
+):
     device_id = device_id or uuid.uuid4()
     device = E2EEDevice(
         device_id=device_id,
@@ -159,7 +175,11 @@ def _create_device_bundle(test_db, user_id, prekeys=1, bundle_version=1, device_
     )
     test_db.add_all([device, bundle])
     for idx in range(prekeys):
-        test_db.add(E2EEOneTimePrekey(device_id=device_id, prekey_pub=f"prekey-{idx}", claimed=False))
+        test_db.add(
+            E2EEOneTimePrekey(
+                device_id=device_id, prekey_pub=f"prekey-{idx}", claimed=False
+            )
+        )
     test_db.commit()
     return device_id
 
@@ -207,10 +227,16 @@ def test_upload_key_bundle_identity_change_blocked(test_db, users, monkeypatch):
     device_id = uuid.uuid4()
 
     with _make_client(test_db, user, monkeypatch) as client:
-        first = client.post("/e2ee/keys/upload", json=_payload(device_id=device_id, identity="identity-1"))
+        first = client.post(
+            "/e2ee/keys/upload",
+            json=_payload(device_id=device_id, identity="identity-1"),
+        )
         assert first.status_code == 200
 
-        second = client.post("/e2ee/keys/upload", json=_payload(device_id=device_id, identity="identity-2"))
+        second = client.post(
+            "/e2ee/keys/upload",
+            json=_payload(device_id=device_id, identity="identity-2"),
+        )
 
     assert second.status_code == 409
     assert second.json()["detail"] == "IDENTITY_CHANGE_BLOCKED"
@@ -236,16 +262,20 @@ def test_get_key_bundle_with_relationship(test_db, users, monkeypatch):
     conversation = DMConversation()
     test_db.add(conversation)
     test_db.flush()
-    test_db.add_all([
-        DMParticipant(conversation_id=conversation.id, user_id=user1.account_id),
-        DMParticipant(conversation_id=conversation.id, user_id=user2.account_id),
-    ])
+    test_db.add_all(
+        [
+            DMParticipant(conversation_id=conversation.id, user_id=user1.account_id),
+            DMParticipant(conversation_id=conversation.id, user_id=user2.account_id),
+        ]
+    )
     test_db.commit()
 
     _create_device_bundle(test_db, user2.account_id, prekeys=2, bundle_version=2)
 
     with _make_client(test_db, user1, monkeypatch) as client:
-        response = client.get(f"/e2ee/keys/bundle?user_id={user2.account_id}&bundle_version=1")
+        response = client.get(
+            f"/e2ee/keys/bundle?user_id={user2.account_id}&bundle_version=1"
+        )
 
     assert response.status_code == 409
     assert response.json()["detail"] == "BUNDLE_STALE"
@@ -294,7 +324,9 @@ def test_revoke_device_success(test_db, users, monkeypatch):
     device_id = _create_device_bundle(test_db, user.account_id, prekeys=0)
 
     with _make_client(test_db, user, monkeypatch) as client:
-        response = client.post("/e2ee/devices/revoke", json={"device_id": str(device_id), "reason": "lost"})
+        response = client.post(
+            "/e2ee/devices/revoke", json={"device_id": str(device_id), "reason": "lost"}
+        )
 
     assert response.status_code == 200
     device = test_db.query(E2EEDevice).filter(E2EEDevice.device_id == device_id).first()
@@ -305,7 +337,11 @@ def test_revoke_device_success(test_db, users, monkeypatch):
 def test_claim_prekey_success(test_db, users, monkeypatch):
     user, _ = users
     device_id = _create_device_bundle(test_db, user.account_id, prekeys=1)
-    prekey = test_db.query(E2EEOneTimePrekey).filter(E2EEOneTimePrekey.device_id == device_id).first()
+    prekey = (
+        test_db.query(E2EEOneTimePrekey)
+        .filter(E2EEOneTimePrekey.device_id == device_id)
+        .first()
+    )
 
     with _make_client(test_db, user, monkeypatch) as client:
         response = client.post(
@@ -314,9 +350,17 @@ def test_claim_prekey_success(test_db, users, monkeypatch):
         )
 
     assert response.status_code == 200
-    updated = test_db.query(E2EEOneTimePrekey).filter(E2EEOneTimePrekey.id == prekey.id).first()
+    updated = (
+        test_db.query(E2EEOneTimePrekey)
+        .filter(E2EEOneTimePrekey.id == prekey.id)
+        .first()
+    )
     assert updated.claimed is True
-    bundle = test_db.query(E2EEKeyBundle).filter(E2EEKeyBundle.device_id == device_id).first()
+    bundle = (
+        test_db.query(E2EEKeyBundle)
+        .filter(E2EEKeyBundle.device_id == device_id)
+        .first()
+    )
     assert bundle.prekeys_remaining == 0
 
 
@@ -375,7 +419,11 @@ def test_claim_prekey_device_revoked(test_db, users, monkeypatch):
 def test_claim_prekey_requires_relationship(test_db, users, monkeypatch):
     user1, user2 = users
     device_id = _create_device_bundle(test_db, user2.account_id, prekeys=1)
-    prekey = test_db.query(E2EEOneTimePrekey).filter(E2EEOneTimePrekey.device_id == device_id).first()
+    prekey = (
+        test_db.query(E2EEOneTimePrekey)
+        .filter(E2EEOneTimePrekey.device_id == device_id)
+        .first()
+    )
 
     with _make_client(test_db, user1, monkeypatch) as client:
         response = client.post(
@@ -390,7 +438,11 @@ def test_claim_prekey_requires_relationship(test_db, users, monkeypatch):
 def test_claim_prekey_blocked(test_db, users, monkeypatch):
     user1, user2 = users
     device_id = _create_device_bundle(test_db, user2.account_id, prekeys=1)
-    prekey = test_db.query(E2EEOneTimePrekey).filter(E2EEOneTimePrekey.device_id == device_id).first()
+    prekey = (
+        test_db.query(E2EEOneTimePrekey)
+        .filter(E2EEOneTimePrekey.device_id == device_id)
+        .first()
+    )
     test_db.add(Block(blocker_id=user2.account_id, blocked_id=user1.account_id))
     test_db.commit()
 

@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore", message=".*Python-dotenv.*")
 class FilteredStderr:
     def __init__(self, original_stderr):
         self.original_stderr = original_stderr
-        
+
     def write(self, text):
         # Filter out dotenv-related warnings (check if it's a dotenv warning)
         if text:
@@ -29,10 +29,10 @@ class FilteredStderr:
             if 'dotenv' in text_lower or 'python-dotenv' in text_lower:
                 return  # Skip dotenv warnings
             self.original_stderr.write(text)
-            
+
     def flush(self):
         self.original_stderr.flush()
-        
+
     def __getattr__(self, name):
         return getattr(self.original_stderr, name)
 

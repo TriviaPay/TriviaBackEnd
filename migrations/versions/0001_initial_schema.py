@@ -31,4 +31,3 @@ def downgrade() -> None:
     from models import Base
 
     Base.metadata.drop_all(bind=bind, checkfirst=True)
-

@@ -17,12 +17,12 @@ def run():
             logger.info("Removing redundant owned_cosmetics column from users table...")
             # Check if column exists before dropping
             check_query = text("""
-                SELECT column_name 
-                FROM information_schema.columns 
+                SELECT column_name
+                FROM information_schema.columns
                 WHERE table_name='users' AND column_name='owned_cosmetics'
             """)
             result = connection.execute(check_query).fetchone()
-            
+
             if result:
                 connection.execute(text(
                     "ALTER TABLE users DROP COLUMN owned_cosmetics"
@@ -30,7 +30,7 @@ def run():
                 logger.info("Successfully removed owned_cosmetics column.")
             else:
                 logger.info("owned_cosmetics column does not exist, skipping...")
-            
+
             trans.commit()
             logger.info("Migration completed successfully.")
         except Exception as e:
@@ -40,4 +40,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-

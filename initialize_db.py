@@ -7,68 +7,71 @@ Usage:
 """
 
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from models import Base, BoostConfig, GemPackageConfig
 from datetime import datetime
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from models import Base, BoostConfig, GemPackageConfig
+
 # Database configuration - use environment variables or defaults
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost/trivia_pay")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql://postgres:password@localhost/trivia_pay"
+)
 
 # Create engine and session
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 db = SessionLocal()
 
+
 def init_db():
     """Initialize database tables and default data"""
     # Create tables if they don't exist
     Base.metadata.create_all(bind=engine)
-    
+
     # Check if boost configs exist
     boost_count = db.query(BoostConfig).count()
     if boost_count == 0:
         print("Initializing default boost configurations...")
         default_boosts = [
             BoostConfig(
-                boost_type='streak_saver',
-                gems_cost=100,
-                description='Save your streak'
+                boost_type="streak_saver", gems_cost=100, description="Save your streak"
             ),
             BoostConfig(
-                boost_type='question_reroll',
+                boost_type="question_reroll",
                 gems_cost=80,
-                description='Change your question'
+                description="Change your question",
             ),
             BoostConfig(
-                boost_type='extra_chance',
+                boost_type="extra_chance",
                 gems_cost=150,
-                description='Extra chance if you answer wrong'
+                description="Extra chance if you answer wrong",
             ),
             BoostConfig(
-                boost_type='hint',
+                boost_type="hint",
                 gems_cost=30,
-                description='Get a hint for the current question'
+                description="Get a hint for the current question",
             ),
             BoostConfig(
-                boost_type='fifty_fifty',
+                boost_type="fifty_fifty",
                 gems_cost=50,
-                description='Remove two wrong answers'
+                description="Remove two wrong answers",
             ),
             BoostConfig(
-                boost_type='change_question',
+                boost_type="change_question",
                 gems_cost=10,
-                description='Change to a different question'
+                description="Change to a different question",
             ),
             BoostConfig(
-                boost_type='auto_submit',
+                boost_type="auto_submit",
                 gems_cost=300,
-                description='Automatically submit correct answers'
-            )
+                description="Automatically submit correct answers",
+            ),
         ]
-        
+
         db.add_all(default_boosts)
-        
+
     # Check if gem packages exist
     gem_count = db.query(GemPackageConfig).count()
     if gem_count == 0:
@@ -78,45 +81,46 @@ def init_db():
                 price_usd=0.99,
                 gems_amount=500,
                 is_one_time=True,
-                description='One-time beginner offer'
+                description="One-time beginner offer",
             ),
             GemPackageConfig(
                 price_usd=0.99,
                 gems_amount=150,
                 is_one_time=False,
-                description='Basic gem pack'
+                description="Basic gem pack",
             ),
             GemPackageConfig(
                 price_usd=1.99,
                 gems_amount=500,
                 is_one_time=False,
-                description='Standard gem pack'
+                description="Standard gem pack",
             ),
             GemPackageConfig(
                 price_usd=3.99,
                 gems_amount=2400,
                 is_one_time=False,
-                description='Premium gem pack'
+                description="Premium gem pack",
             ),
             GemPackageConfig(
                 price_usd=5.99,
                 gems_amount=5000,
                 is_one_time=False,
-                description='Super gem pack'
+                description="Super gem pack",
             ),
             GemPackageConfig(
                 price_usd=9.99,
                 gems_amount=12000,
                 is_one_time=False,
-                description='Ultimate gem pack'
-            )
+                description="Ultimate gem pack",
+            ),
         ]
-        
+
         db.add_all(default_packages)
-    
+
     # Commit changes
     db.commit()
     print("Database initialization complete!")
 
+
 if __name__ == "__main__":
-    init_db() 
+    init_db()

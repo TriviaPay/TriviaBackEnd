@@ -23,7 +23,7 @@ def _make_client(test_db, onesignal_module, user, monkeypatch):
 
 
 def test_register_player_new_and_list(test_db, monkeypatch):
-    onesignal = importlib.import_module("routers.onesignal")
+    onesignal = importlib.import_module("routers.notifications.onesignal")
     onesignal = importlib.reload(onesignal)
 
     user = test_db.query(User).first()
@@ -35,7 +35,9 @@ def test_register_player_new_and_list(test_db, monkeypatch):
         )
         assert response.status_code == 200
 
-        list_response = client.get("/onesignal/players", params={"limit": 10, "offset": 0})
+        list_response = client.get(
+            "/onesignal/players", params={"limit": 10, "offset": 0}
+        )
 
     assert list_response.status_code == 200
     payload = list_response.json()
@@ -44,13 +46,20 @@ def test_register_player_new_and_list(test_db, monkeypatch):
 
 
 def test_register_player_hijack_prevented(test_db, monkeypatch):
-    onesignal = importlib.import_module("routers.onesignal")
+    onesignal = importlib.import_module("routers.notifications.onesignal")
     onesignal = importlib.reload(onesignal)
 
     user1 = test_db.query(User).first()
     user2 = test_db.query(User).filter(User.account_id != user1.account_id).first()
 
-    test_db.add(OneSignalPlayer(user_id=user1.account_id, player_id="player-2", platform="ios", is_valid=True))
+    test_db.add(
+        OneSignalPlayer(
+            user_id=user1.account_id,
+            player_id="player-2",
+            platform="ios",
+            is_valid=True,
+        )
+    )
     test_db.commit()
 
     with _make_client(test_db, onesignal, user2, monkeypatch) as client:
@@ -60,11 +69,13 @@ def test_register_player_hijack_prevented(test_db, monkeypatch):
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Player ID is already registered to another user"
+    assert (
+        response.json()["detail"] == "Player ID is already registered to another user"
+    )
 
 
 def test_register_player_rate_limited(test_db, monkeypatch):
-    onesignal = importlib.import_module("routers.onesignal")
+    onesignal = importlib.import_module("routers.notifications.onesignal")
     onesignal = importlib.reload(onesignal)
 
     user = test_db.query(User).first()

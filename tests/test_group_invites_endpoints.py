@@ -24,6 +24,7 @@ from routers.dependencies import get_current_user
 
 def _define_group_models():
     if not hasattr(models, "E2EEDevice"):
+
         class E2EEDevice(Base):
             __tablename__ = "e2ee_devices"
 
@@ -36,12 +37,15 @@ def _define_group_models():
         models.E2EEDevice = E2EEDevice
 
     if not hasattr(models, "Group"):
+
         class Group(Base):
             __tablename__ = "groups"
 
             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
             title = Column(String, nullable=False)
-            created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            created_by = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             created_at = Column(DateTime, default=datetime.utcnow)
             updated_at = Column(DateTime, default=datetime.utcnow)
             max_participants = Column(Integer, default=100, nullable=False)
@@ -51,11 +55,14 @@ def _define_group_models():
         models.Group = Group
 
     if not hasattr(models, "GroupParticipant"):
+
         class GroupParticipant(Base):
             __tablename__ = "group_participants"
 
             id = Column(Integer, primary_key=True)
-            group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
+            group_id = Column(
+                UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False
+            )
             user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
             role = Column(String, nullable=False, default="member")
             joined_at = Column(DateTime, default=datetime.utcnow)
@@ -64,12 +71,17 @@ def _define_group_models():
         models.GroupParticipant = GroupParticipant
 
     if not hasattr(models, "GroupInvite"):
+
         class GroupInvite(Base):
             __tablename__ = "group_invites"
 
             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
-            created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            group_id = Column(
+                UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False
+            )
+            created_by = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             type = Column(String, nullable=False)
             code = Column(String, nullable=False, unique=True, index=True)
             expires_at = Column(DateTime, nullable=True, index=True)
@@ -81,6 +93,7 @@ def _define_group_models():
         models.GroupInvite = GroupInvite
 
     if not hasattr(models, "GroupBan"):
+
         class GroupBan(Base):
             __tablename__ = "group_bans"
 
@@ -95,7 +108,7 @@ def _define_group_models():
 
 _define_group_models()
 
-group_invites = importlib.import_module("routers.group_invites")
+group_invites = importlib.import_module("routers.messaging.group_invites")
 group_invites = importlib.reload(group_invites)
 
 Group = models.Group
@@ -206,35 +219,37 @@ def test_list_invites_filters_expired_and_maxed(test_db, users, monkeypatch):
     group = _create_group(test_db, user.account_id)
     now = datetime.utcnow()
 
-    test_db.add_all([
-        GroupInvite(
-            group_id=group.id,
-            created_by=user.account_id,
-            type="link",
-            code="ACTIVE",
-            expires_at=now + timedelta(hours=1),
-            max_uses=2,
-            uses=1,
-        ),
-        GroupInvite(
-            group_id=group.id,
-            created_by=user.account_id,
-            type="link",
-            code="EXPIRED",
-            expires_at=now - timedelta(hours=1),
-            max_uses=2,
-            uses=0,
-        ),
-        GroupInvite(
-            group_id=group.id,
-            created_by=user.account_id,
-            type="link",
-            code="MAXED",
-            expires_at=now + timedelta(hours=1),
-            max_uses=1,
-            uses=1,
-        ),
-    ])
+    test_db.add_all(
+        [
+            GroupInvite(
+                group_id=group.id,
+                created_by=user.account_id,
+                type="link",
+                code="ACTIVE",
+                expires_at=now + timedelta(hours=1),
+                max_uses=2,
+                uses=1,
+            ),
+            GroupInvite(
+                group_id=group.id,
+                created_by=user.account_id,
+                type="link",
+                code="EXPIRED",
+                expires_at=now - timedelta(hours=1),
+                max_uses=2,
+                uses=0,
+            ),
+            GroupInvite(
+                group_id=group.id,
+                created_by=user.account_id,
+                type="link",
+                code="MAXED",
+                expires_at=now + timedelta(hours=1),
+                max_uses=1,
+                uses=1,
+            ),
+        ]
+    )
     test_db.commit()
 
     with _make_client(test_db, user, monkeypatch) as client:
@@ -309,10 +324,12 @@ def test_join_group_already_member(test_db, users, monkeypatch):
         expires_at=datetime.utcnow() + timedelta(hours=1),
         uses=0,
     )
-    test_db.add_all([
-        invite,
-        GroupParticipant(group_id=group.id, user_id=user.account_id, role="member"),
-    ])
+    test_db.add_all(
+        [
+            invite,
+            GroupParticipant(group_id=group.id, user_id=user.account_id, role="member"),
+        ]
+    )
     test_db.commit()
 
     with _make_client(test_db, user, monkeypatch) as client:
@@ -369,7 +386,9 @@ def test_join_group_group_full(test_db, users, monkeypatch):
     monkeypatch.setattr(group_invites, "GROUP_MAX_PARTICIPANTS", 1)
     group = _create_group(test_db, owner.account_id)
     group.max_participants = 1
-    test_db.add(GroupParticipant(group_id=group.id, user_id=owner.account_id, role="owner"))
+    test_db.add(
+        GroupParticipant(group_id=group.id, user_id=owner.account_id, role="owner")
+    )
     invite = GroupInvite(
         group_id=group.id,
         created_by=owner.account_id,

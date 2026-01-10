@@ -15,10 +15,10 @@ def run():
         trans = connection.begin()
         try:
             logger.info("Adding unique constraints for idempotent cosmetic purchases...")
-            
+
             # Check if constraint already exists for user_avatars
             check_avatar_constraint = text("""
-                SELECT 1 FROM pg_constraint 
+                SELECT 1 FROM pg_constraint
                 WHERE conname = 'uq_user_avatar'
             """)
             result = connection.execute(check_avatar_constraint)
@@ -33,10 +33,10 @@ def run():
                 logger.info("Unique constraint created on user_avatars.")
             else:
                 logger.info("Unique constraint already exists on user_avatars.")
-            
+
             # Check if constraint already exists for user_frames
             check_frame_constraint = text("""
-                SELECT 1 FROM pg_constraint 
+                SELECT 1 FROM pg_constraint
                 WHERE conname = 'uq_user_frame'
             """)
             result = connection.execute(check_frame_constraint)
@@ -51,7 +51,7 @@ def run():
                 logger.info("Unique constraint created on user_frames.")
             else:
                 logger.info("Unique constraint already exists on user_frames.")
-            
+
             trans.commit()
             logger.info("Migration completed successfully.")
         except Exception as e:

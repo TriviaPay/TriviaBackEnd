@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from db import get_db
 from models import User
-from routers import refresh as refresh_router
+from routers.auth import refresh as refresh_router
 
 
 @pytest.fixture
@@ -61,6 +61,7 @@ def test_refresh_missing_user_returns_404(client, test_db):
 def test_refresh_timeout_path(client):
     def _timeout(_client, token):
         from fastapi import HTTPException
+
         raise HTTPException(status_code=504, detail="Session validation timed out")
 
     refresh_router._SESSION_CACHE.clear()

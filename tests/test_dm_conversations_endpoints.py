@@ -1,10 +1,11 @@
-from datetime import datetime
 import uuid
+from datetime import datetime
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     Column,
@@ -14,18 +15,18 @@ from sqlalchemy import (
     LargeBinary,
     String,
     UniqueConstraint,
-    JSON,
 )
 from sqlalchemy.dialects.postgresql import UUID
 
 import models
 from db import get_db
-from models import Base, User, Block
+from models import Base, Block, User
 from routers.dependencies import get_current_user
 
 
 def _define_dm_models():
     if not hasattr(models, "E2EEDevice"):
+
         class E2EEDevice(Base):
             __tablename__ = "e2ee_devices"
 
@@ -38,6 +39,7 @@ def _define_dm_models():
         models.E2EEDevice = E2EEDevice
 
     if not hasattr(models, "DMConversation"):
+
         class DMConversation(Base):
             __tablename__ = "dm_conversations"
 
@@ -50,16 +52,23 @@ def _define_dm_models():
         models.DMConversation = DMConversation
 
     if not hasattr(models, "DMParticipant"):
+
         class DMParticipant(Base):
             __tablename__ = "dm_participants"
 
             id = Column(Integer, primary_key=True)
-            conversation_id = Column(UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False)
+            conversation_id = Column(
+                UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False
+            )
             user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
             device_ids = Column(JSON, nullable=True)
 
             __table_args__ = (
-                UniqueConstraint('conversation_id', 'user_id', name='uq_dm_participants_conversation_user'),
+                UniqueConstraint(
+                    "conversation_id",
+                    "user_id",
+                    name="uq_dm_participants_conversation_user",
+                ),
             )
 
         models.DMParticipant = DMParticipant
@@ -70,12 +79,17 @@ def _define_dm_models():
             models.DMParticipant.__table__.append_column(device_ids)
 
     if not hasattr(models, "DMMessage"):
+
         class DMMessage(Base):
             __tablename__ = "dm_messages"
 
             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            conversation_id = Column(UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False)
-            sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            conversation_id = Column(
+                UUID(as_uuid=True), ForeignKey("dm_conversations.id"), nullable=False
+            )
+            sender_user_id = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             sender_device_id = Column(UUID(as_uuid=True), nullable=False)
             ciphertext = Column(LargeBinary, nullable=False)
             proto = Column(Integer, nullable=False)
@@ -85,17 +99,26 @@ def _define_dm_models():
         models.DMMessage = DMMessage
 
     if not hasattr(models, "DMDelivery"):
+
         class DMDelivery(Base):
             __tablename__ = "dm_delivery"
 
             id = Column(Integer, primary_key=True)
-            message_id = Column(UUID(as_uuid=True), ForeignKey("dm_messages.id"), nullable=False)
-            recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            message_id = Column(
+                UUID(as_uuid=True), ForeignKey("dm_messages.id"), nullable=False
+            )
+            recipient_user_id = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             delivered_at = Column(DateTime, nullable=True)
             read_at = Column(DateTime, nullable=True)
 
             __table_args__ = (
-                UniqueConstraint('message_id', 'recipient_user_id', name='uq_dm_delivery_message_recipient'),
+                UniqueConstraint(
+                    "message_id",
+                    "recipient_user_id",
+                    name="uq_dm_delivery_message_recipient",
+                ),
             )
 
         models.DMDelivery = DMDelivery
@@ -103,7 +126,7 @@ def _define_dm_models():
 
 _define_dm_models()
 
-from routers import dm_conversations as dm_conversations_router
+from routers.messaging import dm_conversations as dm_conversations_router
 
 E2EEDevice = models.E2EEDevice
 DMConversation = models.DMConversation
@@ -118,7 +141,9 @@ def current_user(test_db):
 
 @pytest.fixture
 def peer_user(test_db, current_user):
-    return test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    return (
+        test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    )
 
 
 @pytest.fixture
@@ -152,22 +177,30 @@ def test_create_or_find_conversation(client, test_db, current_user, peer_user):
     _create_device(test_db, current_user.account_id)
     _create_device(test_db, peer_user.account_id)
 
-    response = client.post("/dm/conversations", json={"peer_user_id": peer_user.account_id})
+    response = client.post(
+        "/dm/conversations", json={"peer_user_id": peer_user.account_id}
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["conversation_id"]
     assert len(payload["participants"]) == 2
 
-    second = client.post("/dm/conversations", json={"peer_user_id": peer_user.account_id})
+    second = client.post(
+        "/dm/conversations", json={"peer_user_id": peer_user.account_id}
+    )
     assert second.status_code == 200
     assert second.json()["conversation_id"] == payload["conversation_id"]
 
 
 def test_create_conversation_blocked(client, test_db, current_user, peer_user):
-    test_db.add(Block(blocker_id=current_user.account_id, blocked_id=peer_user.account_id))
+    test_db.add(
+        Block(blocker_id=current_user.account_id, blocked_id=peer_user.account_id)
+    )
     test_db.commit()
 
-    response = client.post("/dm/conversations", json={"peer_user_id": peer_user.account_id})
+    response = client.post(
+        "/dm/conversations", json={"peer_user_id": peer_user.account_id}
+    )
     assert response.status_code == 403
 
 
@@ -176,8 +209,12 @@ def test_list_and_get_conversations(client, test_db, current_user, peer_user):
     test_db.add(conversation)
     test_db.flush()
 
-    participant1 = DMParticipant(conversation_id=conversation.id, user_id=current_user.account_id, device_ids=[])
-    participant2 = DMParticipant(conversation_id=conversation.id, user_id=peer_user.account_id, device_ids=[])
+    participant1 = DMParticipant(
+        conversation_id=conversation.id, user_id=current_user.account_id, device_ids=[]
+    )
+    participant2 = DMParticipant(
+        conversation_id=conversation.id, user_id=peer_user.account_id, device_ids=[]
+    )
     test_db.add_all([participant1, participant2])
 
     message = DMMessage(

@@ -36,7 +36,6 @@ class _DummyClient:
         self.mgmt = _DummyMgmt()
 
 
-
 def _make_client(test_db, login_module):
     app = FastAPI()
     app.include_router(login_module.router)
@@ -49,12 +48,16 @@ def _make_client(test_db, login_module):
 
 
 def test_username_and_email_available_case_insensitive(test_db, monkeypatch):
-    login = importlib.import_module("routers.login")
+    login = importlib.import_module("routers.auth.login")
     login = importlib.reload(login)
 
     with _make_client(test_db, login) as client:
-        username_response = client.get("/username-available", params={"username": "TestUser1"})
-        email_response = client.get("/email-available", params={"email": "TEST1@EXAMPLE.COM"})
+        username_response = client.get(
+            "/username-available", params={"username": "TestUser1"}
+        )
+        email_response = client.get(
+            "/email-available", params={"email": "TEST1@EXAMPLE.COM"}
+        )
 
     assert username_response.status_code == 200
     assert username_response.json()["available"] is False
@@ -63,14 +66,16 @@ def test_username_and_email_available_case_insensitive(test_db, monkeypatch):
 
 
 def test_bind_password_updates_existing_user(test_db, monkeypatch):
-    login = importlib.import_module("routers.login")
+    login = importlib.import_module("routers.auth.login")
     login = importlib.reload(login)
+    service = importlib.import_module("routers.auth.service")
+    service = importlib.reload(service)
 
-    monkeypatch.setattr(login, "mgmt_client", _DummyClient())
-    monkeypatch.setattr(login, "STORE_PASSWORD_IN_DESCOPE", False)
-    monkeypatch.setattr(login, "STORE_PASSWORD_IN_NEONDB", True)
+    monkeypatch.setattr(service, "mgmt_client", _DummyClient())
+    monkeypatch.setattr(service, "STORE_PASSWORD_IN_DESCOPE", False)
+    monkeypatch.setattr(service, "STORE_PASSWORD_IN_NEONDB", True)
     monkeypatch.setattr(
-        login,
+        service,
         "validate_descope_jwt",
         lambda token: {"userId": "descope-1", "loginIds": ["test1@example.com"]},
     )

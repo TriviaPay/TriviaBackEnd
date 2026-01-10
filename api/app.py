@@ -1,7 +1,8 @@
+import os
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import sys
-import os
 
 # Create a FastAPI application
 app = FastAPI(
@@ -10,7 +11,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    openapi_url="/openapi.json"
+    openapi_url="/openapi.json",
 )
 
 # Add CORS middleware
@@ -19,29 +20,25 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
+
 
 @app.get("/")
 async def read_root():
     """
     Root endpoint to check if the server is running.
     """
-    return {
-        "status": "online",
-        "message": "TriviaPay Backend API",
-        "version": "1.0.0"
-    }
+    return {"status": "online", "message": "TriviaPay Backend API", "version": "1.0.0"}
+
 
 @app.get("/health")
 async def health_check():
     """
     Health check endpoint for monitoring.
     """
-    return {
-        "status": "healthy",
-        "python_version": sys.version
-    }
+    return {"status": "healthy", "python_version": sys.version}
+
 
 # This is needed for Vercel serverless function
-handler = app 
+handler = app

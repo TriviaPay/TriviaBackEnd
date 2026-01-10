@@ -5,7 +5,15 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+)
 from sqlalchemy.dialects.postgresql import UUID
 
 import models
@@ -16,6 +24,7 @@ from routers.dependencies import get_current_user
 
 def _define_group_models():
     if not hasattr(models, "Group"):
+
         class Group(Base):
             __tablename__ = "groups"
 
@@ -23,7 +32,9 @@ def _define_group_models():
             title = Column(String, nullable=False)
             about = Column(String, nullable=True)
             photo_url = Column(String, nullable=True)
-            created_by = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            created_by = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             created_at = Column(DateTime, default=datetime.utcnow)
             updated_at = Column(DateTime, default=datetime.utcnow)
             max_participants = Column(Integer, default=100, nullable=False)
@@ -33,11 +44,14 @@ def _define_group_models():
         models.Group = Group
 
     if not hasattr(models, "GroupParticipant"):
+
         class GroupParticipant(Base):
             __tablename__ = "group_participants"
 
             id = Column(Integer, primary_key=True)
-            group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False)
+            group_id = Column(
+                UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False
+            )
             user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
             role = Column(String, nullable=False, default="member")
             joined_at = Column(DateTime, default=datetime.utcnow)
@@ -48,7 +62,7 @@ def _define_group_models():
 
 _define_group_models()
 
-groups_router = importlib.import_module("routers.groups")
+groups_router = importlib.import_module("routers.messaging.groups")
 groups_router = importlib.reload(groups_router)
 
 Group = models.Group
@@ -85,12 +99,31 @@ def test_list_groups_returns_roles_and_counts(test_db, monkeypatch):
         updated_at=datetime.utcnow(),
     )
     test_db.add_all([group1, group2])
-    test_db.add_all([
-        GroupParticipant(group_id=group1.id, user_id=user.account_id, role="owner", is_banned=False),
-        GroupParticipant(group_id=group2.id, user_id=user.account_id, role="member", is_banned=False),
-        GroupParticipant(group_id=group2.id, user_id=other.account_id, role="member", is_banned=False),
-        GroupParticipant(group_id=group2.id, user_id=999, role="member", is_banned=True),
-    ])
+    test_db.add_all(
+        [
+            GroupParticipant(
+                group_id=group1.id,
+                user_id=user.account_id,
+                role="owner",
+                is_banned=False,
+            ),
+            GroupParticipant(
+                group_id=group2.id,
+                user_id=user.account_id,
+                role="member",
+                is_banned=False,
+            ),
+            GroupParticipant(
+                group_id=group2.id,
+                user_id=other.account_id,
+                role="member",
+                is_banned=False,
+            ),
+            GroupParticipant(
+                group_id=group2.id, user_id=999, role="member", is_banned=True
+            ),
+        ]
+    )
     test_db.commit()
 
     with _make_client(test_db, user, monkeypatch) as client:
@@ -117,7 +150,11 @@ def test_get_group_requires_membership(test_db, monkeypatch):
         updated_at=datetime.utcnow(),
     )
     test_db.add(group)
-    test_db.add(GroupParticipant(group_id=group.id, user_id=user.account_id, role="owner", is_banned=False))
+    test_db.add(
+        GroupParticipant(
+            group_id=group.id, user_id=user.account_id, role="owner", is_banned=False
+        )
+    )
     test_db.commit()
 
     with _make_client(test_db, other, monkeypatch) as client:
@@ -136,7 +173,11 @@ def test_update_group_closed(test_db, monkeypatch):
         is_closed=True,
     )
     test_db.add(group)
-    test_db.add(GroupParticipant(group_id=group.id, user_id=user.account_id, role="owner", is_banned=False))
+    test_db.add(
+        GroupParticipant(
+            group_id=group.id, user_id=user.account_id, role="owner", is_banned=False
+        )
+    )
     test_db.commit()
 
     with _make_client(test_db, user, monkeypatch) as client:
@@ -156,7 +197,11 @@ def test_delete_group_already_closed(test_db, monkeypatch):
         is_closed=True,
     )
     test_db.add(group)
-    test_db.add(GroupParticipant(group_id=group.id, user_id=user.account_id, role="owner", is_banned=False))
+    test_db.add(
+        GroupParticipant(
+            group_id=group.id, user_id=user.account_id, role="owner", is_banned=False
+        )
+    )
     test_db.commit()
 
     with _make_client(test_db, user, monkeypatch) as client:

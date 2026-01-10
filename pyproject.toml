@@ -1,0 +1,51 @@
+[tool.black]
+line-length = 88
+exclude = '''
+(
+  /(
+      \.git
+    | \.venv
+    | venv
+    | build
+    | dist
+    | alembic
+    | migrations
+  )/
+)
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip = ["alembic", "migrations", ".venv", "venv", "build", "dist"]
+
+[tool.mypy]
+ignore_missing_imports = true
+explicit_package_bases = true
+disable_error_code = [
+  "return-value",
+  "import-untyped",
+  "union-attr",
+  "valid-type",
+  "assignment",
+  "attr-defined",
+  "arg-type",
+  "dict-item",
+  "call-arg",
+  "var-annotated",
+  "operator",
+  "index",
+  "type-var",
+  "misc",
+  "call-overload",
+]
+exclude = '(^|/)(alembic|migrations)/|(^|/)auth\\.py$'
+
+[tool.mypy-redis]
+ignore_missing_imports = true
+
+[tool.mypy-redis.asyncio]
+ignore_missing_imports = true
+
+[tool.mypy-redis.exceptions]
+ignore_missing_imports = true

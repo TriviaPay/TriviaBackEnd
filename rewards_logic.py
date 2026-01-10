@@ -1,17 +1,18 @@
+import calendar
+import json
+import logging
 import os
 import random
-import logging
-import json
-import calendar
-from datetime import datetime, timedelta, date
-from typing import List, Dict, Any, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, and_, or_
-import pytz
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
 
-from models import User, CompanyRevenue, Avatar, Frame, UserDailyRewards
+import pytz
+from sqlalchemy import and_, desc, func, or_
+from sqlalchemy.orm import Session
+
 # Legacy tables removed: TriviaQuestionsWinners, TriviaDrawConfig, TriviaQuestionsEntries, TriviaUserDaily, Trivia, TriviaQuestionsDaily
 from db import get_db
+from models import Avatar, CompanyRevenue, Frame, User, UserDailyRewards
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Legacy get_draw_config removed - TriviaDrawConfig table deleted
 # Use mode-specific draw configuration via TriviaModeConfig instead
 
+
 def get_draw_time() -> Dict[str, Any]:
     """
     Get the current draw time settings from environment variables.
@@ -27,9 +29,10 @@ def get_draw_time() -> Dict[str, Any]:
     draw_time = {
         "hour": int(os.environ.get("DRAW_TIME_HOUR", "20")),
         "minute": int(os.environ.get("DRAW_TIME_MINUTE", "0")),
-        "timezone": os.environ.get("DRAW_TIMEZONE", "US/Eastern")
+        "timezone": os.environ.get("DRAW_TIMEZONE", "US/Eastern"),
     }
     return draw_time
+
 
 def is_draw_time(current_time: datetime = None) -> bool:
     """
@@ -37,13 +40,16 @@ def is_draw_time(current_time: datetime = None) -> bool:
     """
     if not current_time:
         current_time = datetime.now(pytz.UTC)
-    
+
     draw_settings = get_draw_time()
     tz = pytz.timezone(draw_settings["timezone"])
     current_time_in_tz = current_time.astimezone(tz)
-    
-    return (current_time_in_tz.hour == draw_settings["hour"] and 
-            current_time_in_tz.minute == draw_settings["minute"])
+
+    return (
+        current_time_in_tz.hour == draw_settings["hour"]
+        and current_time_in_tz.minute == draw_settings["minute"]
+    )
+
 
 def calculate_winner_count(participant_count: int) -> int:
     """Calculate the number of winners based on participant count."""
@@ -82,30 +88,34 @@ def calculate_winner_count(participant_count: int) -> int:
     else:
         return 53  # Cap at 53 winners
 
+
 def calculate_prize_distribution(total_prize: float, winner_count: int) -> List[float]:
     """Calculate prize distribution using harmonic sum."""
     import math
-    
+
     if winner_count <= 0 or total_prize <= 0:
         return []
-    
+
     # Calculate harmonic sum (1/1 + 1/2 + 1/3 + ... + 1/n)
-    harmonic_sum = sum(1/i for i in range(1, winner_count + 1))
-    
+    harmonic_sum = sum(1 / i for i in range(1, winner_count + 1))
+
     # Calculate individual prizes
-    prizes = [(1/(i+1))/harmonic_sum * total_prize for i in range(winner_count)]
-    
+    prizes = [(1 / (i + 1)) / harmonic_sum * total_prize for i in range(winner_count)]
+
     # Round down to 2 decimal places (lower limit)
     def round_down(value: float, decimals: int = 2) -> float:
-        multiplier = 10 ** decimals
+        multiplier = 10**decimals
         return math.floor(value * multiplier) / multiplier
-    
+
     return [round_down(prize, 2) for prize in prizes]
 
-def calculate_prize_pool(db: Session, draw_date: date, commit_revenue: bool = True) -> float:
+
+def calculate_prize_pool(
+    db: Session, draw_date: date, commit_revenue: bool = True
+) -> float:
     """
     Calculate the prize pool for a specific date.
-    
+
     Rules:
     - If subscriber count < 200: monthly_prize_pool = subscriber_count * 4.3
     - If subscriber count >= 200: monthly_prize_pool = subscriber_count * 3.526
@@ -113,12 +123,15 @@ def calculate_prize_pool(db: Session, draw_date: date, commit_revenue: bool = Tr
     - daily_prize_pool = monthly_prize_pool / days_in_month
     """
     # Count subscribers
-    subscriber_count = db.query(func.count(User.account_id)).filter(
-        User.subscription_flag == True
-    ).scalar() or 0
-    
+    subscriber_count = (
+        db.query(func.count(User.account_id))
+        .filter(User.subscription_flag == True)
+        .scalar()
+        or 0
+    )
+
     logger.info(f"Subscriber count for prize calculation: {subscriber_count}")
-    
+
     # Calculate monthly prize pool based on subscriber count
     if subscriber_count < 200:
         monthly_prize_pool = subscriber_count * 4.3
@@ -126,14 +139,16 @@ def calculate_prize_pool(db: Session, draw_date: date, commit_revenue: bool = Tr
     else:
         monthly_prize_pool = subscriber_count * 3.526
         company_revenue_amount = subscriber_count * 0.774
-        
+
         if commit_revenue:
             # Add to company revenue table
             month_start = date(draw_date.year, draw_date.month, 1)
-            existing_revenue = db.query(CompanyRevenue).filter(
-                CompanyRevenue.month_start_date == month_start
-            ).first()
-            
+            existing_revenue = (
+                db.query(CompanyRevenue)
+                .filter(CompanyRevenue.month_start_date == month_start)
+                .first()
+            )
+
             if existing_revenue:
                 existing_revenue.revenue_amount = company_revenue_amount
                 existing_revenue.subscriber_count = subscriber_count
@@ -142,22 +157,27 @@ def calculate_prize_pool(db: Session, draw_date: date, commit_revenue: bool = Tr
                 new_revenue = CompanyRevenue(
                     month_start_date=month_start,
                     revenue_amount=company_revenue_amount,
-                    subscriber_count=subscriber_count
+                    subscriber_count=subscriber_count,
                 )
                 db.add(new_revenue)
-            
+
             db.commit()
-            logger.info(f"Added ${company_revenue_amount} to company revenue for {month_start}")
-    
+            logger.info(
+                f"Added ${company_revenue_amount} to company revenue for {month_start}"
+            )
+
     # Get days in current month
     days_in_month = calendar.monthrange(draw_date.year, draw_date.month)[1]
-    
+
     # Calculate daily prize pool
     daily_prize_pool = monthly_prize_pool / days_in_month
-    
-    logger.info(f"Daily prize pool: ${daily_prize_pool} (monthly: ${monthly_prize_pool}, days: {days_in_month})")
-    
+
+    logger.info(
+        f"Daily prize pool: ${daily_prize_pool} (monthly: ${monthly_prize_pool}, days: {days_in_month})"
+    )
+
     return round(daily_prize_pool, 2)
+
 
 # Legacy get_eligible_participants removed - TriviaUserDaily and TriviaQuestionsEntries tables deleted
 # Use mode-specific eligibility functions instead (e.g., get_eligible_participants_free_mode)
@@ -165,22 +185,33 @@ def calculate_prize_pool(db: Session, draw_date: date, commit_revenue: bool = Tr
 # Legacy perform_draw removed - TriviaQuestionsWinners and TriviaDrawConfig tables deleted
 # Use mode-specific draw functions instead (e.g., execute_mode_draw)
 
+
 def get_user_details(user, db: Session) -> Dict[str, Any]:
     """
     Extract user details for display with cosmetic items (badge, avatar, frame).
     Note: image_url fields have been removed from avatars and frames tables.
     URLs should be generated using presigned URLs from bucket/object_key.
     """
-    from utils.storage import presign_get
-    
     # Get badge info from TriviaModeConfig (badges merged into trivia_mode_config)
     from models import TriviaModeConfig
-    badge_info = db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == user.badge_id).first() if user.badge_id else None
-    badge_image_url = badge_info.badge_image_url if badge_info and badge_info.badge_image_url else None  # Badge URLs are public, no presigning
-    
+    from utils.storage import presign_get
+
+    badge_info = (
+        db.query(TriviaModeConfig)
+        .filter(TriviaModeConfig.mode_id == user.badge_id)
+        .first()
+        if user.badge_id
+        else None
+    )
+    badge_image_url = (
+        badge_info.badge_image_url
+        if badge_info and badge_info.badge_image_url
+        else None
+    )  # Badge URLs are public, no presigning
+
     # Get avatar URL (presigned)
     avatar_image_url = None
-    avatar_id = getattr(user, 'selected_avatar_id', None)
+    avatar_id = getattr(user, "selected_avatar_id", None)
     if avatar_id:
         avatar_info = db.query(Avatar).filter(Avatar.id == avatar_id).first()
         if avatar_info:
@@ -191,10 +222,10 @@ def get_user_details(user, db: Session) -> Dict[str, Any]:
                     avatar_image_url = presign_get(bucket, object_key, expires=900)
                 except Exception as e:
                     logging.warning(f"Failed to presign avatar {avatar_info.id}: {e}")
-    
+
     # Get frame URL (presigned)
     frame_image_url = None
-    frame_id = getattr(user, 'selected_frame_id', None)
+    frame_id = getattr(user, "selected_frame_id", None)
     if frame_id:
         frame_info = db.query(Frame).filter(Frame.id == frame_id).first()
         if frame_info:
@@ -205,13 +236,13 @@ def get_user_details(user, db: Session) -> Dict[str, Any]:
                     frame_image_url = presign_get(bucket, object_key, expires=900)
                 except Exception as e:
                     logging.warning(f"Failed to presign frame {frame_info.id}: {e}")
-    
+
     return {
         "account_id": user.account_id,
         "username": user.username,
         "badge_image_url": badge_image_url,
         "avatar_image_url": avatar_image_url,
-        "frame_image_url": frame_image_url
+        "frame_image_url": frame_image_url,
     }
 
 
@@ -221,12 +252,13 @@ def reset_daily_eligibility_flags(db: Session) -> None:
     This should be called after each daily draw.
     """
     logger.info("Resetting daily eligibility flags for all users")
-    
+
     # Reset all users' daily eligibility flags
     db.query(User).update({"daily_eligibility_flag": False})
     db.commit()
-    
+
     logger.info("Daily eligibility flags reset successfully")
+
 
 def reset_monthly_subscriptions(db: Session) -> None:
     """
@@ -234,12 +266,13 @@ def reset_monthly_subscriptions(db: Session) -> None:
     This should be called at 12:01 AM EST on the last day of each month.
     """
     logger.info("Resetting monthly subscription flags for all users")
-    
+
     # Reset all users' subscription flags
     db.query(User).update({"subscription_flag": False})
     db.commit()
-    
+
     logger.info("Monthly subscription flags reset successfully")
+
 
 def reset_weekly_daily_rewards(db: Session) -> None:
     """
@@ -248,12 +281,15 @@ def reset_weekly_daily_rewards(db: Session) -> None:
     This should be called Monday at 00:00 (midnight) in the configured timezone.
     """
     logger.info("Resetting weekly daily rewards for all users")
-    
+
     # Delete all UserDailyRewards records (new week will create fresh records)
     deleted_count = db.query(UserDailyRewards).delete()
     db.commit()
-    
-    logger.info(f"Weekly daily rewards reset successfully. Deleted {deleted_count} records.")
+
+    logger.info(
+        f"Weekly daily rewards reset successfully. Deleted {deleted_count} records."
+    )
+
 
 # Legacy update_user_eligibility removed - TriviaUserDaily table deleted
 # Use mode-specific eligibility tracking instead

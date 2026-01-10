@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from routers import trivia as trivia_router
+from routers.trivia import trivia as trivia_router
 
 
 def test_trivia_router_has_no_endpoints():

@@ -1,11 +1,14 @@
 """
 Helper functions for storing notifications in the database.
 """
-from sqlalchemy.orm import Session
-from models import Notification
-from datetime import datetime
-from typing import Optional, Dict, Any, List
+
 import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy.orm import Session
+
+from models import Notification
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +19,11 @@ def create_notification(
     title: str,
     body: str,
     notification_type: str,
-    data: Optional[Dict[str, Any]] = None
+    data: Optional[Dict[str, Any]] = None,
 ) -> Notification:
     """
     Create and store a notification in the database.
-    
+
     Args:
         db: Database session
         user_id: User ID to send notification to
@@ -28,7 +31,7 @@ def create_notification(
         body: Notification body/content
         notification_type: Type of notification (e.g., "chat_global", "chat_private", "chat_trivia_live", "system", "reward")
         data: Optional additional data (e.g., message_id, conversation_id, etc.)
-    
+
     Returns:
         Created Notification object
     """
@@ -40,12 +43,14 @@ def create_notification(
             type=notification_type,
             data=data,
             read=False,
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
         )
         db.add(notification)
         db.commit()
         db.refresh(notification)
-        logger.debug(f"Created notification {notification.id} for user {user_id} (type: {notification_type})")
+        logger.debug(
+            f"Created notification {notification.id} for user {user_id} (type: {notification_type})"
+        )
         return notification
     except Exception as e:
         logger.error(f"Failed to create notification for user {user_id}: {e}")
@@ -59,11 +64,11 @@ def create_notifications_batch(
     title: str,
     body: str,
     notification_type: str,
-    data: Optional[Dict[str, Any]] = None
+    data: Optional[Dict[str, Any]] = None,
 ) -> int:
     """
     Create notifications for multiple users in batch.
-    
+
     Args:
         db: Database session
         user_ids: List of user IDs to send notifications to
@@ -71,13 +76,13 @@ def create_notifications_batch(
         body: Notification body/content
         notification_type: Type of notification
         data: Optional additional data
-    
+
     Returns:
         Number of notifications created
     """
     if not user_ids:
         return 0
-    
+
     try:
         notifications = [
             Notification(
@@ -87,16 +92,19 @@ def create_notifications_batch(
                 type=notification_type,
                 data=data,
                 read=False,
-                created_at=datetime.utcnow()
+                created_at=datetime.utcnow(),
             )
             for user_id in user_ids
         ]
         db.add_all(notifications)
         db.commit()
-        logger.debug(f"Created {len(notifications)} notifications (type: {notification_type}) for user_ids: {user_ids[:5]}..." if len(user_ids) > 5 else f"Created {len(notifications)} notifications (type: {notification_type}) for user_ids: {user_ids}")
+        logger.debug(
+            f"Created {len(notifications)} notifications (type: {notification_type}) for user_ids: {user_ids[:5]}..."
+            if len(user_ids) > 5
+            else f"Created {len(notifications)} notifications (type: {notification_type}) for user_ids: {user_ids}"
+        )
         return len(notifications)
     except Exception as e:
         logger.error(f"Failed to create batch notifications: {e}", exc_info=True)
         db.rollback()
         return 0
-

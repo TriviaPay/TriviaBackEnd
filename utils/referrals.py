@@ -12,7 +12,7 @@ REFERRAL_CHARSET = string.ascii_uppercase + string.digits
 
 def generate_referral_code() -> str:
     """Return a random 5-character alphanumeric referral code."""
-    return ''.join(random.choices(REFERRAL_CHARSET, k=REFERRAL_CODE_LENGTH))
+    return "".join(random.choices(REFERRAL_CHARSET, k=REFERRAL_CODE_LENGTH))
 
 
 def get_unique_referral_code(db: Session, max_attempts: int = 10) -> str:

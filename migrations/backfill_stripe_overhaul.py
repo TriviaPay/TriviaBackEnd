@@ -46,7 +46,7 @@ def generate_idempotency_key(payment_intent_id: str, created_at: datetime) -> st
 def backfill_payment_transactions(engine):
     """Backfill payment_transactions table with new columns."""
     logger.info("Starting payment_transactions backfill...")
-    
+
     with engine.connect() as conn:
         # Convert amount to amount_minor
         logger.info("Converting amount (Float) to amount_minor (BIGINT)...")
@@ -56,7 +56,7 @@ def backfill_payment_transactions(engine):
             WHERE amount_minor IS NULL AND amount IS NOT NULL
         """))
         conn.commit()
-        
+
         # Extract livemode from payment_intent_id
         logger.info("Extracting livemode from Stripe IDs...")
         conn.execute(text("""
@@ -65,7 +65,7 @@ def backfill_payment_transactions(engine):
             WHERE livemode IS NULL
         """))
         conn.commit()
-        
+
         # Generate idempotency_key for existing transactions
         logger.info("Generating idempotency_key for existing transactions...")
         conn.execute(text("""
@@ -74,7 +74,7 @@ def backfill_payment_transactions(engine):
             WHERE idempotency_key IS NULL AND payment_intent_id IS NOT NULL
         """))
         conn.commit()
-        
+
         # Set direction based on payment_method_type
         logger.info("Setting direction based on payment_method_type...")
         conn.execute(text("""
@@ -87,7 +87,7 @@ def backfill_payment_transactions(engine):
             WHERE direction IS NULL
         """))
         conn.commit()
-        
+
         # Set funding_source based on payment_method_type
         logger.info("Setting funding_source based on payment_method_type...")
         conn.execute(text("""
@@ -101,26 +101,26 @@ def backfill_payment_transactions(engine):
             WHERE funding_source IS NULL
         """))
         conn.commit()
-        
+
         logger.info("Payment transactions backfill completed.")
 
 
 def calculate_wallet_balances(engine):
     """Calculate initial wallet balances from historical transactions."""
     logger.info("Calculating initial wallet balances...")
-    
+
     with engine.connect() as conn:
         # Calculate balance for each user from successful wallet deposits minus withdrawals
         logger.info("Calculating balances from payment_transactions...")
         conn.execute(text("""
             INSERT INTO user_wallet_balances (user_id, currency, balance_minor, last_recalculated_at)
-            SELECT 
+            SELECT
                 user_id,
                 currency,
                 COALESCE(SUM(
-                    CASE 
-                        WHEN payment_metadata::text LIKE '%"transaction_type": "wallet_deposit"%' 
-                             AND status = 'succeeded' 
+                    CASE
+                        WHEN payment_metadata::text LIKE '%"transaction_type": "wallet_deposit"%'
+                             AND status = 'succeeded'
                         THEN amount_minor
                         WHEN payment_metadata::text LIKE '%"transaction_type": "wallet_withdrawal"%'
                         THEN -amount_minor
@@ -136,7 +136,7 @@ def calculate_wallet_balances(engine):
                 last_recalculated_at = EXCLUDED.last_recalculated_at
         """))
         conn.commit()
-        
+
         # Update users.wallet_balance_minor for USD (default currency)
         logger.info("Updating users.wallet_balance_minor for USD...")
         conn.execute(text("""
@@ -144,18 +144,18 @@ def calculate_wallet_balances(engine):
             SET wallet_balance_minor = COALESCE(uwb.balance_minor, 0),
                 wallet_currency = COALESCE(uwb.currency, 'usd')
             FROM user_wallet_balances uwb
-            WHERE u.account_id = uwb.user_id 
+            WHERE u.account_id = uwb.user_id
             AND uwb.currency = 'usd'
         """))
         conn.commit()
-        
+
         logger.info("Wallet balances calculation completed.")
 
 
 def backfill_subscription_plans(engine):
     """Backfill subscription_plans with new columns."""
     logger.info("Starting subscription_plans backfill...")
-    
+
     with engine.connect() as conn:
         # Convert price_usd to unit_amount_minor
         logger.info("Converting price_usd to unit_amount_minor...")
@@ -169,24 +169,24 @@ def backfill_subscription_plans(engine):
             WHERE unit_amount_minor IS NULL
         """))
         conn.commit()
-        
+
         logger.info("Subscription plans backfill completed.")
 
 
 def main():
     """Run all backfill operations."""
     logger.info("Starting Stripe overhaul backfill...")
-    
+
     try:
         engine = create_engine(DATABASE_URL)
-        
+
         # Run backfills in order
         backfill_payment_transactions(engine)
         calculate_wallet_balances(engine)
         backfill_subscription_plans(engine)
-        
+
         logger.info("All backfill operations completed successfully!")
-        
+
     except Exception as e:
         logger.error(f"Error during backfill: {str(e)}", exc_info=True)
         raise
@@ -194,4 +194,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -16,12 +16,12 @@ def add_unified_draw_system():
     try:
         connection = engine.connect()
         trans = connection.begin()
-        
+
         logger.info("Adding unified draw system components...")
-        
+
         # 1. Add daily_eligibility_flag column to users table if it doesn't exist
         check_column_query = text("""
-            SELECT 1 FROM information_schema.columns 
+            SELECT 1 FROM information_schema.columns
             WHERE table_name='users' AND column_name='daily_eligibility_flag'
         """)
         result = connection.execute(check_column_query)
@@ -32,10 +32,10 @@ def add_unified_draw_system():
             """))
         else:
             logger.info("daily_eligibility_flag column already exists")
-        
+
         # 2. Create user_question_answers table if it doesn't exist
         check_table_query = text("""
-            SELECT 1 FROM information_schema.tables 
+            SELECT 1 FROM information_schema.tables
             WHERE table_name='user_question_answers'
         """)
         result = connection.execute(check_table_query)
@@ -63,10 +63,10 @@ def add_unified_draw_system():
             """))
         else:
             logger.info("user_question_answers table already exists")
-        
+
         # 3. Create company_revenue table if it doesn't exist
         check_table_query = text("""
-            SELECT 1 FROM information_schema.tables 
+            SELECT 1 FROM information_schema.tables
             WHERE table_name='company_revenue'
         """)
         result = connection.execute(check_table_query)
@@ -90,12 +90,12 @@ def add_unified_draw_system():
             """))
         else:
             logger.info("company_revenue table already exists")
-        
+
         trans.commit()
         connection.close()
         logger.info("Unified draw system migration completed successfully")
         return True
-        
+
     except Exception as e:
         logger.error(f"Error in unified draw system migration: {str(e)}")
         if 'trans' in locals():
@@ -112,4 +112,4 @@ if __name__ == "__main__":
         print("Migration completed successfully")
     else:
         logger.error("Migration failed")
-        print("Migration failed") 
+        print("Migration failed")

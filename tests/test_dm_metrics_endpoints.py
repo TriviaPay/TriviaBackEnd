@@ -25,6 +25,7 @@ from routers.dependencies import get_current_user
 
 def _define_dm_models():
     if not hasattr(models, "E2EEDevice"):
+
         class E2EEDevice(Base):
             __tablename__ = "e2ee_devices"
 
@@ -38,10 +39,15 @@ def _define_dm_models():
         models.E2EEDevice = E2EEDevice
 
     if not hasattr(models, "E2EEKeyBundle"):
+
         class E2EEKeyBundle(Base):
             __tablename__ = "e2ee_key_bundles"
 
-            device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), primary_key=True)
+            device_id = Column(
+                UUID(as_uuid=True),
+                ForeignKey("e2ee_devices.device_id"),
+                primary_key=True,
+            )
             identity_key_pub = Column(String, nullable=False)
             signed_prekey_pub = Column(String, nullable=False)
             signed_prekey_sig = Column(String, nullable=False)
@@ -52,11 +58,14 @@ def _define_dm_models():
         models.E2EEKeyBundle = E2EEKeyBundle
 
     if not hasattr(models, "E2EEOneTimePrekey"):
+
         class E2EEOneTimePrekey(Base):
             __tablename__ = "e2ee_one_time_prekeys"
 
             id = Column(Integer, primary_key=True)
-            device_id = Column(UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False)
+            device_id = Column(
+                UUID(as_uuid=True), ForeignKey("e2ee_devices.device_id"), nullable=False
+            )
             prekey_pub = Column(String, nullable=False)
             claimed = Column(Boolean, default=False, nullable=False)
             created_at = Column(DateTime, default=datetime.utcnow)
@@ -64,12 +73,15 @@ def _define_dm_models():
         models.E2EEOneTimePrekey = E2EEOneTimePrekey
 
     if not hasattr(models, "DMMessage"):
+
         class DMMessage(Base):
             __tablename__ = "dm_messages"
 
             id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
             conversation_id = Column(UUID(as_uuid=True), nullable=False)
-            sender_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            sender_user_id = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             sender_device_id = Column(UUID(as_uuid=True), nullable=False)
             ciphertext = Column(LargeBinary, nullable=False)
             proto = Column(Integer, nullable=False)
@@ -78,12 +90,17 @@ def _define_dm_models():
         models.DMMessage = DMMessage
 
     if not hasattr(models, "DMDelivery"):
+
         class DMDelivery(Base):
             __tablename__ = "dm_delivery"
 
             id = Column(Integer, primary_key=True)
-            message_id = Column(UUID(as_uuid=True), ForeignKey("dm_messages.id"), nullable=False)
-            recipient_user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+            message_id = Column(
+                UUID(as_uuid=True), ForeignKey("dm_messages.id"), nullable=False
+            )
+            recipient_user_id = Column(
+                BigInteger, ForeignKey("users.account_id"), nullable=False
+            )
             delivered_at = Column(DateTime, nullable=True)
             read_at = Column(DateTime, nullable=True)
 
@@ -92,7 +109,7 @@ def _define_dm_models():
 
 _define_dm_models()
 
-dm_metrics = importlib.import_module("routers.dm_metrics")
+dm_metrics = importlib.import_module("routers.messaging.dm_metrics")
 dm_metrics = importlib.reload(dm_metrics)
 
 E2EEDevice = models.E2EEDevice
@@ -151,8 +168,12 @@ def test_dm_metrics_payload(test_db, monkeypatch):
         updated_at=datetime.utcnow(),
     )
     test_db.add_all([device, bundle])
-    test_db.add(E2EEOneTimePrekey(device_id=device_id, prekey_pub="prekey-1", claimed=False))
-    test_db.add(E2EEOneTimePrekey(device_id=device_id, prekey_pub="prekey-2", claimed=True))
+    test_db.add(
+        E2EEOneTimePrekey(device_id=device_id, prekey_pub="prekey-1", claimed=False)
+    )
+    test_db.add(
+        E2EEOneTimePrekey(device_id=device_id, prekey_pub="prekey-2", claimed=True)
+    )
 
     now = datetime.utcnow()
     message_recent = DMMessage(
@@ -207,7 +228,10 @@ def test_dm_metrics_cache_hit(test_db, monkeypatch):
     user.is_admin = True
     test_db.commit()
 
-    cached = {"status": "success", "metrics": {"messages": {"today": 0, "last_hour": 0}}}
+    cached = {
+        "status": "success",
+        "metrics": {"messages": {"today": 0, "last_hour": 0}},
+    }
 
     with _make_client(test_db, user, monkeypatch) as client:
         dm_metrics._metrics_cache["payload"] = cached

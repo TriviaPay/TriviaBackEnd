@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from db import get_db
 from models import User, UserPresence
 from routers.dependencies import get_current_user
-from routers import presence as presence_router
+from routers.messaging import presence as presence_router
 
 
 @pytest.fixture
@@ -38,19 +38,27 @@ def test_get_presence_returns_defaults_without_write(client, test_db, current_us
     assert payload["user_id"] == current_user.account_id
     assert payload["device_online"] is False
     assert payload["privacy_settings"]["share_last_seen"] == "contacts"
-    assert test_db.query(UserPresence).filter(UserPresence.user_id == current_user.account_id).count() == 0
+    assert (
+        test_db.query(UserPresence)
+        .filter(UserPresence.user_id == current_user.account_id)
+        .count()
+        == 0
+    )
 
 
 def test_update_presence_creates_row_and_normalizes_all(client, test_db, current_user):
-    response = client.patch("/presence", json={
-        "share_last_seen": "all",
-        "share_online": False,
-        "read_receipts": False
-    })
+    response = client.patch(
+        "/presence",
+        json={"share_last_seen": "all", "share_online": False, "read_receipts": False},
+    )
     assert response.status_code == 200
     assert response.json()["privacy_settings"]["share_last_seen"] == "everyone"
 
-    presence = test_db.query(UserPresence).filter(UserPresence.user_id == current_user.account_id).first()
+    presence = (
+        test_db.query(UserPresence)
+        .filter(UserPresence.user_id == current_user.account_id)
+        .first()
+    )
     assert presence is not None
     assert presence.privacy_settings["share_last_seen"] == "everyone"
     assert presence.privacy_settings["share_online"] is False

@@ -170,10 +170,14 @@ def test_silver_mode_submit_answer_creates_attempt(client, test_db, current_user
     assert payload["status"] == "success"
     assert payload["is_correct"] is True
 
-    attempt = test_db.query(TriviaUserSilverModeDaily).filter(
-        TriviaUserSilverModeDaily.account_id == current_user.account_id,
-        TriviaUserSilverModeDaily.date == target_date,
-    ).first()
+    attempt = (
+        test_db.query(TriviaUserSilverModeDaily)
+        .filter(
+            TriviaUserSilverModeDaily.account_id == current_user.account_id,
+            TriviaUserSilverModeDaily.date == target_date,
+        )
+        .first()
+    )
     assert attempt is not None
     assert attempt.submitted_at is not None
 
@@ -218,7 +222,9 @@ def test_silver_mode_leaderboard_includes_badge(client, test_db, current_user):
     current_user.badge_id = "silver"
     test_db.commit()
 
-    other_user = test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    other_user = (
+        test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    )
     target_date = get_active_draw_date()
     test_db.add_all(
         [
@@ -245,7 +251,10 @@ def test_silver_mode_leaderboard_includes_badge(client, test_db, current_user):
     assert response.status_code == 200
     leaderboard = response.json()["leaderboard"]
     by_user = {entry["user_id"]: entry for entry in leaderboard}
-    assert by_user[current_user.account_id]["badge_image_url"] == "https://badge/silver.png"
+    assert (
+        by_user[current_user.account_id]["badge_image_url"]
+        == "https://badge/silver.png"
+    )
 
 
 def test_silver_mode_question_requires_subscription(client, test_db):

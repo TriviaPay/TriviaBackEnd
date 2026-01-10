@@ -1,16 +1,23 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from models import User, Avatar, Frame
 from main import app
+from models import Avatar, Frame, User
 from routers.dependencies import get_current_user
 
 
 def test_profile_summary_returns_expected_fields(test_db):
     # Arrange: create a user with selected avatar and frame
     user = test_db.query(User).first()
-    avatar = Avatar(id="av1", name="Avatar One", description=None, image_url="https://img/avatar1.png")
-    frame = Frame(id="fr1", name="Frame One", description=None, image_url="https://img/frame1.png")
+    avatar = Avatar(
+        id="av1",
+        name="Avatar One",
+        description=None,
+        image_url="https://img/avatar1.png",
+    )
+    frame = Frame(
+        id="fr1", name="Frame One", description=None, image_url="https://img/frame1.png"
+    )
     test_db.add_all([avatar, frame])
     test_db.flush()
 
@@ -51,5 +58,3 @@ def test_profile_summary_returns_expected_fields(test_db):
     assert data["zip"] == "90210"
     assert data["avatar"]["id"] == avatar.id
     assert data["frame"]["id"] == frame.id
-
-

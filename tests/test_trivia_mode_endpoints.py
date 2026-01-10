@@ -1,32 +1,32 @@
 import json
-from datetime import datetime, timedelta, date
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
-import routers.profile as profile_router
-
+import routers.auth.profile as profile_router
+import routers.auth.service as auth_service
 from db import get_db
 from main import app
-from routers.dependencies import get_current_user
 from models import (
-    User,
     SubscriptionPlan,
-    UserSubscription,
-    TriviaModeConfig,
-    TriviaQuestionsFreeMode,
-    TriviaQuestionsFreeModeDaily,
-    TriviaUserFreeModeDaily,
-    TriviaFreeModeLeaderboard,
-    TriviaFreeModeWinners,
-    TriviaQuestionsBronzeMode,
-    TriviaQuestionsBronzeModeDaily,
-    TriviaUserBronzeModeDaily,
     TriviaBronzeModeLeaderboard,
     TriviaBronzeModeWinners,
+    TriviaFreeModeLeaderboard,
+    TriviaFreeModeWinners,
+    TriviaModeConfig,
+    TriviaQuestionsBronzeMode,
+    TriviaQuestionsBronzeModeDaily,
+    TriviaQuestionsFreeMode,
+    TriviaQuestionsFreeModeDaily,
     TriviaSilverModeLeaderboard,
+    TriviaUserBronzeModeDaily,
+    TriviaUserFreeModeDaily,
+    User,
     UserDailyRewards,
+    UserSubscription,
 )
+from routers.dependencies import get_current_user
 from utils.trivia_mode_service import get_active_draw_date, get_date_range_for_query
 
 
@@ -51,7 +51,15 @@ def client(test_db, current_user):
     app.dependency_overrides = previous_overrides
 
 
-def _add_mode_config(test_db, mode_id, mode_name, questions_count, amount=0.0, reward_distribution=None, badge_image_url=None):
+def _add_mode_config(
+    test_db,
+    mode_id,
+    mode_name,
+    questions_count,
+    amount=0.0,
+    reward_distribution=None,
+    badge_image_url=None,
+):
     reward_distribution = reward_distribution or json.dumps(
         {"requires_subscription": amount > 0, "subscription_amount": amount}
     )
@@ -254,7 +262,9 @@ def test_free_mode_leaderboard_uses_bulk_profile(client, test_db, current_user):
     _add_subscription(test_db, current_user, unit_amount_minor=500, price_usd=5.0)
     current_user.badge_id = "free_mode"
 
-    other_user = test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    other_user = (
+        test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    )
     question = _create_free_mode_question(test_db, 1)
     target_date = get_active_draw_date()
     test_db.add(
@@ -294,7 +304,9 @@ def test_free_mode_leaderboard_uses_bulk_profile(client, test_db, current_user):
     leaderboard = response.json()["leaderboard"]
     by_user = {entry["user_id"]: entry for entry in leaderboard}
 
-    assert by_user[current_user.account_id]["badge_image_url"] == "https://badge/free.png"
+    assert (
+        by_user[current_user.account_id]["badge_image_url"] == "https://badge/free.png"
+    )
     assert by_user[current_user.account_id]["subscription_badges"]
     assert by_user[current_user.account_id]["level_progress"] == "1/100"
     assert by_user[other_user.account_id]["subscription_badges"] == []
@@ -314,7 +326,9 @@ def test_bronze_mode_leaderboard_uses_bulk_profile(client, test_db, current_user
     )
     current_user.badge_id = "bronze"
 
-    other_user = test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    other_user = (
+        test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    )
     target_date = get_active_draw_date()
     test_db.add_all(
         [
@@ -342,7 +356,10 @@ def test_bronze_mode_leaderboard_uses_bulk_profile(client, test_db, current_user
     leaderboard = response.json()["leaderboard"]
     by_user = {entry["user_id"]: entry for entry in leaderboard}
 
-    assert by_user[current_user.account_id]["badge_image_url"] == "https://badge/bronze.png"
+    assert (
+        by_user[current_user.account_id]["badge_image_url"]
+        == "https://badge/bronze.png"
+    )
     assert by_user[current_user.account_id]["level_progress"] == "0/100"
 
 
@@ -371,7 +388,9 @@ def test_rewards_recent_winners_uses_bulk_profile(client, test_db, current_user)
     )
     _add_subscription(test_db, current_user, unit_amount_minor=500, price_usd=5.0)
 
-    other_user = test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    other_user = (
+        test_db.query(User).filter(User.account_id != current_user.account_id).first()
+    )
     target_date = get_active_draw_date()
     test_db.add_all(
         [
@@ -462,7 +481,8 @@ def test_free_mode_submit_answer_creates_attempt(client, test_db):
     attempt = (
         test_db.query(TriviaUserFreeModeDaily)
         .filter(
-            TriviaUserFreeModeDaily.account_id == test_db.query(User).first().account_id,
+            TriviaUserFreeModeDaily.account_id
+            == test_db.query(User).first().account_id,
             TriviaUserFreeModeDaily.date == target_date,
             TriviaUserFreeModeDaily.question_order == 1,
         )
@@ -665,7 +685,9 @@ def test_bronze_mode_question_requires_subscription(client, test_db):
     assert response.status_code == 403
 
 
-def test_bronze_mode_submit_answer_rejects_duplicate(client, test_db, current_user, monkeypatch):
+def test_bronze_mode_submit_answer_rejects_duplicate(
+    client, test_db, current_user, monkeypatch
+):
     monkeypatch.setenv("DRAW_TIME_HOUR", "23")
     monkeypatch.setenv("DRAW_TIME_MINUTE", "59")
     monkeypatch.setenv("DRAW_TIMEZONE", "US/Eastern")
@@ -840,15 +862,19 @@ def test_profile_complete_returns_user_data(client, test_db, current_user):
     assert data["address"]["city"] == "Metropolis"
 
 
-def test_profile_change_username_updates_local_user(client, test_db, current_user, monkeypatch):
+def test_profile_change_username_updates_local_user(
+    client, test_db, current_user, monkeypatch
+):
     def _fake_update(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(profile_router.client.mgmt.user, "update", _fake_update)
+    monkeypatch.setattr(auth_service.mgmt_client.mgmt.user, "update", _fake_update)
     current_user.username_updated = False
     test_db.commit()
 
-    response = client.post("/profile/change-username", params={"new_username": "updatedname"})
+    response = client.post(
+        "/profile/change-username", params={"new_username": "updatedname"}
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -859,21 +885,27 @@ def test_profile_change_username_updates_local_user(client, test_db, current_use
     assert current_user.username_updated is True
 
 
-def test_profile_change_username_requires_payment(client, test_db, current_user, monkeypatch):
+def test_profile_change_username_requires_payment(
+    client, test_db, current_user, monkeypatch
+):
     def _fake_update(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(profile_router.client.mgmt.user, "update", _fake_update)
+    monkeypatch.setattr(auth_service.mgmt_client.mgmt.user, "update", _fake_update)
     current_user.username_updated = True
     test_db.commit()
 
-    response = client.post("/profile/change-username", params={"new_username": "blocked"})
+    response = client.post(
+        "/profile/change-username", params={"new_username": "blocked"}
+    )
 
     assert response.status_code == 403
 
 
-def test_profile_send_referral_generates_code(client, test_db, current_user, monkeypatch):
-    monkeypatch.setattr(profile_router, "get_unique_referral_code", lambda _db: "ABCDE")
+def test_profile_send_referral_generates_code(
+    client, test_db, current_user, monkeypatch
+):
+    monkeypatch.setattr(auth_service, "get_unique_referral_code", lambda _db: "ABCDE")
     current_user.referral_code = None
     test_db.commit()
 
@@ -888,10 +920,12 @@ def test_profile_send_referral_generates_code(client, test_db, current_user, mon
 
 
 def test_profile_upload_profile_pic(client, test_db, current_user, monkeypatch):
-    monkeypatch.setattr(profile_router, "AWS_PROFILE_PIC_BUCKET", "test-bucket")
-    monkeypatch.setattr(profile_router, "upload_file", lambda **kwargs: True)
-    monkeypatch.setattr(profile_router, "presign_get", lambda **kwargs: "https://cdn.test/pic.jpg")
-    monkeypatch.setattr(profile_router, "delete_file", lambda **kwargs: None)
+    monkeypatch.setattr(auth_service, "AWS_PROFILE_PIC_BUCKET", "test-bucket")
+    monkeypatch.setattr(auth_service, "upload_file", lambda **kwargs: True)
+    monkeypatch.setattr(
+        auth_service, "presign_get", lambda **kwargs: "https://cdn.test/pic.jpg"
+    )
+    monkeypatch.setattr(auth_service, "delete_file", lambda **kwargs: None)
 
     response = client.post(
         "/profile/upload-profile-pic",
@@ -908,7 +942,7 @@ def test_profile_upload_profile_pic(client, test_db, current_user, monkeypatch):
 
 
 def test_profile_upload_profile_pic_rejects_type(client, monkeypatch):
-    monkeypatch.setattr(profile_router, "AWS_PROFILE_PIC_BUCKET", "test-bucket")
+    monkeypatch.setattr(auth_service, "AWS_PROFILE_PIC_BUCKET", "test-bucket")
 
     response = client.post(
         "/profile/upload-profile-pic",

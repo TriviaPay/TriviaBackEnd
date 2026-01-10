@@ -5,10 +5,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
+import routers.messaging.dm_privacy as dm_privacy
 from db import get_db
-from models import User, Block
+from models import Block, User
 from routers.dependencies import get_current_user
-import routers.dm_privacy as dm_privacy
 
 
 def _make_client(test_db, user, monkeypatch):
@@ -26,10 +26,14 @@ def _make_client(test_db, user, monkeypatch):
 
 def test_block_unblock_and_list(test_db, monkeypatch):
     user = test_db.query(User).first()
-    blocked_user = test_db.query(User).filter(User.account_id != user.account_id).first()
+    blocked_user = (
+        test_db.query(User).filter(User.account_id != user.account_id).first()
+    )
 
     with _make_client(test_db, user, monkeypatch) as client:
-        response = client.post("/dm/block", json={"blocked_user_id": blocked_user.account_id})
+        response = client.post(
+            "/dm/block", json={"blocked_user_id": blocked_user.account_id}
+        )
         assert response.status_code == 200
 
         response = client.get("/dm/blocks")
@@ -48,7 +52,9 @@ def test_block_unblock_and_list(test_db, monkeypatch):
 
 def test_block_integrity_error_returns_success(test_db, monkeypatch):
     user = test_db.query(User).first()
-    blocked_user = test_db.query(User).filter(User.account_id != user.account_id).first()
+    blocked_user = (
+        test_db.query(User).filter(User.account_id != user.account_id).first()
+    )
 
     original_commit = test_db.commit
 
@@ -58,7 +64,9 @@ def test_block_integrity_error_returns_success(test_db, monkeypatch):
     test_db.commit = fake_commit
     try:
         with _make_client(test_db, user, monkeypatch) as client:
-            response = client.post("/dm/block", json={"blocked_user_id": blocked_user.account_id})
+            response = client.post(
+                "/dm/block", json={"blocked_user_id": blocked_user.account_id}
+            )
     finally:
         test_db.commit = original_commit
 

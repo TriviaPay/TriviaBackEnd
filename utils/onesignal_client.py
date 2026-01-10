@@ -1,15 +1,19 @@
-import httpx
-from config import ONESIGNAL_ENABLED, ONESIGNAL_APP_ID, ONESIGNAL_REST_API_KEY
-from sqlalchemy.orm import Session
-from models import OneSignalPlayer
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
 import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+import httpx
+from sqlalchemy.orm import Session
+
+from config import ONESIGNAL_APP_ID, ONESIGNAL_ENABLED, ONESIGNAL_REST_API_KEY
+from models import OneSignalPlayer
 
 logger = logging.getLogger(__name__)
 
 ONESIGNAL_API_URL = "https://api.onesignal.com/notifications"
-ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS = 30  # Don't send push if user was active in last 30 seconds
+ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS = (
+    30  # Don't send push if user was active in last 30 seconds
+)
 
 # Log OneSignal configuration on module import (one-time, at server startup)
 if ONESIGNAL_ENABLED:
@@ -22,16 +26,27 @@ if ONESIGNAL_ENABLED:
     )
     # Warn if key lengths look suspicious
     if ONESIGNAL_APP_ID and app_id_len != 36:
-        logger.warning(f"⚠️ OneSignal APP_ID length is {app_id_len}, expected 36 (UUID format). Verify you're using App ID, not REST API Key.")
+        logger.warning(
+            f"⚠️ OneSignal APP_ID length is {app_id_len}, expected 36 (UUID format). Verify you're using App ID, not REST API Key."
+        )
     # v2 keys are ~110 chars, legacy keys are ~40-50
     if ONESIGNAL_REST_API_KEY and rest_key_len < 30:
-        logger.warning(f"⚠️ OneSignal REST_API_KEY length is {rest_key_len}, seems too short. Verify you copied the full key.")
+        logger.warning(
+            f"⚠️ OneSignal REST_API_KEY length is {rest_key_len}, seems too short. Verify you copied the full key."
+        )
     # Detect v2 key format (starts with os_v2_app_)
-    is_v2_key = ONESIGNAL_REST_API_KEY and ONESIGNAL_REST_API_KEY.startswith("os_v2_app_")
+    is_v2_key = ONESIGNAL_REST_API_KEY and ONESIGNAL_REST_API_KEY.startswith(
+        "os_v2_app_"
+    )
     if is_v2_key:
-        logger.info(f"✅ Detected OneSignal v2 App API Key (os_v2_app_...). Using v2 API format (Authorization: Key, URL: api.onesignal.com)")
+        logger.info(
+            "✅ Detected OneSignal v2 App API Key (os_v2_app_...). Using v2 API "
+            "format (Authorization: Key, URL: api.onesignal.com)"
+        )
     elif ONESIGNAL_REST_API_KEY and rest_key_len > 100:
-        logger.warning(f"⚠️ OneSignal REST_API_KEY length is {rest_key_len} but doesn't start with 'os_v2_app_'. Verify key format.")
+        logger.warning(
+            f"⚠️ OneSignal REST_API_KEY length is {rest_key_len} but doesn't start with 'os_v2_app_'. Verify key format."
+        )
 else:
     logger.info("OneSignal is DISABLED (ONESIGNAL_ENABLED=False)")
 
@@ -42,11 +57,11 @@ async def send_push_notification_async(
     content: str,
     data: Optional[Dict[str, Any]] = None,
     url: Optional[str] = None,
-    is_in_app_notification: bool = False
+    is_in_app_notification: bool = False,
 ) -> bool:
     """
     Send push notification via OneSignal asynchronously.
-    
+
     Args:
         player_ids: List of OneSignal player IDs to send to
         heading: Notification heading/title
@@ -58,14 +73,14 @@ async def send_push_notification_async(
     if not ONESIGNAL_ENABLED:
         logger.debug("OneSignal not enabled, notification not sent")
         return False
-    
+
     if not player_ids:
         return False
-    
+
     if not all([ONESIGNAL_APP_ID, ONESIGNAL_REST_API_KEY]):
         logger.warning("OneSignal credentials not fully configured")
         return False
-    
+
     # Debug logging: Verify credentials are loaded (but don't log the actual key value)
     logger.debug(
         f"OneSignal config check: ENABLED={ONESIGNAL_ENABLED}, "
@@ -73,40 +88,42 @@ async def send_push_notification_async(
         f"APP_ID_LEN={len(ONESIGNAL_APP_ID) if ONESIGNAL_APP_ID else 0}, "
         f"REST_KEY_LEN={len(ONESIGNAL_REST_API_KEY) if ONESIGNAL_REST_API_KEY else 0}"
     )
-    
+
     # Prepare data payload with in-app notification flag
     notification_data = data.copy() if data else {}
     if is_in_app_notification:
         notification_data["show_as_in_app"] = True
         # For in-app notifications, we also need to ensure OneSignal doesn't suppress them
         # when app is in foreground. We'll use content_available and set send_after to now
-        logger.debug(f"In-app notification flag set: show_as_in_app=True for {len(player_ids)} players")
-    
+        logger.debug(
+            f"In-app notification flag set: show_as_in_app=True for {len(player_ids)} players"
+        )
+
     payload = {
         "app_id": ONESIGNAL_APP_ID,
         "include_player_ids": player_ids,
         "headings": {"en": heading},
         "contents": {"en": content},
     }
-    
+
     # For in-app notifications, add content_available to ensure delivery even when app is in foreground
     if is_in_app_notification:
         payload["content_available"] = True
         # iOS requires this for background notifications
         payload["ios_badgeType"] = "None"  # Don't update badge for in-app
         payload["ios_badgeCount"] = 0
-    
+
     if notification_data:
         payload["data"] = notification_data
-    
+
     if url:
         payload["url"] = url
-    
+
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Key {ONESIGNAL_REST_API_KEY}"
+        "Authorization": f"Key {ONESIGNAL_REST_API_KEY}",
     }
-    
+
     # Detailed debug logging for auth diagnostics
     logger.debug(
         f"OneSignal request debug: "
@@ -116,18 +133,22 @@ async def send_push_notification_async(
         f"rest_key_len={len(ONESIGNAL_REST_API_KEY) if ONESIGNAL_REST_API_KEY else 0}, "
         f"player_count={len(player_ids)}"
     )
-    
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(ONESIGNAL_API_URL, json=payload, headers=headers)
+            response = await client.post(
+                ONESIGNAL_API_URL, json=payload, headers=headers
+            )
             response.raise_for_status()
-            
+
             result = response.json()
             # Check for invalid player IDs in response
             if "invalid_player_ids" in result and result["invalid_player_ids"]:
-                logger.warning(f"OneSignal reported invalid player IDs: {result['invalid_player_ids']}")
+                logger.warning(
+                    f"OneSignal reported invalid player IDs: {result['invalid_player_ids']}"
+                )
                 # Note: We could mark these as invalid here, but we'll do it in a separate cleanup task
-            
+
             notification_type = "in-app" if is_in_app_notification else "system"
             logger.info(
                 f"✅ OneSignal {notification_type} notification sent successfully to {len(player_ids)} players | "
@@ -135,11 +156,13 @@ async def send_push_notification_async(
             )
             if "id" in result:
                 logger.debug(f"OneSignal notification ID: {result['id']}")
-            
+
             # Log the data payload to verify show_as_in_app flag is included
             if is_in_app_notification and notification_data:
-                logger.debug(f"In-app notification payload includes: show_as_in_app={notification_data.get('show_as_in_app', False)}")
-            
+                logger.debug(
+                    f"In-app notification payload includes: show_as_in_app={notification_data.get('show_as_in_app', False)}"
+                )
+
             return True
     except httpx.HTTPStatusError as e:
         # Avoid logging raw response bodies; they may contain sensitive or identifying information.
@@ -160,18 +183,26 @@ def should_send_push(user_id: int, db: Session) -> bool:
     Returns True if push should be sent (user is not active), False otherwise.
     """
     # Check if user has recent activity (last_active within threshold)
-    threshold_time = datetime.utcnow() - timedelta(seconds=ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS)
-    
-    active_player = db.query(OneSignalPlayer).filter(
-        OneSignalPlayer.user_id == user_id,
-        OneSignalPlayer.is_valid == True,
-        OneSignalPlayer.last_active >= threshold_time
-    ).first()
-    
+    threshold_time = datetime.utcnow() - timedelta(
+        seconds=ONESIGNAL_ACTIVITY_THRESHOLD_SECONDS
+    )
+
+    active_player = (
+        db.query(OneSignalPlayer)
+        .filter(
+            OneSignalPlayer.user_id == user_id,
+            OneSignalPlayer.is_valid.is_(True),
+            OneSignalPlayer.last_active >= threshold_time,
+        )
+        .first()
+    )
+
     if active_player:
-        logger.debug(f"User {user_id} is active (last_active: {active_player.last_active}), skipping push")
+        logger.debug(
+            f"User {user_id} is active (last_active: {active_player.last_active}), skipping push"
+        )
         return False
-    
+
     return True
 
 
@@ -186,7 +217,9 @@ def is_user_active(user_id: int, db: Session) -> bool:
 
 def mark_player_invalid(player_id: str, db: Session) -> None:
     """Mark a OneSignal player as invalid (e.g., app uninstalled)"""
-    player = db.query(OneSignalPlayer).filter(OneSignalPlayer.player_id == player_id).first()
+    player = (
+        db.query(OneSignalPlayer).filter(OneSignalPlayer.player_id == player_id).first()
+    )
     if player:
         player.is_valid = False
         player.last_failure_at = datetime.utcnow()
@@ -200,25 +233,31 @@ def cleanup_invalid_players(db: Session, days_old: int = 30) -> int:
     Returns number of players deleted.
     """
     cutoff_date = datetime.utcnow() - timedelta(days=days_old)
-    
-    deleted_count = db.query(OneSignalPlayer).filter(
-        OneSignalPlayer.is_valid == False,
-        OneSignalPlayer.last_failure_at < cutoff_date
-    ).delete()
-    
+
+    deleted_count = (
+        db.query(OneSignalPlayer)
+        .filter(
+            OneSignalPlayer.is_valid.is_(False),
+            OneSignalPlayer.last_failure_at < cutoff_date,
+        )
+        .delete()
+    )
+
     db.commit()
     logger.info(f"Cleaned up {deleted_count} invalid OneSignal players")
     return deleted_count
 
 
-def get_user_player_ids(user_id: int, db: Session, valid_only: bool = True) -> List[str]:
+def get_user_player_ids(
+    user_id: int, db: Session, valid_only: bool = True
+) -> List[str]:
     """Get all player IDs for a user"""
     query = db.query(OneSignalPlayer.player_id).filter(
         OneSignalPlayer.user_id == user_id
     )
-    
+
     if valid_only:
-        query = query.filter(OneSignalPlayer.is_valid == True)
-    
+        query = query.filter(OneSignalPlayer.is_valid.is_(True))
+
     players = query.all()
     return [p[0] for p in players]

@@ -18,12 +18,12 @@ def run():
             connection.execute(text(
                 "ALTER TABLE avatars ALTER COLUMN image_url DROP NOT NULL"
             ))
-            
+
             logger.info("Making image_url nullable in frames table...")
             connection.execute(text(
                 "ALTER TABLE frames ALTER COLUMN image_url DROP NOT NULL"
             ))
-            
+
             trans.commit()
             logger.info("Migration completed successfully.")
         except Exception as e:
@@ -33,4 +33,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-
