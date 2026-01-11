@@ -218,6 +218,28 @@ class CreateSubscriptionPlanRequest(BaseModel):
     livemode: bool = False
 
 
+class SubscriptionPlanResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    price_usd: float
+    unit_amount_minor: Optional[int] = None
+    currency: Optional[str] = None
+    interval: Optional[str] = None
+    interval_count: int
+    billing_interval: Optional[str] = None
+    stripe_price_id: Optional[str] = None
+    livemode: bool
+    trial_period_days: Optional[int] = None
+    tax_behavior: Optional[str] = None
+    features: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class CreateSubscriptionRequest(BaseModel):
     user_id: Optional[int] = Field(
         None,

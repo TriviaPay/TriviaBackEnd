@@ -90,9 +90,7 @@ _bucket_regions: Dict[str, str] = {}  # Cache bucket regions
 _bucket_addressing_styles: Dict[str, str] = (
     {}
 )  # Cache addressing style per bucket (virtual or path)
-_cached_creds = (
-    None  # Tuple of (access_key_id, secret_key, session_token) for cache invalidation
-)
+_cached_creds = None  # Tuple of (access_key_id, secret_key) for cache invalidation
 _presign_cache: Dict[str, tuple[str, float]] = {}
 _PRESIGN_CACHE_TTL_SECONDS = int(os.getenv("PRESIGN_CACHE_TTL_SECONDS", "300"))
 
@@ -463,9 +461,8 @@ def _get_s3_client_for_region(region: str, addressing_style: str = "virtual"):
     # Cache key includes both region and addressing style
     cache_key = f"{region}:{addressing_style}"
 
-    # Invalidate all clients if credentials changed (track access key, secret, and session token)
-    aws_session_token = os.getenv("AWS_SESSION_TOKEN")
-    creds_tuple = (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, aws_session_token)
+    # Invalidate all clients if credentials changed (track access key and secret)
+    creds_tuple = (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     if _cached_creds != creds_tuple:
         _s3_clients = {}
         _cached_creds = creds_tuple
@@ -522,10 +519,6 @@ def _get_s3_client_for_region(region: str, addressing_style: str = "virtual"):
     # This MUST be set to override any environment variables (AWS_ENDPOINT_URL_S3, etc.)
     # that might point to the global endpoint
     client_params["endpoint_url"] = endpoint_url
-
-    # Add session token if present (for temporary credentials)
-    if aws_session_token:
-        client_params["aws_session_token"] = aws_session_token
 
     # Create client - endpoint_url parameter should override any env var defaults
     client = session.client(**client_params)

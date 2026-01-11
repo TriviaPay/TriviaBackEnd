@@ -30,6 +30,7 @@ from .schemas import (
     FrameResponse,
     GemPackageRequest,
     GemPackageResponse,
+    SubscriptionPlanResponse,
     UpdateAdminStatusRequest,
     UserAdminStatus,
 )
@@ -54,6 +55,7 @@ from .service import get_avatar_stats as admin_get_avatar_stats
 from .service import get_badge_assignments as admin_get_badge_assignments
 from .service import import_avatars_from_json as admin_import_avatars_from_json
 from .service import import_frames_from_json as admin_import_frames_from_json
+from .service import list_subscription_plans as admin_list_subscription_plans
 from .service import list_trivia_modes as admin_list_trivia_modes
 from .service import list_users as auth_list_users
 from .service import search_users as auth_search_users
@@ -296,6 +298,21 @@ async def check_subscription_status(
         sub_skip,
         sub_limit,
     )
+
+
+@router.get("/subscriptions/plans", response_model=List[SubscriptionPlanResponse])
+async def get_subscription_plans(
+    livemode: Optional[bool] = Query(
+        None, description="Filter plans by livemode (true=production, false=test)"
+    ),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    List all subscription plans (admin-only). Optionally limit to livemode/test plans.
+    """
+    verify_admin(current_user)
+    return admin_list_subscription_plans(db, livemode)
 
 
 @router.post("/subscriptions/create-plan")

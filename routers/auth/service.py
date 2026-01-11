@@ -2144,6 +2144,41 @@ def check_subscription_status(
     return result
 
 
+def list_subscription_plans(db: Session, livemode: Optional[bool] = None):
+    query = db.query(SubscriptionPlan)
+    if livemode is not None:
+        query = query.filter(SubscriptionPlan.livemode == livemode)
+
+    plans = query.order_by(SubscriptionPlan.id).all()
+    result = []
+    for plan in plans:
+        result.append(
+            {
+                "id": plan.id,
+                "name": plan.name,
+                "description": plan.description,
+                "price_usd": plan.price_usd,
+                "unit_amount_minor": plan.unit_amount_minor,
+                "currency": plan.currency,
+                "interval": plan.interval,
+                "interval_count": plan.interval_count,
+                "billing_interval": plan.billing_interval,
+                "stripe_price_id": plan.stripe_price_id,
+                "livemode": plan.livemode,
+                "trial_period_days": plan.trial_period_days,
+                "tax_behavior": plan.tax_behavior,
+                "features": plan.features,
+                "created_at": plan.created_at.isoformat()
+                if plan.created_at
+                else None,
+                "updated_at": plan.updated_at.isoformat()
+                if plan.updated_at
+                else None,
+            }
+        )
+    return result
+
+
 def create_subscription_plan(db: Session, request):
     unit_amount_minor = request.unit_amount_minor
     if unit_amount_minor is None:
