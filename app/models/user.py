@@ -84,3 +84,9 @@ class User(Base):
         if self.wallet_balance_minor is not None:
             return self.wallet_balance_minor / 100.0
         return 0.0
+
+
+# Ensure dependent models are imported so SQLAlchemy can resolve string relationships
+# when this module is imported directly (e.g., via auth dependencies).
+from app.models import admin_user as _admin_user  # noqa: E402,F401
+from app.models import wallet as _wallet  # noqa: E402,F401
