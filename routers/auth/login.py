@@ -45,11 +45,12 @@ def dev_sign_in_endpoint(
         description="Dev-only secret to authorize",
         example="TriviaPay",
     ),
+    db: Session = Depends(get_db),
 ):
     dev_secret = os.getenv("DEV_ADMIN_SECRET")
     if not dev_secret or x_dev_secret != dev_secret:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return dev_sign_in(data.email.strip(), data.password)
+    return dev_sign_in(data.email.strip(), data.password, db)
 
 
 @router.post("/validate-referral")

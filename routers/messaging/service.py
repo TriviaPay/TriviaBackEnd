@@ -629,11 +629,11 @@ def cleanup_global_chat_messages(db, *, current_user):
     from datetime import datetime, timedelta
 
     from fastapi import HTTPException
+    from routers.dependencies import verify_admin
 
     from config import GLOBAL_CHAT_ENABLED, GLOBAL_CHAT_RETENTION_DAYS
 
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    verify_admin(db, current_user)
 
     if not GLOBAL_CHAT_ENABLED:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Global chat is disabled")

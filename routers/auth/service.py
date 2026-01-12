@@ -36,6 +36,7 @@ from config import (
     STORE_PASSWORD_IN_NEONDB,
 )
 from models import (
+    AdminUser,
     Avatar,
     Frame,
     GemPackageConfig,
@@ -44,6 +45,7 @@ from models import (
     User,
     UserAvatar,
     UserFrame,
+    UserDeviceVersion,
     UserSubscription,
 )
 from utils.free_mode_rewards import (
@@ -55,6 +57,7 @@ from utils.free_mode_rewards import (
 )
 from utils.question_upload_service import parse_csv_questions, save_questions_to_mode
 from utils.referrals import get_unique_referral_code
+from utils.admin_chat import ensure_admin_conversation_and_message
 from utils.storage import delete_file, presign_get, upload_file
 from utils.subscription_service import get_modes_access_status
 from utils.trivia_mode_service import (
@@ -215,6 +218,56 @@ def _validate_date_of_birth(dob: DateType):
     age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
     if age < 13:
         raise HTTPException(status_code=400, detail="You must be at least 13 years old")
+
+
+def _track_device_uuid(
+    db: Session,
+    user: User,
+    device_uuid: Optional[str],
+    app_version: Optional[str],
+    os_name: Optional[str],
+    device_name: Optional[str],
+):
+    if not device_uuid:
+        return
+
+    now = datetime.utcnow()
+    if user.device_uuid != device_uuid:
+        user.device_uuid = device_uuid
+
+    existing = (
+        db.query(UserDeviceVersion)
+        .filter(
+            UserDeviceVersion.user_id == user.account_id,
+            UserDeviceVersion.device_uuid == device_uuid,
+        )
+        .first()
+    )
+    if existing:
+        if device_name:
+            existing.device_name = device_name
+        if app_version:
+            existing.app_version = app_version
+        if os_name:
+            existing.os = os_name
+        existing.reported_at = now
+        existing.updated_at = now
+        existing.is_latest = True
+        return
+
+    db.add(
+        UserDeviceVersion(
+            user_id=user.account_id,
+            device_uuid=device_uuid,
+            device_name=device_name,
+            app_version=app_version or "unknown",
+            os=os_name or "unknown",
+            is_latest=True,
+            reported_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
 
 
 def check_username_available(username: str, request: Request, db: Session):
@@ -470,6 +523,17 @@ def bind_password(request: Request, data, db: Session):
                     detail="Error processing referral code. Please try again.",
                 )
 
+        _track_device_uuid(
+            db,
+            existing_user,
+            data.device_uuid,
+            getattr(data, "app_version", None),
+            getattr(data, "os", None),
+            getattr(data, "device_name", None),
+        )
+
+        ensure_admin_conversation_and_message(db, existing_user)
+
         db.commit()
         logging.info(
             f"[LOCAL_DB] Updated existing user in local database - "
@@ -525,6 +589,7 @@ def bind_password(request: Request, data, db: Session):
 
         new_user = User(
             descope_user_id=user_id,
+            device_uuid=data.device_uuid,
             email=email,
             username=username,
             country=country,
@@ -534,7 +599,6 @@ def bind_password(request: Request, data, db: Session):
             gems=0,
             referral_count=0,
             referral_code=get_unique_referral_code(db),
-            is_admin=False,
             username_updated=False,
             subscription_flag=False,
             sign_up_date=datetime.utcnow(),
@@ -546,6 +610,16 @@ def bind_password(request: Request, data, db: Session):
             ),
         )
         db.add(new_user)
+        db.flush()
+        _track_device_uuid(
+            db,
+            new_user,
+            data.device_uuid,
+            getattr(data, "app_version", None),
+            getattr(data, "os", None),
+            getattr(data, "device_name", None),
+        )
+        ensure_admin_conversation_and_message(db, new_user)
         db.commit()
         logging.info(
             f"[LOCAL_DB] Created new user in local database - "
@@ -568,7 +642,7 @@ def bind_password(request: Request, data, db: Session):
     return {"success": True, "message": "Password and profile bound successfully"}
 
 
-def dev_sign_in(email: str, password: str):
+def dev_sign_in(email: str, password: str, db: Session):
     if os.getenv("ENVIRONMENT", "development") != "development":
         raise HTTPException(status_code=403, detail="Not available in this environment")
 
@@ -651,6 +725,10 @@ def dev_sign_in(email: str, password: str):
             )
 
         logging.info(f"[DEV_SIGN_IN] ✅ Successfully signed in user: {email}")
+        user = auth_repository.get_user_by_email_ci(db, email)
+        if user:
+            ensure_admin_conversation_and_message(db, user)
+            db.commit()
 
         return {"access_token": session_jwt}
 
@@ -2885,7 +2963,20 @@ def get_avatar_stats(db: Session):
 
 
 def list_users(db: Session, skip: int, limit: int):
-    return auth_repository.get_users_paginated(db, skip, limit)
+    users = auth_repository.get_users_paginated(db, skip, limit)
+    admin_entry = db.query(AdminUser).first()
+    admin_user_id = admin_entry.user_id if admin_entry else None
+    results = []
+    for user in users:
+        results.append(
+            {
+                "account_id": user.account_id,
+                "email": user.email,
+                "username": user.username,
+                "is_admin": admin_user_id == user.account_id,
+            }
+        )
+    return results
 
 
 def update_user_admin_status(db: Session, account_id: int, is_admin: bool):
@@ -2894,17 +2985,32 @@ def update_user_admin_status(db: Session, account_id: int, is_admin: bool):
         raise HTTPException(
             status_code=404, detail=f"User with account ID {account_id} not found"
         )
-    user.is_admin = is_admin
+    existing_admin = db.query(AdminUser).first()
+    if is_admin:
+        if existing_admin and existing_admin.user_id != user.account_id:
+            raise HTTPException(
+                status_code=409,
+                detail="An admin user already exists. Remove the current admin before assigning a new one.",
+            )
+        if not existing_admin:
+            admin_entry = AdminUser(user_id=user.account_id, email=user.email)
+            db.add(admin_entry)
+        else:
+            existing_admin.user_id = user.account_id
+            existing_admin.email = user.email
+    else:
+        if existing_admin and existing_admin.user_id == user.account_id:
+            db.delete(existing_admin)
+
     db.commit()
-    db.refresh(user)
     message = (
-        f"User {user.email} is now {'an admin' if user.is_admin else 'not an admin'}"
+        f"User {user.email} is now {'an admin' if is_admin else 'not an admin'}"
     )
     return {
         "account_id": user.account_id,
         "email": user.email,
         "username": user.username,
-        "is_admin": user.is_admin,
+        "is_admin": is_admin,
         "message": message,
     }
 
@@ -2918,6 +3024,39 @@ def search_users(
     skip: int,
     limit: int,
 ):
-    return auth_repository.search_users(
+    users = auth_repository.search_users(
         db, email, username, is_admin, contains, skip, limit
+    )
+    admin_entry = db.query(AdminUser).first()
+    admin_user_id = admin_entry.user_id if admin_entry else None
+    results = []
+    for user in users:
+        results.append(
+            {
+                "account_id": user.account_id,
+                "email": user.email,
+                "username": user.username,
+                "is_admin": admin_user_id == user.account_id,
+            }
+        )
+    return results
+
+
+def list_app_versions(
+    db: Session,
+    user_id: Optional[int],
+    device_uuid: Optional[str],
+    skip: int,
+    limit: int,
+):
+    query = db.query(UserDeviceVersion)
+    if user_id:
+        query = query.filter(UserDeviceVersion.user_id == user_id)
+    if device_uuid:
+        query = query.filter(UserDeviceVersion.device_uuid == device_uuid)
+    return (
+        query.order_by(UserDeviceVersion.reported_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
     )

@@ -14,6 +14,16 @@ class BindPasswordData(BaseModel):
     country: str = Field(..., description="User country")
     date_of_birth: DateType = Field(..., description="User date of birth (YYYY-MM-DD)")
     referral_code: Optional[str] = Field(None, description="Optional referral code")
+    device_uuid: Optional[str] = Field(
+        None, description="Unique device identifier from Descope signup/signin"
+    )
+    app_version: Optional[str] = Field(
+        None, description="App version reported at signup/signin"
+    )
+    os: Optional[str] = Field(None, description="Device OS reported at signup/signin")
+    device_name: Optional[str] = Field(
+        None, description="Device name reported at signup/signin"
+    )
 
 
 class DevSignInRequest(BaseModel):
@@ -105,6 +115,19 @@ class AdminStatusResponse(BaseModel):
     username: Optional[str] = None
     is_admin: bool
     message: str
+
+
+class AppVersionResponse(BaseModel):
+    user_id: int
+    device_uuid: str
+    device_name: Optional[str] = None
+    app_version: str
+    os: str
+    reported_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class GemPackageRequest(BaseModel):

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from auth import validate_descope_jwt
 from db import get_db
-from models import User
+from models import AdminUser, User
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +66,15 @@ def get_current_user_simple(claims: dict = Depends(validate_jwt_dependency)):
     return claims
 
 
-def is_admin(user: User) -> bool:
-    return bool(user.is_admin)
+def is_admin_user(db: Session, user_id: int) -> bool:
+    return (
+        db.query(AdminUser).filter(AdminUser.user_id == user_id).first()
+        is not None
+    )
 
 
-def verify_admin(user: User):
-    if not is_admin(user):
+def verify_admin(db: Session, user: User):
+    if not is_admin_user(db, user.account_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required for this endpoint",
@@ -79,7 +82,7 @@ def verify_admin(user: User):
 
 
 def get_admin_user(request: Request, db: Session = Depends(get_db)):
-    """Verify user is admin using cosmetics.py logic"""
+    """Verify user is admin using admin_users table."""
     user = get_current_user(request, db)
-    verify_admin(user)
+    verify_admin(db, user)
     return user

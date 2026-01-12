@@ -20,6 +20,7 @@ from config import (
 from db import get_db
 from models import (
     Avatar,
+    AdminUser,
     Block,
     Frame,
     MessageStatus,
@@ -59,6 +60,11 @@ from utils.storage import presign_get
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/private-chat", tags=["Private Chat"])
+
+
+def _get_admin_user_id(db: Session) -> Optional[int]:
+    admin_entry = db.query(AdminUser).first()
+    return admin_entry.user_id if admin_entry else None
 
 
 class SendMessageRequest(BaseModel):
@@ -341,6 +347,12 @@ async def send_private_message(
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found")
 
+    admin_user_id = _get_admin_user_id(db)
+    is_admin_conversation = admin_user_id in [
+        current_user.account_id,
+        request.recipient_id,
+    ]
+
     # Find or create conversation (sorted user IDs for consistency)
     user_ids = sorted([current_user.account_id, request.recipient_id])
     conversation = (
@@ -359,8 +371,10 @@ async def send_private_message(
             user1_id=user_ids[0],
             user2_id=user_ids[1],
             requested_by=current_user.account_id,
-            status="pending",
+            status="accepted" if is_admin_conversation else "pending",
         )
+        if is_admin_conversation:
+            conversation.responded_at = datetime.utcnow()
         db.add(conversation)
         try:
             db.flush()
@@ -379,6 +393,10 @@ async def send_private_message(
                 raise HTTPException(
                     status_code=500, detail="Failed to create conversation"
                 )
+
+    if is_admin_conversation and conversation.status == "pending":
+        conversation.status = "accepted"
+        conversation.responded_at = datetime.utcnow()
 
     # Check if conversation is rejected
     if conversation.status == "rejected":
@@ -577,6 +595,15 @@ async def send_private_message(
 
     # Publish to Pusher via Redis queue (fallback to inline background tasks)
     username = get_display_username(current_user)
+    is_admin_sender = admin_user_id == current_user.account_id
+    push_args = None if is_admin_sender else {
+        "recipient_id": request.recipient_id,
+        "conversation_id": conversation.id,
+        "sender_id": current_user.account_id,
+        "sender_username": username,
+        "message": new_message.message,
+        "is_new_conversation": is_new_conversation,
+    }
     event_enqueued = await enqueue_chat_event(
         "private_message",
         {
@@ -594,14 +621,7 @@ async def send_private_message(
                 "is_new_conversation": is_new_conversation,
                 "reply_to": reply_info,
             },
-            "push_args": {
-                "recipient_id": request.recipient_id,
-                "conversation_id": conversation.id,
-                "sender_id": current_user.account_id,
-                "sender_username": username,
-                "message": new_message.message,
-                "is_new_conversation": is_new_conversation,
-            },
+            "push_args": push_args,
         },
     )
 
@@ -621,15 +641,16 @@ async def send_private_message(
             is_new_conversation,
             reply_info,
         )
-        background_tasks.add_task(
-            send_push_if_needed_sync,
-            request.recipient_id,
-            conversation.id,
-            current_user.account_id,
-            username,
-            new_message.message,
-            is_new_conversation,
-        )
+        if push_args:
+            background_tasks.add_task(
+                send_push_if_needed_sync,
+                request.recipient_id,
+                conversation.id,
+                current_user.account_id,
+                username,
+                new_message.message,
+                is_new_conversation,
+            )
 
     return {
         "conversation_id": conversation.id,
@@ -659,6 +680,14 @@ async def accept_reject_chat(
 
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    admin_user_id = _get_admin_user_id(db)
+    if admin_user_id in [conversation.user1_id, conversation.user2_id]:
+        if conversation.status == "pending":
+            conversation.status = "accepted"
+            conversation.responded_at = datetime.utcnow()
+            db.commit()
+        return {"conversation_id": conversation.id, "status": conversation.status}
 
     # Verify user is the recipient (not the requester)
     if current_user.account_id not in [conversation.user1_id, conversation.user2_id]:
@@ -734,6 +763,8 @@ async def list_private_conversations(
 
     if not conversations:
         return {"conversations": []}
+
+    admin_user_id = _get_admin_user_id(db)
 
     peer_map = {}
     conv_ids_user1 = []
@@ -896,6 +927,18 @@ async def list_private_conversations(
                 "peer_last_seen": peer_last_seen,
             }
         )
+
+    if admin_user_id:
+        admin_index = next(
+            (
+                idx
+                for idx, item in enumerate(result)
+                if item.get("peer_user_id") == admin_user_id
+            ),
+            None,
+        )
+        if admin_index is not None and admin_index != 0:
+            result.insert(0, result.pop(admin_index))
 
     return {"conversations": result}
 
@@ -1152,12 +1195,14 @@ async def get_private_messages(
 
     # Check if conversation is accepted - recipient cannot view messages until accepted
     if conversation.status == "pending":
-        if conversation.requested_by != current_user.account_id:
-            # Recipient trying to view messages before accepting
-            raise HTTPException(
-                status_code=403,
-                detail="Chat request must be accepted before viewing messages. Please accept the chat request first.",
-            )
+        admin_user_id = _get_admin_user_id(db)
+        if admin_user_id not in [conversation.user1_id, conversation.user2_id]:
+            if conversation.requested_by != current_user.account_id:
+                # Recipient trying to view messages before accepting
+                raise HTTPException(
+                    status_code=403,
+                    detail="Chat request must be accepted before viewing messages. Please accept the chat request first.",
+                )
 
     # Get last_read_message_id for current user
     last_read_id = (

@@ -7,6 +7,7 @@ from sqlalchemy import and_, func, or_, select, union_all
 from sqlalchemy.orm import Session
 
 from models import (
+    AdminUser,
     Avatar,
     Frame,
     SubscriptionPlan,
@@ -68,7 +69,12 @@ def search_users(
         pattern = f"%{username}%" if contains else f"{username}%"
         query = query.filter(User.username.ilike(pattern))
     if is_admin is not None:
-        query = query.filter(User.is_admin == is_admin)
+        if is_admin:
+            query = query.join(AdminUser, AdminUser.user_id == User.account_id)
+        else:
+            query = query.outerjoin(AdminUser, AdminUser.user_id == User.account_id).filter(
+                AdminUser.user_id.is_(None)
+            )
     return query.order_by(User.account_id).offset(skip).limit(limit).all()
 
 

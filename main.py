@@ -15,6 +15,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 
 from routers.auth import router as auth_router
+from routers.app_versions import router as app_versions_router
 from routers.messaging import router as messaging_router
 from routers.notifications import router as notifications_router
 from routers.store import router as store_router
@@ -362,6 +363,7 @@ app.add_middleware(
 
 # Include only required routers
 app.include_router(auth_router)  # Auth/Profile domain
+app.include_router(app_versions_router)  # App Versions
 app.include_router(trivia_router)  # Trivia/Draws/Rewards domain
 app.include_router(store_router)  # Store/Cosmetics domain
 app.include_router(messaging_router)  # Messaging/Realtime domain

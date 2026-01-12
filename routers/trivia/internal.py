@@ -19,6 +19,7 @@ from db import get_db, get_db_context
 
 # Note: get_detailed_reset_metrics simplified - legacy tables removed
 from models import (  # TriviaUserDaily removed - legacy table
+    AdminUser,
     GlobalChatMessage,
     Notification,
     OneSignalPlayer,
@@ -208,7 +209,11 @@ def send_winner_announcement(db: Session, draw_date: date, winners: list):
                 return
         else:
             # Final fallback: try to find any admin user
-            system_user = db.query(User).filter(User.is_admin == True).first()
+            system_user = (
+                db.query(User)
+                .join(AdminUser, AdminUser.user_id == User.account_id)
+                .first()
+            )
             if system_user:
                 system_user_id = system_user.account_id
                 logging.warning(

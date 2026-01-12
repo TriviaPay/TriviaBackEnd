@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_async_db
+from app.models.admin_user import AdminUser
 from app.models.user import User
 from auth import validate_descope_jwt
 
@@ -61,7 +62,10 @@ async def get_admin_user(
 ) -> User:
     """Verify user is admin"""
     user = await get_current_user(request, db)
-    if not user.is_admin:
+    stmt = select(AdminUser).where(AdminUser.user_id == user.account_id)
+    result = await db.execute(stmt)
+    admin = result.scalar_one_or_none()
+    if not admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required for this endpoint",

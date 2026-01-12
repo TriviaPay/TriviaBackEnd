@@ -30,6 +30,7 @@ from .schemas import (
     FrameResponse,
     GemPackageRequest,
     GemPackageResponse,
+    AppVersionResponse,
     SubscriptionPlanResponse,
     UpdateAdminStatusRequest,
     UserAdminStatus,
@@ -55,6 +56,7 @@ from .service import get_avatar_stats as admin_get_avatar_stats
 from .service import get_badge_assignments as admin_get_badge_assignments
 from .service import import_avatars_from_json as admin_import_avatars_from_json
 from .service import import_frames_from_json as admin_import_frames_from_json
+from .service import list_app_versions as admin_list_app_versions
 from .service import list_subscription_plans as admin_list_subscription_plans
 from .service import list_trivia_modes as admin_list_trivia_modes
 from .service import list_users as auth_list_users
@@ -85,7 +87,7 @@ async def get_admin_users(
     Get all users with their admin status (admin-only endpoint)
     """
     # Verify admin access
-    verify_admin(current_user)
+    verify_admin(db, current_user)
 
     # Get all users with their admin status
     return auth_list_users(db, skip, limit)
@@ -104,7 +106,7 @@ async def update_user_admin_status(
     Update a user's admin status (admin-only endpoint)
     """
     # Verify admin access
-    verify_admin(current_user)
+    verify_admin(db, current_user)
 
     return auth_update_user_admin_status(db, account_id, admin_status.is_admin)
 
@@ -123,13 +125,29 @@ async def search_users(
     Search for users by email or username (admin-only endpoint)
     """
     # Verify admin access
-    verify_admin(current_user)
+    verify_admin(db, current_user)
 
     if not email and not username:
         raise HTTPException(
             status_code=400, detail="Provide email or username to search"
         )
     return auth_search_users(db, email, username, None, contains, skip, limit)
+
+
+@router.get("/app-versions", response_model=List[AppVersionResponse])
+async def list_app_versions(
+    user_id: Optional[int] = Query(None, description="User account ID to filter"),
+    device_uuid: Optional[str] = Query(None, description="Device UUID to filter"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=500, description="Max records to return"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    List latest app versions per user/device (admin-only endpoint).
+    """
+    verify_admin(db, current_user)
+    return admin_list_app_versions(db, user_id, device_uuid, skip, limit)
 
 
 @router.post("/trivia/upload-questions")
@@ -144,7 +162,7 @@ async def upload_questions_csv(
     CSV should have columns: question, option_a, option_b, option_c, option_d, correct_answer,
     fill_in_answer, hint, explanation, category, country, difficulty_level, picture_url
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     file_content = await file.read(MAX_QUESTION_UPLOAD_BYTES + 1)
     return await admin_upload_questions_csv(
         db, mode_id, file_content, MAX_QUESTION_UPLOAD_BYTES
@@ -158,7 +176,7 @@ async def list_trivia_modes(
     """
     List all trivia modes.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return admin_list_trivia_modes(db)
 
 
@@ -184,7 +202,7 @@ async def create_or_update_mode(
     """
     Create or update a trivia mode configuration.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return admin_create_or_update_trivia_mode(
         db,
         mode_id,
@@ -210,7 +228,7 @@ async def trigger_free_mode_draw(
     Manually trigger draw for free mode.
     Calculates winners, distributes gems, and cleans up old leaderboard.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return await admin_trigger_free_mode_draw(db, draw_date)
 
 
@@ -226,7 +244,7 @@ async def allocate_free_mode_questions_manual(
     Manually trigger question allocation for free mode.
     Allocates questions from trivia_questions_free_mode to trivia_questions_free_mode_daily.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return await admin_allocate_free_mode_questions_manual(db, target_date)
 
 
@@ -242,7 +260,7 @@ async def trigger_bronze_mode_draw(
     Manually trigger draw for $5 mode.
     Calculates winners, distributes money, and cleans up old leaderboard.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return await admin_trigger_bronze_mode_draw(db, draw_date)
 
 
@@ -258,7 +276,7 @@ async def allocate_bronze_mode_questions_manual(
     Manually trigger question allocation for bronze mode.
     Allocates one question from trivia_questions_bronze_mode to trivia_questions_bronze_mode_daily.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return await admin_allocate_bronze_mode_questions_manual(db, target_date)
 
 
@@ -287,7 +305,7 @@ async def check_subscription_status(
     Check subscription plan and user subscription status.
     Generic endpoint that can check any subscription plan by plan_id or price.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return admin_check_subscription_status(
         db,
         plan_id,
@@ -311,7 +329,7 @@ async def get_subscription_plans(
     """
     List all subscription plans (admin-only). Optionally limit to livemode/test plans.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return admin_list_subscription_plans(db, livemode)
 
 
@@ -325,7 +343,7 @@ async def create_subscription_plan(
     Create a subscription plan if it doesn't exist.
     Generic endpoint that can create any subscription plan with specified price and interval.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return admin_create_subscription_plan(db, request)
 
 
@@ -341,7 +359,7 @@ async def create_subscription_for_user(
     If user_id is not provided, creates subscription for the current user.
     Subscription duration is fixed at 30 days.
     """
-    verify_admin(current_user)
+    verify_admin(db, current_user)
     return admin_create_subscription_for_user(db, request, current_user)
 
 

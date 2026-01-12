@@ -27,3 +27,4 @@ httpx==0.25.0
 bleach>=6.0.0
 google-auth>=2.23.0
 google-api-python-client>=2.100.0
+psycopg2==2.9.11

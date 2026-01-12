@@ -15,6 +15,7 @@ class User(Base):
 
     account_id = Column(BigInteger, primary_key=True)
     descope_user_id = Column(String, unique=True, index=True, nullable=True)
+    device_uuid = Column(String, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
     username = Column(String, unique=True, index=True, nullable=False)
     mobile = Column(String, nullable=True)
@@ -38,7 +39,6 @@ class User(Base):
     referral_code = Column(String(5), unique=True, nullable=True)
     referred_by = Column(String(5), nullable=True)
     referral_count = Column(Integer, default=0)
-    is_admin = Column(Boolean, default=False)
 
     subscriber_number = Column(String, nullable=True)
     username_updated = Column(Boolean, default=False)

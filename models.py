@@ -43,6 +43,7 @@ class User(Base):
         default=generate_account_id,
     )
     descope_user_id = Column(String, unique=True, index=True, nullable=True)
+    device_uuid = Column(String, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
     username = Column(String, unique=True, index=True, nullable=False)
     mobile = Column(String, nullable=True)
@@ -66,8 +67,6 @@ class User(Base):
     referral_code = Column(String(5), unique=True, nullable=True)
     referred_by = Column(String(5), nullable=True)
     referral_count = Column(Integer, default=0)
-    is_admin = Column(Boolean, default=False)  # Added is_admin field
-
     subscriber_number = Column(String, nullable=True)
     username_updated = Column(
         Boolean, default=False
@@ -133,6 +132,21 @@ class User(Base):
         back_populates="user",
     )
     iap_receipts = relationship("IapReceipt", back_populates="user")
+    device_versions = relationship("UserDeviceVersion", back_populates="user")
+
+
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    singleton_key = Column(String, nullable=False, unique=True, default="primary")
+    user_id = Column(
+        BigInteger, ForeignKey("users.account_id"), nullable=False, unique=True
+    )
+    email = Column(String, nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", backref="admin_profile")
 
 
 # =================================
@@ -844,6 +858,43 @@ class Notification(Base):
 
     __table_args__ = (
         Index("ix_notifications_user_read_created", "user_id", "read", "created_at"),
+    )
+
+
+class UserDeviceVersion(Base):
+    __tablename__ = "user_device_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        BigInteger, ForeignKey("users.account_id"), nullable=False, index=True
+    )
+    device_uuid = Column(String, nullable=False, index=True)
+    device_name = Column(String, nullable=True)
+    app_version = Column(String, nullable=False)
+    os = Column(String, nullable=False)
+    is_latest = Column(Boolean, default=True, nullable=False)
+    reported_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    user = relationship("User", back_populates="device_versions")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "device_uuid", name="uq_user_device_version"),
+    )
+
+
+class AppVersion(Base):
+    __tablename__ = "app_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    os = Column(String, nullable=False, unique=True, index=True)
+    latest_version = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
 

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from config import GROUP_METRICS_CACHE_SECONDS, GROUPS_ENABLED
 from db import get_db
 from models import Group, GroupMessage, GroupParticipant, GroupSenderKey, User
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user, verify_admin
 from utils.redis_pubsub import get_redis
 
 logger = logging.getLogger(__name__)
@@ -40,8 +40,7 @@ def get_group_metrics(
     if not GROUPS_ENABLED:
         raise HTTPException(status_code=403, detail="Groups feature is not enabled")
 
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
+    verify_admin(db, current_user)
 
     now_ts = time.time()
     cached = _get_cached_metrics(now_ts)

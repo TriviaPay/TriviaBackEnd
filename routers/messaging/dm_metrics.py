@@ -17,7 +17,7 @@ from models import (
     E2EEOneTimePrekey,
     User,
 )
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user, verify_admin
 from routers.messaging.dm_sse import _active_dm_sse_connections
 from utils.redis_pubsub import get_redis
 
@@ -56,8 +56,7 @@ def get_dm_metrics(
         raise HTTPException(status_code=403, detail="E2EE DM is not enabled")
 
     # Only allow admins to access metrics
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
+    verify_admin(db, current_user)
 
     now_ts = time.time()
     cached = _get_cached_metrics(now_ts)

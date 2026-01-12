@@ -4,7 +4,7 @@ Admin User Management Script
 
 This script helps manage admin users in the database.
 Since we removed the environment variable admin method, all admin access
-is now controlled by the users.is_admin database field.
+is now controlled by the admin_users table.
 """
 
 import os
@@ -16,27 +16,26 @@ from sqlalchemy.orm import Session
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from db import get_db
-from models import User
+from models import AdminUser, User
 
 
 def list_admin_users():
     """List all admin users"""
     db = next(get_db())
     try:
-        admin_users = db.query(User).filter(User.is_admin == True).all()
+        admin_entry = db.query(AdminUser).first()
 
-        if not admin_users:
+        if not admin_entry:
             print("No admin users found.")
             return
-
-        print("Current Admin Users:")
+        user = db.query(User).filter(User.account_id == admin_entry.user_id).first()
+        print("Current Admin User:")
         print("-" * 50)
-        for user in admin_users:
-            print(f"Email: {user.email}")
-            print(f"Username: {user.username}")
-            print(f"Account ID: {user.account_id}")
-            print(f"Created: {user.created_at}")
-            print("-" * 50)
+        print(f"Email: {admin_entry.email}")
+        print(f"Username: {user.username if user else 'Unknown'}")
+        print(f"Account ID: {admin_entry.user_id}")
+        print(f"Created: {admin_entry.created_at}")
+        print("-" * 50)
 
     finally:
         db.close()
@@ -52,11 +51,15 @@ def make_admin(email: str):
             print(f"❌ User with email '{email}' not found.")
             return False
 
-        if user.is_admin:
-            print(f"ℹ️  User '{email}' is already an admin.")
-            return True
+        existing_admin = db.query(AdminUser).first()
+        if existing_admin:
+            if existing_admin.user_id == user.account_id:
+                print(f"ℹ️  User '{email}' is already the admin.")
+                return True
+            db.delete(existing_admin)
+            db.flush()
 
-        user.is_admin = True
+        db.add(AdminUser(user_id=user.account_id, email=user.email))
         db.commit()
 
         print(f"✅ User '{email}' is now an admin.")
@@ -80,11 +83,12 @@ def remove_admin(email: str):
             print(f"❌ User with email '{email}' not found.")
             return False
 
-        if not user.is_admin:
+        existing_admin = db.query(AdminUser).first()
+        if not existing_admin or existing_admin.user_id != user.account_id:
             print(f"ℹ️  User '{email}' is not an admin.")
             return True
 
-        user.is_admin = False
+        db.delete(existing_admin)
         db.commit()
 
         print(f"✅ Admin privileges removed from '{email}'.")

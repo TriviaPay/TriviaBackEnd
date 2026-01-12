@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from config import STATUS_ENABLED
 from db import get_db
 from models import StatusAudience, StatusPost, StatusView, User
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user, verify_admin
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,7 @@ async def get_status_metrics(
     if not STATUS_ENABLED:
         raise HTTPException(status_code=403, detail="Status feature is not enabled")
 
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
+    verify_admin(db, current_user)
 
     # Posts today / active / expired in a single pass
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)

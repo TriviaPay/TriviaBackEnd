@@ -4,7 +4,7 @@ import time
 import jwt
 
 from db import get_db
-from models import User
+from models import AdminUser, User
 
 
 def create_admin_user():
@@ -25,8 +25,6 @@ def create_admin_user():
         admin_user = User(
             account_id=1234567890,
             email="admin@example.com",
-            sub="email|admin",  # Use the same sub value as in our test token
-            is_admin=True,
             profile_pic_url="https://example.com/admin.png",
             sign_up_date=datetime.datetime.utcnow(),
             username="admin",
@@ -42,9 +40,11 @@ def create_admin_user():
         print(f"  Account ID: {admin_user.account_id}")
         print(f"  Email: {admin_user.email}")
         print(f"  Username: {admin_user.username}")
-        print(f"  Sub: {admin_user.sub}")
-        print(f"  Is Admin: {admin_user.is_admin}")
+        print(f"  Is Admin: True")
         print(f"  Wallet Balance: ${admin_user.wallet_balance}")
+
+        db.add(AdminUser(user_id=admin_user.account_id, email=admin_user.email))
+        db.commit()
 
         # Create test token
         client_secret = (

@@ -135,30 +135,64 @@ def test_dependencies():
     print("\nTesting dependencies...")
 
     try:
-        from models import User
-        from routers.dependencies import get_current_user, is_admin, verify_admin
+        from db import SessionLocal
+        from models import AdminUser, User
+        from routers.dependencies import is_admin_user, verify_admin
 
-        # Test is_admin function
-        user = User(is_admin=True)
-        if is_admin(user):
-            print("✅ is_admin function works correctly")
+        db = SessionLocal()
+
+        # Test is_admin_user + verify_admin
+        admin_user = User(
+            descope_user_id="integration_admin_user",
+            email="integration_admin@test.com",
+            username="integration_admin",
+            display_name="Integration Admin",
+        )
+        db.add(admin_user)
+        db.commit()
+        db.refresh(admin_user)
+        db.add(AdminUser(user_id=admin_user.account_id, email=admin_user.email))
+        db.commit()
+
+        if is_admin_user(db, admin_user.account_id):
+            print("✅ is_admin_user function works correctly")
         else:
-            print("❌ is_admin function failed")
+            print("❌ is_admin_user function failed")
 
         # Test verify_admin function
         try:
-            verify_admin(user)
+            verify_admin(db, admin_user)
             print("✅ verify_admin function works for admin users")
         except Exception as e:
             print(f"❌ verify_admin failed for admin user: {e}")
 
         # Test verify_admin with non-admin user
-        non_admin_user = User(is_admin=False)
+        non_admin_user = User(
+            descope_user_id="integration_non_admin_user",
+            email="integration_non_admin@test.com",
+            username="integration_non_admin",
+            display_name="Integration Non Admin",
+        )
+        db.add(non_admin_user)
+        db.commit()
+        db.refresh(non_admin_user)
         try:
-            verify_admin(non_admin_user)
+            verify_admin(db, non_admin_user)
             print("❌ verify_admin should have failed for non-admin user")
         except Exception:
             print("✅ verify_admin correctly rejects non-admin users")
+
+        admin_entry = (
+            db.query(AdminUser)
+            .filter(AdminUser.user_id == admin_user.account_id)
+            .first()
+        )
+        if admin_entry:
+            db.delete(admin_entry)
+        db.delete(admin_user)
+        db.delete(non_admin_user)
+        db.commit()
+        db.close()
 
         print("✅ Dependencies module working correctly")
 
