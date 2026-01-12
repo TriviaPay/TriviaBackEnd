@@ -3,8 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from db import get_db
-from models import User
+from core.db import get_db
 
 # TriviaQuestionsDaily, Trivia, TriviaQuestionsEntries, TriviaUserDaily removed - legacy tables
 from routers.dependencies import get_current_user
@@ -18,7 +17,7 @@ from .service import process_daily_login as service_process_daily_login
 
 @router.get("/recent-winners")
 async def get_recent_winners(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    db: Session = Depends(get_db), current_user = Depends(get_current_user)
 ):
     """
     Get recent winners from bronze and silver modes.
@@ -40,7 +39,7 @@ async def get_recent_winners(
 
 @router.get("/daily-login")
 async def get_daily_login_status(
-    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    user = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """Get current week's daily login status"""
     if not user:
@@ -50,7 +49,7 @@ async def get_daily_login_status(
 
 @router.post("/daily-login")
 async def process_daily_login(
-    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    user = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """Process daily login rewards - weekly calendar system"""
     if not user:

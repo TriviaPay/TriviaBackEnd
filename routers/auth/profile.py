@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from sqlalchemy.orm import Session
 
-from db import get_db
+from core.db import get_db
 from models import User
 from routers.dependencies import get_current_user
 

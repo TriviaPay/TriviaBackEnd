@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from db import get_db
+from core.db import get_db
 from models import OneSignalPlayer, User
 from routers.dependencies import get_current_user
 

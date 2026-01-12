@@ -3,8 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
-from db import get_db
-from models import User
+from core.db import get_db
 from routers.dependencies import get_current_user
 
 from .schemas import (
@@ -30,7 +29,7 @@ async def send_message(  # noqa: D401
     request: SendMessageRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Send an encrypted message to a conversation.
@@ -57,7 +56,7 @@ async def get_messages(  # noqa: D401
         example="550e8400-e29b-41d4-a716-446655440000",
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Get messages from a conversation.
@@ -76,7 +75,7 @@ async def get_messages(  # noqa: D401
 async def mark_delivered(
     message_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Mark a message as delivered (metadata only).
@@ -90,7 +89,7 @@ async def mark_delivered(
 async def mark_read(
     message_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Mark a message as read (metadata only).

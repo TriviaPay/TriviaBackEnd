@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 import redis.asyncio as redis
 from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
-from config import REDIS_URL
+from core.config import REDIS_URL
 from utils.logging_helpers import log_error, log_info, log_warning
 
 logger = logging.getLogger(__name__)

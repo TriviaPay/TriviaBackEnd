@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from config import (
+from core.config import (
     LIVE_CHAT_ENABLED,
     LIVE_CHAT_MAX_MESSAGES_PER_USER_PER_MINUTE,
     LIVE_CHAT_POST_DRAW_HOURS,

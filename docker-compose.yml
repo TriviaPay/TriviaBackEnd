@@ -17,6 +17,23 @@ services:
       redis:
         condition: service_started
 
+  worker:
+    build: .
+    container_name: triviapay-worker
+    restart: unless-stopped
+    profiles: ["worker"]
+    command: ["python3", "-m", "workers.worker"]
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WORKER_QUEUE: ${WORKER_QUEUE:-tasks}
+    depends_on:
+      redis:
+        condition: service_started
+
   db:
     image: postgres:15
     container_name: triviapay-db

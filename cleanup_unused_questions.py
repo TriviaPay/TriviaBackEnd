@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from db import SessionLocal
+from core.db import SessionLocal
 
 # Legacy tables removed: TriviaQuestionsDaily, Trivia
 # This script is deprecated - use mode-specific question management instead

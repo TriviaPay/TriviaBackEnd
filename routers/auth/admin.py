@@ -13,7 +13,7 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from db import get_db
+from core.db import get_db
 from routers.dependencies import get_admin_user, get_current_user, verify_admin
 
 from .schemas import (

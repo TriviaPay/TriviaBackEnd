@@ -2,7 +2,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from db import get_db
+from core.db import get_db
 from models import User
 from routers.auth import refresh as refresh_router
 

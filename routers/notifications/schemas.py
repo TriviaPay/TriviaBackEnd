@@ -25,3 +25,36 @@ class ListPlayersResponse(BaseModel):
     limit: int
     offset: int
     players: List[OneSignalPlayerResponse]
+
+
+class NotificationResponse(BaseModel):
+    id: int
+    title: str
+    body: str
+    type: str
+    data: Optional[dict] = None
+    read: bool
+    read_at: Optional[str] = None
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class NotificationListResponse(BaseModel):
+    notifications: List[NotificationResponse]
+    total: int
+    unread_count: int
+
+
+class MarkReadRequest(BaseModel):
+    notification_ids: List[int] = Field(
+        ..., description="List of notification IDs to mark as read"
+    )
+
+
+class CreateTestNotificationRequest(BaseModel):
+    title: str = Field(..., description="Notification title")
+    body: str = Field(..., description="Notification body")
+    notification_type: str = Field(default="test", description="Notification type")
+    data: Optional[dict] = None

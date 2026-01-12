@@ -7,7 +7,7 @@ Run this after setting up Upstash Redis to ensure everything works.
 import asyncio
 import sys
 
-from config import GROUPS_ENABLED, PRESENCE_ENABLED, REDIS_URL, STATUS_ENABLED
+from core.config import GROUPS_ENABLED, PRESENCE_ENABLED, REDIS_URL, STATUS_ENABLED
 from utils.redis_pubsub import get_redis, publish_dm_message, publish_group_message
 
 

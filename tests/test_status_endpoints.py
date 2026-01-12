@@ -8,7 +8,7 @@ from sqlalchemy import JSON, BigInteger, Column, DateTime, ForeignKey, Integer, 
 from sqlalchemy.dialects.postgresql import UUID
 
 import models
-from db import get_db
+from core.db import get_db
 from models import Base, Block, User, UserPresence
 from routers.dependencies import get_current_user
 

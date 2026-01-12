@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 import pusher
 
-from config import (
+from core.config import (
     PUSHER_APP_ID,
     PUSHER_CLUSTER,
     PUSHER_ENABLED,

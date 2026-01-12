@@ -1,6 +1,6 @@
 import logging
 
-from db import get_db
+from core.db import get_db
 from models import User
 from utils import get_letter_profile_pic
 

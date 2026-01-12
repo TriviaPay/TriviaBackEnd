@@ -2,7 +2,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from db import get_db
+from core.db import get_db
 from models import Block, PrivateChatConversation, User
 from routers.dependencies import get_current_user
 from routers.notifications import pusher_auth as pusher_auth_router

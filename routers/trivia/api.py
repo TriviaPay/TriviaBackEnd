@@ -4,7 +4,6 @@ from . import (
     draw,
     internal,
     rewards,
-    trivia,
     trivia_five_dollar_mode,
     trivia_free_mode,
     trivia_live_chat,
@@ -13,7 +12,6 @@ from . import (
 
 router = APIRouter()
 router.include_router(draw.router)
-router.include_router(trivia.router)
 router.include_router(trivia_free_mode.router)
 router.include_router(trivia_five_dollar_mode.router)
 router.include_router(trivia_silver_mode.router)

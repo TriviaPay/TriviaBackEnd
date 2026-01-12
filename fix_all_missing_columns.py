@@ -13,7 +13,7 @@ import traceback
 from sqlalchemy import MetaData, inspect, text
 from sqlalchemy.schema import CreateTable
 
-from db import Base, engine
+from core.db import Base, engine
 from models import *
 
 

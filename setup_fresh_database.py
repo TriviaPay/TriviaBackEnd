@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from sqlalchemy import inspect
 
 from alembic import command
-from db import Base, engine
+from core.db import Base, engine
 
 # Load environment variables
 load_dotenv()

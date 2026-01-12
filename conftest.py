@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from db import get_db
+from core.db import get_db
 from models import Base, User
 
 

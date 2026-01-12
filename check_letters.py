@@ -1,6 +1,6 @@
 from sqlalchemy import text
 
-from db import engine
+from core.db import engine
 
 
 def check_letters_table():

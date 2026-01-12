@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import relationship
 
-from db import Base
+from core.db import Base
 
 
 def generate_account_id():

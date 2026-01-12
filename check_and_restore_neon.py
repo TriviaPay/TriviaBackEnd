@@ -15,7 +15,7 @@ load_dotenv()
 
 from sqlalchemy import inspect, text
 
-from db import engine
+from core.db import engine
 
 
 def check_database_state():

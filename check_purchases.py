@@ -1,4 +1,4 @@
-from db import SessionLocal
+from core.db import SessionLocal
 from models import UserGemPurchase
 
 

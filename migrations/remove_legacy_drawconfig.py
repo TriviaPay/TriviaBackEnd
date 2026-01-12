@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 # Add the parent directory to the path so we can import our modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import DATABASE_URL
+from core.config import DATABASE_URL
 
 def remove_legacy_drawconfig():
     """Remove the legacy winners_draw_settings table."""

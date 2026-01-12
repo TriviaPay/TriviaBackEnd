@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from db import get_db
+from core.db import get_db
 from main import app
 from models import (
     SubscriptionPlan,

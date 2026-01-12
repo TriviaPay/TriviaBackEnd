@@ -13,7 +13,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from sqlalchemy import text
 
-from db import engine
+from core.db import engine
 
 
 def check_database_schema():

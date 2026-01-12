@@ -4,6 +4,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 DOMAIN_CONFIGS = {
+    "app_versions": {
+        "paths": [ROOT / "routers" / "app_versions"],
+        "allowed_prefixes": ["routers.app_versions", "routers.dependencies"],
+    },
     "auth": {
         "paths": [ROOT / "routers" / "auth"],
         "allowed_prefixes": ["routers.auth", "routers.dependencies"],
@@ -62,6 +66,10 @@ def _is_cross_domain_import(module_name, allowed_prefixes):
 
 
 def test_no_cross_domain_imports():
+    """
+    Enforces "no cross-domain imports" across all Python modules within each domain,
+    including `api.py` routers, and also `service.py`/`repository.py`/`schemas.py`.
+    """
     violations = []
     for domain, config in DOMAIN_CONFIGS.items():
         for path in _iter_python_files(config["paths"]):
@@ -73,3 +81,33 @@ def test_no_cross_domain_imports():
     if violations:
         joined = "\n".join(sorted(violations))
         raise AssertionError(f"Cross-domain imports detected:\n{joined}")
+
+
+def test_non_auth_domains_do_not_import_user_model():
+    """
+    Data ownership rule: `User` is owned by Auth/Profile.
+
+    Non-auth domains should not import `User` from `models`; use `core.users` (Auth service API)
+    for lookups/locking and pass around `account_id` where possible.
+    """
+    non_auth_paths = [
+        ROOT / "routers" / "trivia",
+        ROOT / "routers" / "store",
+        ROOT / "routers" / "messaging",
+        ROOT / "routers" / "notifications",
+    ]
+    violations = []
+    for path in _iter_python_files(non_auth_paths):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "models":
+                for alias in node.names:
+                    if alias.name == "User":
+                        violations.append(str(path))
+
+    if violations:
+        joined = "\n".join(sorted(set(violations)))
+        raise AssertionError(
+            "Non-auth domains import `User` directly. Use `core.users` instead:\n"
+            + joined
+        )

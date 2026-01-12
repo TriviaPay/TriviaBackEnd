@@ -3,11 +3,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from db import get_db
-from models import User
+from core.db import get_db
 from routers.dependencies import get_current_user
-from utils.redis_pubsub import publish_dm_message
-
 from .schemas import CreateStatusPostRequest, MarkViewedRequest
 from .service import (
     create_status_post as service_create_status_post,
@@ -24,25 +21,13 @@ router = APIRouter(prefix="/status", tags=["Status"])
 async def create_status_post(
     request: CreateStatusPostRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Create a status post (24h ephemeral).
     Server expands audience and fan-outs post-key notices.
     """
-    response = service_create_status_post(db, current_user=current_user, request=request)
-
-    for viewer_id in response.pop("audience_user_ids", []):
-        event = {
-            "type": "status_post",
-            "post_id": response["id"],
-            "owner_user_id": current_user.account_id,
-            "created_at": response["created_at"],
-            "expires_at": response["expires_at"],
-        }
-        await publish_dm_message("", viewer_id, event)
-
-    return response
+    return await service_create_status_post(db, current_user=current_user, request=request)
 
 
 @router.get("/feed")
@@ -54,7 +39,7 @@ async def get_status_feed(
         example="550e8400-e29b-41d4-a716-446655440000",
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Get available status posts for the user (posts where user is in audience).
@@ -69,7 +54,7 @@ async def get_status_feed(
 async def mark_viewed(
     request: MarkViewedRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Mark status posts as viewed. Respects privacy settings.
@@ -81,7 +66,7 @@ async def mark_viewed(
 async def delete_status_post(
     post_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """Delete my status post."""
     return service_delete_status_post(db, current_user=current_user, post_id=post_id)
@@ -95,7 +80,7 @@ async def get_presence(
         example=[1142961859, 9876543210],
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Get presence for user_ids. Respects privacy settings.

@@ -11,7 +11,7 @@ from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session
 
 # Legacy tables removed: TriviaQuestionsWinners, TriviaDrawConfig, TriviaQuestionsEntries, TriviaUserDaily, Trivia, TriviaQuestionsDaily
-from db import get_db
+from core.db import get_db
 from models import Avatar, CompanyRevenue, Frame, User, UserDailyRewards
 
 # Configure logging

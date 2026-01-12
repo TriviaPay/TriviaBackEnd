@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import routers.trivia.draw as draw
-from db import get_db
+from core.db import get_db
 from models import User
 from routers.dependencies import get_current_user
 

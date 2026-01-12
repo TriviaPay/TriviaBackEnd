@@ -2,7 +2,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from db import get_db
+from core.db import get_db
 from models import User, UserPresence
 from routers.dependencies import get_current_user
 from routers.messaging import presence as presence_router

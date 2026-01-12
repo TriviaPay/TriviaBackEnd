@@ -6,9 +6,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import db as db_module
+import core.db as db_module
 import routers.messaging.global_chat as global_chat
-from db import get_db
+from core.db import get_db
 from models import (
     ChatMutePreferences,
     GlobalChatMessage,

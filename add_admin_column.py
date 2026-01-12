@@ -8,7 +8,7 @@ import logging
 
 from sqlalchemy import text
 
-from db import engine
+from core.db import engine
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

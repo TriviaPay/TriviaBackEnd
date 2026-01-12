@@ -12,7 +12,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import config
+import core.config as config
 from app.models.user import User
 from app.models.wallet import IapReceipt
 from app.services.product_pricing import get_price_minor_for_product_id

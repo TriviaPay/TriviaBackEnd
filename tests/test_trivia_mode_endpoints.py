@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 import routers.auth.profile as profile_router
 import routers.auth.service as auth_service
-from db import get_db
+from core.db import get_db
 from main import app
 from models import (
     SubscriptionPlan,

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from db import get_db
+from core.db import get_db
 
 from .service import refresh_session
 

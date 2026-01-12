@@ -19,6 +19,10 @@ from models import (
 )
 
 
+def query(db: Session, *entities):
+    return db.query(*entities)
+
+
 def get_user_by_username_ci(db: Session, username: str):
     return db.query(User).filter(func.lower(User.username) == username.lower()).first()
 
@@ -46,6 +50,21 @@ def get_user_by_referral_code_for_update(db: Session, referral_code: str):
 
 def get_user_by_account_id(db: Session, account_id: int):
     return db.query(User).filter(User.account_id == account_id).first()
+
+
+def get_user_by_account_id_for_update(db: Session, account_id: int):
+    return (
+        db.query(User)
+        .filter(User.account_id == account_id)
+        .with_for_update()
+        .first()
+    )
+
+
+def list_users_by_account_ids(db: Session, account_ids):
+    if not account_ids:
+        return []
+    return db.query(User).filter(User.account_id.in_(list(account_ids))).all()
 
 
 def get_users_paginated(db: Session, skip: int, limit: int):

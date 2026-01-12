@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-import auth
+import core.security as auth
 import routers.messaging.dm_sse as dm_sse
 from models import User, UserPresence
 

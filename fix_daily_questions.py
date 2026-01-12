@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import text
 
-from db import engine  # Import the existing engine from your db module
+from core.db import engine  # Import the existing engine from your db module
 
 # Use the existing engine that's already configured with the correct URL
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

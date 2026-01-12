@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import text
 
-from db import SessionLocal
+from core.db import SessionLocal
 from models import GemPackageConfig, User, UserGemPurchase
 
 # Configure logging

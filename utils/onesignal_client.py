@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from sqlalchemy.orm import Session
 
-from config import ONESIGNAL_APP_ID, ONESIGNAL_ENABLED, ONESIGNAL_REST_API_KEY
+from core.config import ONESIGNAL_APP_ID, ONESIGNAL_ENABLED, ONESIGNAL_REST_API_KEY
 from models import OneSignalPlayer
 
 logger = logging.getLogger(__name__)

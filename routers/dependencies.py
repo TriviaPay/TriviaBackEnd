@@ -6,8 +6,8 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from auth import validate_descope_jwt
-from db import get_db
+from core.security import validate_descope_jwt
+from core.db import get_db
 from models import AdminUser, User
 
 logger = logging.getLogger(__name__)

@@ -63,48 +63,10 @@ import sys
 import uuid
 from contextvars import ContextVar
 
-from config import ENVIRONMENT, LOG_LEVEL
+from core.config import ENVIRONMENT, LOG_LEVEL
+from core.logging import configure_logging, request_id_var
 
-# Request ID context variable for tracking requests across the system
-# This is shared with utils/logging_helpers.py
-request_id_var: ContextVar[str] = ContextVar("request_id", default="")
-
-# Convert string log level to logging constant
-log_level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
-
-# Create a custom logger
-logger = logging.getLogger()
-logger.setLevel(log_level)
-
-# Create handlers
-c_handler = logging.StreamHandler(sys.stdout)
-c_handler.setLevel(log_level)
-
-# Improved log format for better readability in production
-# Format: [TIMESTAMP] [LEVEL] [MODULE] [REQUEST_ID] message | context
-if ENVIRONMENT == "production":
-    # Production format: more compact, structured
-    c_format = logging.Formatter(
-        "[%(asctime)s.%(msecs)03d] [%(levelname)-5s] [%(name)-20s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-else:
-    # Development format: more verbose
-    c_format = logging.Formatter(
-        "[%(asctime)s.%(msecs)03d] [%(levelname)-5s] [%(name)-20s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-c_handler.setFormatter(c_format)
-
-# Add handlers to the logger (only if not already added)
-if not logger.handlers:
-    logger.addHandler(c_handler)
-
-# Reduce noise from other libraries
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+log_level = configure_logging(environment=ENVIRONMENT, log_level=LOG_LEVEL)
 
 # Suppress importlib.metadata warnings (Python 3.9 compatibility)
 warnings.filterwarnings("ignore", message=".*importlib.metadata.*")
@@ -122,13 +84,6 @@ try:
         importlib.metadata.packages_distributions = lambda: {}
 except (AttributeError, ImportError):
     pass
-
-# Configure uvicorn logging to match our log level (prevents duplicate logs)
-logging.getLogger("uvicorn").setLevel(log_level)
-logging.getLogger("uvicorn.error").setLevel(log_level)
-logging.getLogger("uvicorn.access").setLevel(
-    logging.WARNING
-)  # Suppress access logs unless needed
 
 # Import async wallet routers
 from app.routers.payments import router as payments_router
@@ -194,6 +149,13 @@ import time
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from core.latency import LatencyTracker
+
+_latency_tracker = LatencyTracker(
+    window=int(os.getenv("LATENCY_STATS_WINDOW", "200"))
+)
+_last_latency_log_epoch = 0.0
+
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     DOMAIN_PREFIXES = (
@@ -254,6 +216,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         start_time = time.time()
         domain = self._get_domain(request.url.path)
+        slow_ms = float(os.getenv("SLOW_REQUEST_THRESHOLD_MS", "500"))
+        slow_log_stack = os.getenv("SLOW_REQUEST_LOG_STACK", "false").lower() == "true"
 
         # Extract user info if available (from auth header)
         user_id = None
@@ -289,6 +253,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
             process_time = time.time() - start_time
+            elapsed_ms = process_time * 1000.0
+            # Key by domain + path (good enough for top-N guidance).
+            _latency_tracker.record(
+                key=f"{domain} {request.method} {request.url.path}",
+                elapsed_ms=elapsed_ms,
+            )
 
             # Log response with context
             status_emoji = (
@@ -300,6 +270,40 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 f"RESPONSE | id={request_id} | method={request.method} | path={request.url.path} | "
                 f"status={response.status_code} | time={process_time:.3f}s | domain={domain} | user_id={user_id or 'anonymous'}"
             )
+
+            global _last_latency_log_epoch
+            interval_s = float(os.getenv("LATENCY_LOG_INTERVAL_SECONDS", "300"))
+            top_n = int(os.getenv("LATENCY_TOP_N", "5"))
+            if interval_s > 0 and (time.time() - _last_latency_log_epoch) >= interval_s:
+                _last_latency_log_epoch = time.time()
+                top = _latency_tracker.top(n=top_n, metric="p95")
+                if top:
+                    lines = [
+                        f"{s.key} count={s.count} p50={s.p50_ms:.1f}ms p95={s.p95_ms:.1f}ms max={s.max_ms:.1f}ms"
+                        for s in top
+                    ]
+                    logger.info("LATENCY_TOP | " + " | ".join(lines))
+
+            if elapsed_ms >= slow_ms:
+                extra = {
+                    "id": request_id,
+                    "domain": domain,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": response.status_code,
+                    "ms": round(elapsed_ms, 1),
+                }
+                if request.query_params:
+                    extra["query_params"] = dict(request.query_params)
+                logger.warning(f"SLOW_REQUEST | {extra}")
+                if slow_log_stack:
+                    import traceback
+
+                    logger.warning(
+                        "SLOW_REQUEST_STACK | id=%s | %s",
+                        request_id,
+                        "".join(traceback.format_stack(limit=30)).strip(),
+                    )
 
             if response.status_code in {403, 404}:
                 detail_snippet = ""

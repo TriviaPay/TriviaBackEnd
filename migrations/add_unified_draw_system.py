@@ -6,7 +6,7 @@ from sqlalchemy.sql import func
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db import engine
+from core.db import engine
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)

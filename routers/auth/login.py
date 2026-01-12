@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from db import get_db
+from core.db import get_db
 
 from .schemas import BindPasswordData, DevSignInRequest, ReferralCheck
 from .service import (

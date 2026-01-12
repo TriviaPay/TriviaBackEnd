@@ -5,8 +5,8 @@ import pytest
 import pytz
 from fastapi.testclient import TestClient
 
-import db as db_module
-from db import get_db
+import core.db as db_module
+from core.db import get_db
 from main import app
 from models import (
     ChatMutePreferences,

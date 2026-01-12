@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 import routers.messaging.dm_privacy as dm_privacy
-from db import get_db
+from core.db import get_db
 from models import Block, User
 from routers.dependencies import get_current_user
 

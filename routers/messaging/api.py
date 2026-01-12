@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from config import PRESENCE_ENABLED
+from core.config import PRESENCE_ENABLED
 
 from . import chat_mute, global_chat, presence, private_chat
 

@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datetime import datetime
 
-from db import SessionLocal
+from core.db import SessionLocal
 from models import SubscriptionPlan, User, UserSubscription
 
 

@@ -3,8 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from db import get_db
-from models import User
+from core.db import get_db
 from routers.dependencies import get_current_user
 
 from .schemas import UpdatePresenceRequest
@@ -16,7 +15,7 @@ router = APIRouter(prefix="/presence", tags=["Presence"])
 
 @router.get("")
 async def get_my_presence(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    db: Session = Depends(get_db), current_user = Depends(get_current_user)
 ):
     """Get my presence settings."""
     return service_get_my_presence(db, current_user=current_user)
@@ -26,7 +25,7 @@ async def get_my_presence(
 async def update_presence(
     request: UpdatePresenceRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """Update privacy settings."""
     return service_update_my_presence(db, current_user=current_user, request=request)

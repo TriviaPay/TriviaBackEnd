@@ -23,8 +23,8 @@ from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from auth import validate_descope_jwt
-from config import (
+from core.security import validate_descope_jwt
+from core.config import (
     AWS_DEFAULT_PROFILE_PIC_BASE_URL,
     AWS_PROFILE_PIC_BUCKET,
     DESCOPE_JWT_LEEWAY,
@@ -98,6 +98,30 @@ _DESCOPE_VALIDATE_MAX_WORKERS = int(os.getenv("DESCOPE_VALIDATE_MAX_WORKERS", "4
 _DESCOPE_EXECUTOR = ThreadPoolExecutor(max_workers=_DESCOPE_VALIDATE_MAX_WORKERS)
 
 DateType = date
+
+
+def get_user_by_id(db: Session, *, account_id: int):
+    return auth_repository.get_user_by_account_id(db, account_id)
+
+
+def get_user_by_id_for_update(db: Session, *, account_id: int):
+    return auth_repository.get_user_by_account_id_for_update(db, account_id)
+
+
+def get_users_by_ids(db: Session, *, account_ids: list[int]):
+    return auth_repository.list_users_by_account_ids(db, account_ids)
+
+
+def get_user_by_email(db: Session, *, email: str):
+    return auth_repository.get_user_by_email_ci(db, email)
+
+
+def get_user_by_username(db: Session, *, username: str):
+    return auth_repository.get_user_by_username_ci(db, username)
+
+
+def get_user_by_descope_id(db: Session, *, descope_user_id: str):
+    return auth_repository.get_user_by_descope_id(db, descope_user_id)
 
 
 def check_rate_limit(identifier: str) -> bool:
@@ -236,7 +260,7 @@ def _track_device_uuid(
         user.device_uuid = device_uuid
 
     existing = (
-        db.query(UserDeviceVersion)
+        auth_repository.query(db, UserDeviceVersion)
         .filter(
             UserDeviceVersion.user_id == user.account_id,
             UserDeviceVersion.device_uuid == device_uuid,
@@ -1679,7 +1703,7 @@ def _select_random_rows(base_query, count: int, order_col):
 
 
 def list_trivia_modes(db: Session):
-    modes = db.query(TriviaModeConfig).all()
+    modes = auth_repository.query(db, TriviaModeConfig).all()
     result = []
     for mode in modes:
         try:
@@ -1730,7 +1754,7 @@ def create_or_update_trivia_mode(
     survey_config: Optional[dict],
 ):
     existing = (
-        db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == mode_id).first()
+        auth_repository.query(db, TriviaModeConfig).filter(TriviaModeConfig.mode_id == mode_id).first()
     )
     if existing:
         existing.mode_name = mode_name
@@ -1805,7 +1829,7 @@ async def trigger_free_mode_draw(db: Session, draw_date: Optional[str]):
     from models import TriviaFreeModeWinners
 
     existing_draw = (
-        db.query(TriviaFreeModeWinners)
+        auth_repository.query(db, TriviaFreeModeWinners)
         .filter(TriviaFreeModeWinners.draw_date == target_date)
         .first()
     )
@@ -1888,7 +1912,7 @@ async def allocate_free_mode_questions_manual(db: Session, target_date: Optional
     start_datetime, end_datetime = get_date_range_for_query(target)
 
     existing_questions = (
-        db.query(TriviaQuestionsFreeModeDaily)
+        auth_repository.query(db, TriviaQuestionsFreeModeDaily)
         .filter(
             TriviaQuestionsFreeModeDaily.date >= start_datetime,
             TriviaQuestionsFreeModeDaily.date <= end_datetime,
@@ -1904,13 +1928,13 @@ async def allocate_free_mode_questions_manual(db: Session, target_date: Optional
             "message": f"Questions already allocated for {target}",
         }
 
-    unused_query = db.query(TriviaQuestionsFreeMode).filter(
+    unused_query = auth_repository.query(db, TriviaQuestionsFreeMode).filter(
         TriviaQuestionsFreeMode.is_used == False
     )
     unused_count = unused_query.count()
 
     if unused_count < questions_count:
-        all_query = db.query(TriviaQuestionsFreeMode)
+        all_query = auth_repository.query(db, TriviaQuestionsFreeMode)
         all_count = all_query.count()
         if all_count < questions_count:
             raise HTTPException(
@@ -1978,7 +2002,7 @@ async def trigger_bronze_mode_draw(db: Session, draw_date: Optional[str]):
     from models import TriviaBronzeModeWinners
 
     existing_draw = (
-        db.query(TriviaBronzeModeWinners)
+        auth_repository.query(db, TriviaBronzeModeWinners)
         .filter(TriviaBronzeModeWinners.draw_date == target_date)
         .first()
     )
@@ -2055,7 +2079,7 @@ async def allocate_bronze_mode_questions_manual(
 
     start_datetime, end_datetime = get_date_range_for_query(target)
     existing_question = (
-        db.query(TriviaQuestionsBronzeModeDaily)
+        auth_repository.query(db, TriviaQuestionsBronzeModeDaily)
         .filter(
             TriviaQuestionsBronzeModeDaily.date >= start_datetime,
             TriviaQuestionsBronzeModeDaily.date <= end_datetime,
@@ -2071,13 +2095,13 @@ async def allocate_bronze_mode_questions_manual(
             "message": f"Question already allocated for {target}",
         }
 
-    unused_query = db.query(TriviaQuestionsBronzeMode).filter(
+    unused_query = auth_repository.query(db, TriviaQuestionsBronzeMode).filter(
         TriviaQuestionsBronzeMode.is_used == False
     )
     unused_count = unused_query.count()
 
     if unused_count < 1:
-        all_query = db.query(TriviaQuestionsBronzeMode)
+        all_query = auth_repository.query(db, TriviaQuestionsBronzeMode)
         all_count = all_query.count()
         if all_count < 1:
             raise HTTPException(
@@ -2136,7 +2160,7 @@ def check_subscription_status(
     sub_skip: int,
     sub_limit: int,
 ):
-    plan_query = db.query(SubscriptionPlan)
+    plan_query = auth_repository.query(db, SubscriptionPlan)
 
     if plan_id:
         plan_query = plan_query.filter(SubscriptionPlan.id == plan_id)
@@ -2171,7 +2195,7 @@ def check_subscription_status(
         )
 
     sub_query = (
-        db.query(UserSubscription, User, SubscriptionPlan)
+        auth_repository.query(db, UserSubscription, User, SubscriptionPlan)
         .join(User, User.account_id == UserSubscription.user_id)
         .join(SubscriptionPlan, SubscriptionPlan.id == UserSubscription.plan_id)
     )
@@ -2223,7 +2247,7 @@ def check_subscription_status(
 
 
 def list_subscription_plans(db: Session, livemode: Optional[bool] = None):
-    query = db.query(SubscriptionPlan)
+    query = auth_repository.query(db, SubscriptionPlan)
     if livemode is not None:
         query = query.filter(SubscriptionPlan.livemode == livemode)
 
@@ -2265,7 +2289,7 @@ def create_subscription_plan(db: Session, request):
     billing_interval = request.billing_interval or request.interval
 
     existing = (
-        db.query(SubscriptionPlan)
+        auth_repository.query(db, SubscriptionPlan)
         .filter(
             (SubscriptionPlan.unit_amount_minor == unit_amount_minor)
             | (SubscriptionPlan.price_usd == request.price_usd),
@@ -2329,7 +2353,7 @@ def create_subscription_for_user(db: Session, request, current_user: User):
         user_id = current_user.account_id
 
     plan = (
-        db.query(SubscriptionPlan)
+        auth_repository.query(db, SubscriptionPlan)
         .filter(SubscriptionPlan.id == request.plan_id)
         .first()
     )
@@ -2339,12 +2363,12 @@ def create_subscription_for_user(db: Session, request, current_user: User):
             detail=f"Subscription plan with ID {request.plan_id} not found",
         )
 
-    user = db.query(User).filter(User.account_id == user_id).first()
+    user = auth_repository.query(db, User).filter(User.account_id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found")
 
     existing = (
-        db.query(UserSubscription)
+        auth_repository.query(db, UserSubscription)
         .filter(
             UserSubscription.user_id == user_id,
             UserSubscription.plan_id == plan.id,
@@ -2442,7 +2466,7 @@ def create_gem_package(db: Session, package):
 
 def update_gem_package(db: Session, package_id: int, package):
     db_package = (
-        db.query(GemPackageConfig).filter(GemPackageConfig.id == package_id).first()
+        auth_repository.query(db, GemPackageConfig).filter(GemPackageConfig.id == package_id).first()
     )
     if not db_package:
         raise HTTPException(
@@ -2487,7 +2511,7 @@ def update_gem_package(db: Session, package_id: int, package):
 
 def delete_gem_package(db: Session, package_id: int):
     db_package = (
-        db.query(GemPackageConfig).filter(GemPackageConfig.id == package_id).first()
+        auth_repository.query(db, GemPackageConfig).filter(GemPackageConfig.id == package_id).first()
     )
     if not db_package:
         raise HTTPException(
@@ -2539,7 +2563,7 @@ def create_badge(db: Session, badge):
 
     if badge.id:
         existing = (
-            db.query(TriviaModeConfig)
+            auth_repository.query(db, TriviaModeConfig)
             .filter(TriviaModeConfig.mode_id == badge_id)
             .first()
         )
@@ -2583,7 +2607,7 @@ def create_badge(db: Session, badge):
 
 def update_badge(db: Session, badge_id: str, badge_update):
     mode_config = (
-        db.query(TriviaModeConfig).filter(TriviaModeConfig.mode_id == badge_id).first()
+        auth_repository.query(db, TriviaModeConfig).filter(TriviaModeConfig.mode_id == badge_id).first()
     )
     if not mode_config:
         raise HTTPException(
@@ -2602,7 +2626,7 @@ def update_badge(db: Session, badge_id: str, badge_update):
     mode_config.badge_level = badge_update.level
     mode_config.updated_at = datetime.utcnow()
 
-    users_updated = db.query(User).filter(User.badge_id == badge_id).count()
+    users_updated = auth_repository.query(db, User).filter(User.badge_id == badge_id).count()
 
     db.commit()
     db.refresh(mode_config)
@@ -2625,12 +2649,12 @@ def update_badge(db: Session, badge_id: str, badge_update):
 def get_badge_assignments(db: Session):
     result = {}
     counts = dict(
-        db.query(User.badge_id, func.count(User.account_id))
+        auth_repository.query(db, User.badge_id, func.count(User.account_id))
         .group_by(User.badge_id)
         .all()
     )
     badges = (
-        db.query(TriviaModeConfig)
+        auth_repository.query(db, TriviaModeConfig)
         .filter(TriviaModeConfig.badge_image_url.isnot(None))
         .all()
     )
@@ -2650,7 +2674,7 @@ def get_badge_assignments(db: Session):
 def create_avatar(db: Session, avatar):
     avatar_id = avatar.id if avatar.id else str(uuid.uuid4())
     if avatar.id:
-        existing = db.query(Avatar).filter(Avatar.id == avatar_id).first()
+        existing = auth_repository.query(db, Avatar).filter(Avatar.id == avatar_id).first()
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -2676,7 +2700,7 @@ def create_avatar(db: Session, avatar):
 
 
 def update_avatar(db: Session, avatar_id: str, avatar_update):
-    avatar = db.query(Avatar).filter(Avatar.id == avatar_id).first()
+    avatar = auth_repository.query(db, Avatar).filter(Avatar.id == avatar_id).first()
     if not avatar:
         raise HTTPException(
             status_code=404, detail=f"Avatar with ID {avatar_id} not found"
@@ -2697,16 +2721,16 @@ def update_avatar(db: Session, avatar_id: str, avatar_update):
 
 
 def delete_avatar(db: Session, avatar_id: str):
-    avatar = db.query(Avatar).filter(Avatar.id == avatar_id).first()
+    avatar = auth_repository.query(db, Avatar).filter(Avatar.id == avatar_id).first()
     if not avatar:
         raise HTTPException(
             status_code=404, detail=f"Avatar with ID {avatar_id} not found"
         )
 
-    db.query(UserAvatar).filter(UserAvatar.avatar_id == avatar_id).delete(
+    auth_repository.query(db, UserAvatar).filter(UserAvatar.avatar_id == avatar_id).delete(
         synchronize_session=False
     )
-    db.query(User).filter(User.selected_avatar_id == avatar_id).update(
+    auth_repository.query(db, User).filter(User.selected_avatar_id == avatar_id).update(
         {User.selected_avatar_id: None}, synchronize_session=False
     )
     db.delete(avatar)
@@ -2720,7 +2744,7 @@ def delete_avatar(db: Session, avatar_id: str):
 def create_frame(db: Session, frame):
     frame_id = frame.id if frame.id else str(uuid.uuid4())
     if frame.id:
-        existing = db.query(Frame).filter(Frame.id == frame_id).first()
+        existing = auth_repository.query(db, Frame).filter(Frame.id == frame_id).first()
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -2746,7 +2770,7 @@ def create_frame(db: Session, frame):
 
 
 def update_frame(db: Session, frame_id: str, frame_update):
-    frame = db.query(Frame).filter(Frame.id == frame_id).first()
+    frame = auth_repository.query(db, Frame).filter(Frame.id == frame_id).first()
     if not frame:
         raise HTTPException(
             status_code=404, detail=f"Frame with ID {frame_id} not found"
@@ -2767,16 +2791,16 @@ def update_frame(db: Session, frame_id: str, frame_update):
 
 
 def delete_frame(db: Session, frame_id: str):
-    frame = db.query(Frame).filter(Frame.id == frame_id).first()
+    frame = auth_repository.query(db, Frame).filter(Frame.id == frame_id).first()
     if not frame:
         raise HTTPException(
             status_code=404, detail=f"Frame with ID {frame_id} not found"
         )
 
-    db.query(UserFrame).filter(UserFrame.frame_id == frame_id).delete(
+    auth_repository.query(db, UserFrame).filter(UserFrame.frame_id == frame_id).delete(
         synchronize_session=False
     )
-    db.query(User).filter(User.selected_frame_id == frame_id).update(
+    auth_repository.query(db, User).filter(User.selected_frame_id == frame_id).update(
         {User.selected_frame_id: None}, synchronize_session=False
     )
     db.delete(frame)
@@ -2808,7 +2832,7 @@ def import_avatars_from_json(db: Session, json_data: Dict[str, Any]):
     for avatar_data in avatars:
         try:
             avatar_id = avatar_data.get("id", str(uuid.uuid4()))
-            existing = db.query(Avatar).filter(Avatar.id == avatar_id).first()
+            existing = auth_repository.query(db, Avatar).filter(Avatar.id == avatar_id).first()
             if existing:
                 for key, value in avatar_data.items():
                     if key != "id" and hasattr(existing, key):
@@ -2874,7 +2898,7 @@ def import_frames_from_json(db: Session, json_data: Dict[str, Any]):
     for frame_data in frames:
         try:
             frame_id = frame_data.get("id", str(uuid.uuid4()))
-            existing = db.query(Frame).filter(Frame.id == frame_id).first()
+            existing = auth_repository.query(db, Frame).filter(Frame.id == frame_id).first()
             if existing:
                 for key, value in frame_data.items():
                     if key != "id" and hasattr(existing, key):
@@ -2920,21 +2944,21 @@ def import_frames_from_json(db: Session, json_data: Dict[str, Any]):
 
 
 def get_avatar_stats(db: Session):
-    total_avatars = db.query(Avatar).count()
-    default_avatars = db.query(Avatar).filter(Avatar.is_default == True).count()
-    premium_avatars = db.query(Avatar).filter(Avatar.is_premium == True).count()
+    total_avatars = auth_repository.query(db, Avatar).count()
+    default_avatars = auth_repository.query(db, Avatar).filter(Avatar.is_default == True).count()
+    premium_avatars = auth_repository.query(db, Avatar).filter(Avatar.is_premium == True).count()
 
     free_avatars = (
-        db.query(Avatar)
+        auth_repository.query(db, Avatar)
         .filter(Avatar.price_gems.is_(None), Avatar.price_usd.is_(None))
         .count()
     )
 
-    gem_purchasable = db.query(Avatar).filter(Avatar.price_gems.isnot(None)).count()
-    usd_purchasable = db.query(Avatar).filter(Avatar.price_usd.isnot(None)).count()
+    gem_purchasable = auth_repository.query(db, Avatar).filter(Avatar.price_gems.isnot(None)).count()
+    usd_purchasable = auth_repository.query(db, Avatar).filter(Avatar.price_usd.isnot(None)).count()
 
     top_avatars = (
-        db.query(
+        auth_repository.query(db, 
             Avatar.id,
             Avatar.name,
             func.count(UserAvatar.avatar_id).label("purchase_count"),
@@ -2964,7 +2988,7 @@ def get_avatar_stats(db: Session):
 
 def list_users(db: Session, skip: int, limit: int):
     users = auth_repository.get_users_paginated(db, skip, limit)
-    admin_entry = db.query(AdminUser).first()
+    admin_entry = auth_repository.query(db, AdminUser).first()
     admin_user_id = admin_entry.user_id if admin_entry else None
     results = []
     for user in users:
@@ -2985,7 +3009,7 @@ def update_user_admin_status(db: Session, account_id: int, is_admin: bool):
         raise HTTPException(
             status_code=404, detail=f"User with account ID {account_id} not found"
         )
-    existing_admin = db.query(AdminUser).first()
+    existing_admin = auth_repository.query(db, AdminUser).first()
     if is_admin:
         if existing_admin and existing_admin.user_id != user.account_id:
             raise HTTPException(
@@ -3027,7 +3051,7 @@ def search_users(
     users = auth_repository.search_users(
         db, email, username, is_admin, contains, skip, limit
     )
-    admin_entry = db.query(AdminUser).first()
+    admin_entry = auth_repository.query(db, AdminUser).first()
     admin_user_id = admin_entry.user_id if admin_entry else None
     results = []
     for user in users:
@@ -3049,7 +3073,7 @@ def list_app_versions(
     skip: int,
     limit: int,
 ):
-    query = db.query(UserDeviceVersion)
+    query = auth_repository.query(db, UserDeviceVersion)
     if user_id:
         query = query.filter(UserDeviceVersion.user_id == user_id)
     if device_uuid:

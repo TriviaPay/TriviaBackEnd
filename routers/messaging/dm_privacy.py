@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from db import get_db
-from models import User
+from core.db import get_db
 from routers.dependencies import get_current_user
 
 from .schemas import DMBlockUserRequest
@@ -19,7 +18,7 @@ router = APIRouter(prefix="/dm", tags=["DM Privacy"])
 def block_user(
     request: DMBlockUserRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Block a user. Prevents them from messaging you and seeing your key bundles.
@@ -33,7 +32,7 @@ def block_user(
 def unblock_user(
     blocked_user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
 ):
     """
     Unblock a user.
@@ -46,7 +45,7 @@ def unblock_user(
 @router.get("/blocks")
 def list_blocks(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):

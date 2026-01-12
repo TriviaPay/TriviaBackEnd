@@ -7,7 +7,7 @@ import logging
 
 import bleach
 
-from config import MESSAGE_SANITIZE_ENABLED
+from core.config import MESSAGE_SANITIZE_ENABLED
 
 logger = logging.getLogger(__name__)
 

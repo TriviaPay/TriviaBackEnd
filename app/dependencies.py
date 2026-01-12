@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_async_db
 from app.models.admin_user import AdminUser
 from app.models.user import User
-from auth import validate_descope_jwt
+from core.security import validate_descope_jwt
 
 
 async def get_current_user(

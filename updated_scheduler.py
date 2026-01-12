@@ -7,7 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import Integer, and_, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from db import SessionLocal
+from core.db import SessionLocal
 
 # Legacy tables removed: TriviaQuestionsDaily, TriviaQuestionsWinners, TriviaUserDaily, TriviaQuestionsEntries
 # Legacy cleanup_unused_questions removed - TriviaQuestionsDaily and Trivia tables deleted
@@ -165,7 +165,10 @@ def get_detailed_monthly_reset_metrics(db: Session) -> dict:
         return {"error": str(e)}
 
 
-def get_draw_time():
+from typing import Dict, Union
+
+
+def get_draw_time() -> Dict[str, Union[int, str]]:
     """Get draw time configuration from environment variables"""
     import os
 
@@ -192,7 +195,7 @@ def run_daily_company_revenue_update() -> None:
         db.close()
 
 
-def schedule_draws():
+def schedule_draws() -> None:
     """
     Schedule the daily draw and question reset.
 
@@ -286,7 +289,7 @@ def schedule_draws():
 # Use mode-specific question allocation instead (allocate_free_mode_questions, allocate_bronze_mode_questions, etc.)
 
 
-async def run_monthly_subscription_reset():
+async def run_monthly_subscription_reset() -> None:
     """
     Reset monthly subscription flags at 11:59 PM EST on the last day of each month.
     """
@@ -336,7 +339,7 @@ async def run_monthly_subscription_reset():
         logger.error(f"💥 Error running monthly subscription reset: {str(e)}")
 
 
-async def run_weekly_rewards_reset():
+async def run_weekly_rewards_reset() -> None:
     """
     Reset weekly daily rewards at Monday 00:00 (midnight) in the configured timezone.
     """
@@ -360,7 +363,7 @@ async def run_weekly_rewards_reset():
         logger.error(f"💥 Error resetting weekly daily rewards: {str(e)}")
 
 
-async def run_free_mode_draw():
+async def run_free_mode_draw() -> None:
     """
     Process free mode draw at the configured draw time.
     Calculates winners, distributes gems, and cleans up old leaderboard.
@@ -456,7 +459,7 @@ async def run_free_mode_draw():
         logger.error(f"💥 Error running free mode draw: {str(e)}")
 
 
-async def allocate_free_mode_questions():
+async def allocate_free_mode_questions() -> None:
     """
     Allocate free mode questions for the new day.
     Selects random questions from TriviaQuestionsFreeMode and adds them to TriviaQuestionsFreeModeDaily.
@@ -548,7 +551,7 @@ async def allocate_free_mode_questions():
         logger.error(f"💥 Error allocating free mode questions: {str(e)}")
 
 
-async def run_bronze_mode_draw():
+async def run_bronze_mode_draw() -> None:
     """
     Process bronze mode draw at the configured draw time.
     Uses generic draw service with registered handlers.
@@ -621,7 +624,7 @@ async def run_bronze_mode_draw():
         logger.error(f"💥 Error running $5 mode draw: {str(e)}")
 
 
-async def allocate_bronze_mode_questions():
+async def allocate_bronze_mode_questions() -> None:
     """
     Allocate bronze mode question for the new day.
     Selects a random question from TriviaQuestionsBronzeMode and adds it to TriviaQuestionsBronzeModeDaily.
@@ -708,7 +711,7 @@ async def allocate_bronze_mode_questions():
         logger.error(f"💥 Error allocating bronze mode questions: {str(e)}")
 
 
-def start_scheduler():
+def start_scheduler() -> None:
     """
     Start the background scheduler.
     This should be called when the application starts.
@@ -725,7 +728,7 @@ def start_scheduler():
         logger.warning("Scheduler is already running")
 
 
-def register_mode_handlers():
+def register_mode_handlers() -> None:
     """
     Register mode-specific handlers for the generic draw service.
     """
@@ -756,7 +759,7 @@ def register_mode_handlers():
     logger.info("Mode handlers registered successfully")
 
 
-def stop_scheduler():
+def stop_scheduler() -> None:
     """
     Stop the background scheduler.
     This should be called when the application shuts down.

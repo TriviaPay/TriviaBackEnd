@@ -2,7 +2,7 @@ import logging
 
 from sqlalchemy import text
 
-from db import SessionLocal
+from core.db import SessionLocal
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
