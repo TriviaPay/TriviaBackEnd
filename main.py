@@ -67,6 +67,7 @@ from core.config import ENVIRONMENT, LOG_LEVEL
 from core.logging import configure_logging, request_id_var
 
 log_level = configure_logging(environment=ENVIRONMENT, log_level=LOG_LEVEL)
+logger = logging.getLogger(__name__)
 
 # Suppress importlib.metadata warnings (Python 3.9 compatibility)
 warnings.filterwarnings("ignore", message=".*importlib.metadata.*")
