@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import BackgroundTasks, HTTPException, status
 
+from core.cache import default_cache
 from core.config import (
     E2EE_DM_BURST_WINDOW_SECONDS,
     E2EE_DM_ENABLED,
@@ -21,6 +22,7 @@ from core.config import (
     PRIVATE_CHAT_ENABLED,
     PRIVATE_CHAT_MAX_MESSAGES_PER_BURST,
     PRIVATE_CHAT_MAX_MESSAGES_PER_MINUTE,
+    PRIVATE_CHAT_PROFILE_CACHE_SECONDS,
 )
 from core.rate_limit import default_rate_limiter
 from utils.chat_blocking import check_blocked
@@ -1194,8 +1196,22 @@ def _batch_get_user_profile_data(users, db):
     if not users:
         return {}
 
-    user_ids = [u.account_id for u in users]
     profile_cache = {}
+    missing_users = []
+
+    for user in users:
+        cache_key = f"private_chat_profile:{user.account_id}"
+        cached = default_cache.get(cache_key)
+        if cached is not None:
+            profile_cache[user.account_id] = cached
+        else:
+            missing_users.append(user)
+
+    if not missing_users:
+        return profile_cache
+
+    users = missing_users
+    user_ids = [u.account_id for u in users]
 
     avatar_ids = {u.selected_avatar_id for u in users if u.selected_avatar_id}
     avatars = {}
@@ -1380,7 +1396,7 @@ def _batch_get_user_profile_data(users, db):
             {"level": user.level if user.level else 1, "level_progress": "0/100"},
         )
 
-        profile_cache[user.account_id] = {
+        profile = {
             "profile_pic_url": user.profile_pic_url,
             "avatar_url": avatar_url,
             "frame_url": frame_url,
@@ -1389,6 +1405,12 @@ def _batch_get_user_profile_data(users, db):
             "level": level_progress["level"],
             "level_progress": level_progress["level_progress"],
         }
+        profile_cache[user.account_id] = profile
+        default_cache.set(
+            f"private_chat_profile:{user.account_id}",
+            profile,
+            ttl_seconds=PRIVATE_CHAT_PROFILE_CACHE_SECONDS,
+        )
 
     return profile_cache
 

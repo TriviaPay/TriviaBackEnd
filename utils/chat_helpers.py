@@ -198,7 +198,9 @@ def get_user_chat_profile_data(user: User, db: Session) -> Dict:
         )
 
     # Get level and progress
-    from utils.user_level_service import get_level_progress
+from core.cache import default_cache
+from core.config import CHAT_PROFILE_CACHE_SECONDS
+from utils.user_level_service import get_level_progress
 
     level_progress = get_level_progress(user, db)
 
@@ -223,6 +225,20 @@ def get_user_chat_profile_data_bulk(
     if not users:
         return {}
 
+    profile_cache: Dict[int, Dict[str, Any]] = {}
+    missing_users = []
+    for user in users:
+        cache_key = f"chat_profile:{user.account_id}"
+        cached = default_cache.get(cache_key)
+        if cached is not None:
+            profile_cache[user.account_id] = cached
+        else:
+            missing_users.append(user)
+
+    if not missing_users:
+        return profile_cache
+
+    users = missing_users
     user_ids = [user.account_id for user in users]
 
     avatar_ids = [user.selected_avatar_id for user in users if user.selected_avatar_id]
@@ -327,7 +343,6 @@ def get_user_chat_profile_data_bulk(
 
     level_progress_map = get_level_progress_for_users(users, db)
 
-    results: Dict[int, Dict[str, Any]] = {}
     for user in users:
         avatar_url = None
         if user.selected_avatar_id:
@@ -411,7 +426,7 @@ def get_user_chat_profile_data_bulk(
             {"level": user.level if user.level else 1, "level_progress": "0/100"},
         )
 
-        results[user.account_id] = {
+        profile = {
             "profile_pic_url": user.profile_pic_url,
             "avatar_url": avatar_url,
             "frame_url": frame_url,
@@ -420,5 +435,11 @@ def get_user_chat_profile_data_bulk(
             "level": level_info["level"],
             "level_progress": level_info["level_progress"],
         }
+        profile_cache[user.account_id] = profile
+        default_cache.set(
+            f"chat_profile:{user.account_id}",
+            profile,
+            ttl_seconds=CHAT_PROFILE_CACHE_SECONDS,
+        )
 
-    return results
+    return profile_cache

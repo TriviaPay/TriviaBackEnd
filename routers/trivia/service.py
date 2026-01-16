@@ -1029,6 +1029,8 @@ def free_mode_leaderboard(db, *, user, draw_date: Optional[str]):
 
     from fastapi import HTTPException, status
 
+    from core.cache import default_cache
+    from core.config import FREE_MODE_LEADERBOARD_CACHE_SECONDS
     from utils.chat_helpers import get_user_chat_profile_data_bulk
     from utils.trivia_mode_service import get_active_draw_date, get_today_in_app_timezone
 
@@ -1045,7 +1047,14 @@ def free_mode_leaderboard(db, *, user, draw_date: Optional[str]):
         today = get_today_in_app_timezone()
         target_date = active_date if active_date == today else active_date
 
-    entries = trivia_repository.list_free_mode_leaderboard_entries(db, draw_date=target_date)
+    cache_key = f"free_mode_leaderboard:{target_date.isoformat()}"
+    cached = default_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    entries = trivia_repository.list_free_mode_leaderboard_entries(
+        db, draw_date=target_date
+    )
 
     user_ids = [entry.account_id for entry in entries]
     users = {}
@@ -1078,7 +1087,13 @@ def free_mode_leaderboard(db, *, user, draw_date: Optional[str]):
                 "level_progress": profile_data.get("level_progress", "0/100"),
             }
         )
-    return {"draw_date": target_date.isoformat(), "leaderboard": result}
+    response = {"draw_date": target_date.isoformat(), "leaderboard": result}
+    default_cache.set(
+        cache_key,
+        response,
+        ttl_seconds=FREE_MODE_LEADERBOARD_CACHE_SECONDS,
+    )
+    return response
 
 
 def free_mode_double_gems(db, *, user, draw_date: Optional[str]):

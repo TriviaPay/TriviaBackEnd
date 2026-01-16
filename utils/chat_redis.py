@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
@@ -16,6 +17,9 @@ DEFAULT_TYPING_DEDUP_MS = 1500
 
 _redis_client: Optional[redis.Redis] = None
 _redis_lock = asyncio.Lock()
+_redis_unavailable = False
+_redis_last_retry = 0.0
+_redis_retry_interval = 60  # seconds
 
 
 async def _check_connection_health(client: redis.Redis) -> bool:
@@ -39,6 +43,7 @@ async def _check_connection_health(client: redis.Redis) -> bool:
 
 async def _create_redis_client() -> Optional[redis.Redis]:
     """Create a new Redis client with connection pool settings."""
+    global _redis_unavailable, _redis_last_retry
     max_attempts = 3
     for attempt in range(max_attempts):
         try:
@@ -78,6 +83,8 @@ async def _create_redis_client() -> Optional[redis.Redis]:
                 exc_info=True,
                 error=str(exc),
             )
+            _redis_unavailable = True
+            _redis_last_retry = time.time()
             return None
 
     log_error(
@@ -85,12 +92,21 @@ async def _create_redis_client() -> Optional[redis.Redis]:
         "Failed to initialize chat Redis client after retries",
         error="Max attempts reached",
     )
+    _redis_unavailable = True
+    _redis_last_retry = time.time()
     return None
 
 
 async def get_chat_redis() -> Optional[redis.Redis]:
     """Create or return cached Redis connection for chat features with health checking."""
-    global _redis_client
+    global _redis_client, _redis_unavailable, _redis_last_retry
+
+    if _redis_unavailable:
+        now = time.time()
+        if now - _redis_last_retry < _redis_retry_interval:
+            return None
+        _redis_unavailable = False
+        _redis_last_retry = 0.0
 
     # Check if we have a cached client and if it's healthy
     if _redis_client:
