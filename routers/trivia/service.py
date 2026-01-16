@@ -2,36 +2,52 @@
 
 from datetime import datetime, timedelta
 from typing import Optional
+import json
 
-from core.config import DRAW_PRIZE_POOL_CACHE_SECONDS
 from utils.draw_calculations import get_next_draw_time
 from utils.trivia_mode_service import get_today_in_app_timezone
 
 from . import repository as trivia_repository
 
-_PRIZE_POOL_CACHE = {"date": None, "value": None, "expires_at": None}
-_PRIZE_POOL_TTL_SECONDS = DRAW_PRIZE_POOL_CACHE_SECONDS
-
-
 def get_next_draw_with_prize_pool(db):
     next_draw_time = get_next_draw_time()
 
-    today = get_today_in_app_timezone()
-    now = datetime.utcnow()
-    cached_date = _PRIZE_POOL_CACHE.get("date")
-    cached_expires = _PRIZE_POOL_CACHE.get("expires_at")
+    mode_pools = _get_mode_prize_pools(db)
+    return {
+        "next_draw_time": next_draw_time.isoformat(),
+        "mode_pools": mode_pools,
+    }
 
-    if cached_date == today and cached_expires and cached_expires > now:
-        prize_pool = _PRIZE_POOL_CACHE.get("value")
-    else:
-        prize_pool = trivia_repository.calculate_prize_pool_for_date(db, today)
-        _PRIZE_POOL_CACHE["date"] = today
-        _PRIZE_POOL_CACHE["value"] = prize_pool
-        _PRIZE_POOL_CACHE["expires_at"] = now + timedelta(
-            seconds=_PRIZE_POOL_TTL_SECONDS
-        )
 
-    return {"next_draw_time": next_draw_time.isoformat(), "prize_pool": prize_pool}
+def _get_mode_prize_pools(db):
+    """
+    Best-effort mode-wise pools for display/telemetry.
+
+    - Bronze/Silver use the subscription-derived pool from `rewards_logic.calculate_mode_prize_pool`.
+    """
+    from rewards_logic import calculate_mode_prize_pool
+
+    bronze_calc = calculate_mode_prize_pool(db, get_today_in_app_timezone(), "bronze")
+    silver_calc = calculate_mode_prize_pool(db, get_today_in_app_timezone(), "silver")
+
+    return {
+        "bronze": {
+            "reward_type": "money",
+            "total_pool": bronze_calc.get("daily_pool") or 0.0,
+            "source": "mode_subscription_pool",
+            "subscriber_count": bronze_calc.get("subscriber_count", 0),
+            "subscription_amount": bronze_calc.get("subscription_amount"),
+            "prize_pool_share": bronze_calc.get("prize_pool_share"),
+        },
+        "silver": {
+            "reward_type": "money",
+            "total_pool": silver_calc.get("daily_pool") or 0.0,
+            "source": "mode_subscription_pool",
+            "subscriber_count": silver_calc.get("subscriber_count", 0),
+            "subscription_amount": silver_calc.get("subscription_amount"),
+            "prize_pool_share": silver_calc.get("prize_pool_share"),
+        },
+    }
 
 
 def round_down(value: float, decimals: int = 2) -> float:
@@ -1186,7 +1202,6 @@ def _ensure_mode_config(db, *, mode_id: str, subscription_amount: float, mode_na
             "distribution_method": "harmonic_sum",
             "requires_subscription": True,
             "subscription_amount": subscription_amount,
-            "profit_share_percentage": 0.5,
         }
         mode_config = TriviaModeConfig(
             mode_id=mode_id,

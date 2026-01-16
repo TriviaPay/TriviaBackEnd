@@ -179,6 +179,66 @@ def calculate_prize_pool(
     return round(daily_prize_pool, 2)
 
 
+def calculate_mode_prize_pool(db: Session, draw_date: date, mode_id: str) -> Dict[str, Any]:
+    """
+    Calculate a mode-specific prize pool for subscription-gated modes (e.g. bronze/silver).
+
+    This is separate from the legacy "global" prize pool and is based on:
+    - active subscriber count for the mode (matched by required subscription amount)
+    - daily_pool = (subscriber_count * subscription_amount * prize_pool_share) / days_in_month
+    """
+    from models import SubscriptionPlan, TriviaModeConfig, UserSubscription
+
+    try:
+        mode_config = (
+            db.query(TriviaModeConfig)
+            .filter(TriviaModeConfig.mode_id == mode_id)
+            .first()
+        )
+        if not mode_config or not mode_config.reward_distribution:
+            return {"mode_id": mode_id, "daily_pool": 0.0, "subscriber_count": 0}
+
+        reward_cfg = json.loads(mode_config.reward_distribution)
+        requires_subscription = bool(reward_cfg.get("requires_subscription", False))
+        if not requires_subscription:
+            return {"mode_id": mode_id, "daily_pool": 0.0, "subscriber_count": 0}
+
+        subscription_amount = float(reward_cfg.get("subscription_amount") or mode_config.amount or 0.0)
+        prize_pool_share = float(getattr(mode_config, "prize_pool_share", 0.005) or 0.005)
+        required_amount_minor = int(subscription_amount * 100)
+
+        subscriber_count = (
+            db.query(func.count(UserSubscription.id))
+            .join(SubscriptionPlan, SubscriptionPlan.id == UserSubscription.plan_id)
+            .filter(
+                UserSubscription.status == "active",
+                UserSubscription.current_period_end > datetime.utcnow(),
+                or_(
+                    SubscriptionPlan.unit_amount_minor == required_amount_minor,
+                    SubscriptionPlan.price_usd == subscription_amount,
+                ),
+            )
+            .scalar()
+            or 0
+        )
+
+        days_in_month = calendar.monthrange(draw_date.year, draw_date.month)[1]
+        monthly_pool = subscriber_count * subscription_amount
+        monthly_prize_pool = monthly_pool * prize_pool_share
+        daily_pool = monthly_prize_pool / days_in_month if days_in_month else 0.0
+
+        return {
+            "mode_id": mode_id,
+            "daily_pool": round(float(daily_pool), 2),
+            "subscriber_count": int(subscriber_count),
+            "subscription_amount": subscription_amount,
+            "prize_pool_share": prize_pool_share,
+        }
+    except Exception as exc:
+        logger.error("Failed calculating mode prize pool for %s: %s", mode_id, exc, exc_info=True)
+        return {"mode_id": mode_id, "daily_pool": 0.0, "subscriber_count": 0}
+
+
 # Legacy get_eligible_participants removed - TriviaUserDaily and TriviaQuestionsEntries tables deleted
 # Use mode-specific eligibility functions instead (e.g., get_eligible_participants_free_mode)
 

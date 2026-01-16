@@ -23,7 +23,6 @@ def _create_mode_config(db: Session, mode_id: str) -> Optional[TriviaModeConfig]
             "distribution_method": "harmonic_sum",
             "requires_subscription": True,
             "subscription_amount": 5.0,
-            "profit_share_percentage": 0.5,
         }
         mode_config = TriviaModeConfig(
             mode_id="bronze",
@@ -45,7 +44,6 @@ def _create_mode_config(db: Session, mode_id: str) -> Optional[TriviaModeConfig]
             "distribution_method": "harmonic_sum",
             "requires_subscription": True,
             "subscription_amount": 10.0,
-            "profit_share_percentage": 0.5,
         }
         mode_config = TriviaModeConfig(
             mode_id="silver",
