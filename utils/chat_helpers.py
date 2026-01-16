@@ -10,6 +10,8 @@ from typing import Any, Dict, List
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from core.cache import default_cache
+from core.config import CHAT_PROFILE_CACHE_SECONDS
 from models import (
     Avatar,
     Frame,
@@ -198,9 +200,7 @@ def get_user_chat_profile_data(user: User, db: Session) -> Dict:
         )
 
     # Get level and progress
-from core.cache import default_cache
-from core.config import CHAT_PROFILE_CACHE_SECONDS
-from utils.user_level_service import get_level_progress
+    from utils.user_level_service import get_level_progress
 
     level_progress = get_level_progress(user, db)
 
