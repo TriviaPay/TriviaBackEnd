@@ -18,6 +18,7 @@ from routers.auth import router as auth_router
 from routers.app_versions import router as app_versions_router
 from routers.messaging import router as messaging_router
 from routers.notifications import router as notifications_router
+from routers.support import router as support_router
 from routers.store import router as store_router
 from routers.trivia import router as trivia_router
 
@@ -373,6 +374,7 @@ app.include_router(trivia_router)  # Trivia/Draws/Rewards domain
 app.include_router(store_router)  # Store/Cosmetics domain
 app.include_router(messaging_router)  # Messaging/Realtime domain
 app.include_router(notifications_router)  # Notifications domain
+app.include_router(support_router)  # Support domain
 # entries.router removed - legacy /entries endpoint deleted
 
 # E2EE DM routers - REMOVED (tables and models deleted)

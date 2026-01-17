@@ -1008,6 +1008,21 @@ class ChatMutePreferences(Base):
 
 
 # =================================
+#  FAQs Table
+# =================================
+class FAQ(Base):
+    __tablename__ = "faqs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
+# =================================
 #  Trivia Mode Configuration Table
 # =================================
 class TriviaModeConfig(Base):
