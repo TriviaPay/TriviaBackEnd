@@ -22,12 +22,12 @@ from .service import (
 router = APIRouter()
 
 
-@router.get("/faqs", response_model=FAQListResponse)
+@router.get("/faqs", response_model=FAQListResponse, tags=["Support"])
 def list_faqs(db: Session = Depends(get_db)):
     return service_list_faqs(db)
 
 
-@router.post("/admin/faqs", response_model=FAQResponse)
+@router.post("/admin/faqs", response_model=FAQResponse, tags=["Admin"])
 def create_faq(
     payload: FAQCreateRequest,
     db: Session = Depends(get_db),
@@ -37,7 +37,7 @@ def create_faq(
     return service_create_faq(db, question=payload.question, answer=payload.answer)
 
 
-@router.put("/admin/faqs/{faq_id}", response_model=FAQResponse)
+@router.put("/admin/faqs/{faq_id}", response_model=FAQResponse, tags=["Admin"])
 def update_faq(
     faq_id: int,
     payload: FAQUpdateRequest,
@@ -50,7 +50,7 @@ def update_faq(
     )
 
 
-@router.delete("/admin/faqs/{faq_id}", response_model=FAQDeleteResponse)
+@router.delete("/admin/faqs/{faq_id}", response_model=FAQDeleteResponse, tags=["Admin"])
 def delete_faq(
     faq_id: int,
     db: Session = Depends(get_db),
