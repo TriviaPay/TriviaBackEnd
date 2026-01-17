@@ -37,6 +37,10 @@ def _get_mode_prize_pools(db):
             "source": "mode_subscription_pool",
             "subscriber_count": bronze_calc.get("subscriber_count", 0),
             "subscription_amount": bronze_calc.get("subscription_amount"),
+            "fee_per_user": bronze_calc.get("fee_per_user"),
+            "net_per_user": bronze_calc.get("net_per_user"),
+            "expenditure_offset": bronze_calc.get("expenditure_offset"),
+            "share_applied": bronze_calc.get("share_applied"),
             "prize_pool_share": bronze_calc.get("prize_pool_share"),
         },
         "silver": {
@@ -45,6 +49,10 @@ def _get_mode_prize_pools(db):
             "source": "mode_subscription_pool",
             "subscriber_count": silver_calc.get("subscriber_count", 0),
             "subscription_amount": silver_calc.get("subscription_amount"),
+            "fee_per_user": silver_calc.get("fee_per_user"),
+            "net_per_user": silver_calc.get("net_per_user"),
+            "expenditure_offset": silver_calc.get("expenditure_offset"),
+            "share_applied": silver_calc.get("share_applied"),
             "prize_pool_share": silver_calc.get("prize_pool_share"),
         },
     }
@@ -1199,7 +1207,16 @@ def free_mode_status(db, *, user):
 # --- Bronze/Silver modes ---
 
 
-def _ensure_mode_config(db, *, mode_id: str, subscription_amount: float, mode_name: str):
+def _ensure_mode_config(
+    db,
+    *,
+    mode_id: str,
+    subscription_amount: float,
+    mode_name: str,
+    fee_per_user: float = 0.0,
+    expenditure_offset: int = 0,
+    prize_pool_share: Optional[float] = None,
+):
     import json
 
     from fastapi import HTTPException
@@ -1218,16 +1235,22 @@ def _ensure_mode_config(db, *, mode_id: str, subscription_amount: float, mode_na
             "requires_subscription": True,
             "subscription_amount": subscription_amount,
         }
-        mode_config = TriviaModeConfig(
-            mode_id=mode_id,
-            mode_name=mode_name,
-            questions_count=1,
-            reward_distribution=json.dumps(reward_distribution),
-            amount=subscription_amount,
-            leaderboard_types=json.dumps(["daily"]),
-            ad_config=json.dumps({}),
-            survey_config=json.dumps({}),
-        )
+        config_kwargs = {
+            "mode_id": mode_id,
+            "mode_name": mode_name,
+            "questions_count": 1,
+            "reward_distribution": json.dumps(reward_distribution),
+            "amount": subscription_amount,
+            "fee_per_user": fee_per_user,
+            "expenditure_offset": expenditure_offset,
+            "leaderboard_types": json.dumps(["daily"]),
+            "ad_config": json.dumps({}),
+            "survey_config": json.dumps({}),
+        }
+        if prize_pool_share is not None:
+            config_kwargs["prize_pool_share"] = prize_pool_share
+
+        mode_config = TriviaModeConfig(**config_kwargs)
         db.add(mode_config)
         db.commit()
         db.refresh(mode_config)
@@ -1246,6 +1269,9 @@ def ensure_bronze_mode_config(db):
         mode_id="bronze",
         subscription_amount=5.0,
         mode_name="Bronze Mode - First-Come Reward",
+        fee_per_user=1.0,
+        expenditure_offset=200,
+        prize_pool_share=0.82,
     )
 
 

@@ -30,7 +30,7 @@ def register_mode_handler(
         mode_id: Mode identifier (e.g., 'free_mode', 'five_dollar_mode')
         eligibility_func: Function to get eligible participants (db, draw_date) -> List[Dict]
         ranking_func: Function to rank participants (participants) -> List[Dict]
-        reward_calc_func: Optional function to calculate total pool (db, mode_config, participant_count) -> float
+        reward_calc_func: Optional function to calculate total pool (db, mode_config, participant_count, draw_date) -> float
     """
     _mode_handlers[mode_id] = {
         "eligibility": eligibility_func,
@@ -118,7 +118,7 @@ def execute_mode_draw(
         total_pool = None
         if handler.get("reward_calc"):
             total_pool = handler["reward_calc"](
-                db, mode_config, len(ranked_participants)
+                db, mode_config, len(ranked_participants), draw_date=draw_date
             )
 
         # Calculate reward distribution
@@ -164,6 +164,7 @@ def execute_mode_draw(
             "total_winners": len(winners),
             "winners": winners,
             "reward_info": reward_info,
+            "total_pool": reward_info.get("total_pool", total_pool),
         }
 
     except Exception as e:

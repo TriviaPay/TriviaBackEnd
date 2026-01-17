@@ -116,7 +116,10 @@ def rank_participants_by_submission_time(
 
 
 def calculate_total_pool_five_dollar_mode(
-    db: Session, mode_config: TriviaModeConfig, participant_count: int
+    db: Session,
+    mode_config: TriviaModeConfig,
+    participant_count: int,
+    draw_date: date = None,
 ) -> float:
     """
     Calculate total prize pool for $5 mode.

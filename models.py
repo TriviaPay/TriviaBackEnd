@@ -1033,6 +1033,10 @@ class TriviaModeConfig(Base):
     questions_count = Column(Integer, nullable=False)
     reward_distribution = Column(Text, nullable=False)  # JSON string
     amount = Column(Float, default=0.0, nullable=False)
+    # Flat fee deducted from each subscription before prize pool share applies.
+    fee_per_user = Column(Float, default=0.0, nullable=False)
+    # Minimum subscriber count before applying prize_pool_share.
+    expenditure_offset = Column(Integer, default=0, nullable=False)
     # Fraction of gross subscription revenue allocated to the mode's prize pool (e.g. 0.005 = 0.5%).
     prize_pool_share = Column(Float, default=0.005, nullable=False)
     leaderboard_types = Column(Text, nullable=False)  # JSON array string

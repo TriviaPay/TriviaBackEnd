@@ -203,8 +203,13 @@ def calculate_mode_prize_pool(db: Session, draw_date: date, mode_id: str) -> Dic
         if not requires_subscription:
             return {"mode_id": mode_id, "daily_pool": 0.0, "subscriber_count": 0}
 
-        subscription_amount = float(reward_cfg.get("subscription_amount") or mode_config.amount or 0.0)
+        subscription_amount = float(
+            reward_cfg.get("subscription_amount") or mode_config.amount or 0.0
+        )
+        fee_per_user = float(getattr(mode_config, "fee_per_user", 0.0) or 0.0)
+        net_per_user = max(subscription_amount - fee_per_user, 0.0)
         prize_pool_share = float(getattr(mode_config, "prize_pool_share", 0.005) or 0.005)
+        expenditure_offset = int(getattr(mode_config, "expenditure_offset", 0) or 0)
         required_amount_minor = int(subscription_amount * 100)
 
         subscriber_count = (
@@ -223,8 +228,11 @@ def calculate_mode_prize_pool(db: Session, draw_date: date, mode_id: str) -> Dic
         )
 
         days_in_month = calendar.monthrange(draw_date.year, draw_date.month)[1]
-        monthly_pool = subscriber_count * subscription_amount
-        monthly_prize_pool = monthly_pool * prize_pool_share
+        monthly_pool = subscriber_count * net_per_user
+        apply_share = subscriber_count >= expenditure_offset if expenditure_offset else True
+        monthly_prize_pool = (
+            monthly_pool * prize_pool_share if apply_share else monthly_pool
+        )
         daily_pool = monthly_prize_pool / days_in_month if days_in_month else 0.0
 
         return {
@@ -232,6 +240,10 @@ def calculate_mode_prize_pool(db: Session, draw_date: date, mode_id: str) -> Dic
             "daily_pool": round(float(daily_pool), 2),
             "subscriber_count": int(subscriber_count),
             "subscription_amount": subscription_amount,
+            "fee_per_user": fee_per_user,
+            "net_per_user": net_per_user,
+            "expenditure_offset": expenditure_offset,
+            "share_applied": apply_share,
             "prize_pool_share": prize_pool_share,
         }
     except Exception as exc:

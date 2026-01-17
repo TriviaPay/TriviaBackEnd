@@ -4,6 +4,7 @@ All participants who submit (correct or wrong) are eligible and ranked by submis
 Rewards distributed using harmonic sum.
 """
 
+import calendar
 import json
 import logging
 from datetime import date, datetime
@@ -109,11 +110,16 @@ def rank_participants_by_submission_time(
 
 
 def calculate_total_pool_bronze_mode(
-    db: Session, draw_date: date, mode_config: TriviaModeConfig
+    db: Session,
+    mode_config: TriviaModeConfig,
+    participant_count: int,
+    draw_date: date = None,
 ) -> float:
     """
     Calculate total prize pool for bronze mode.
-    Pool = number of active subscribers * $5 * profit_share_percentage
+    Pool = active subscribers * (subscription_amount - fee_per_user)
+    Apply prize_pool_share only if subscriber_count >= expenditure_offset,
+    then divide by days in month for daily pool.
 
     Args:
         db: Database session
@@ -129,11 +135,19 @@ def calculate_total_pool_bronze_mode(
             if isinstance(mode_config.reward_distribution, str)
             else mode_config.reward_distribution
         )
-        profit_share = reward_dist.get("profit_share_percentage", 0.5)  # Default 50%
+        subscription_amount = float(
+            reward_dist.get("subscription_amount") or mode_config.amount or 0.0
+        )
     except Exception:
-        profit_share = 0.5
+        subscription_amount = float(mode_config.amount or 0.0)
 
-    # Count active $5 subscribers
+    fee_per_user = float(getattr(mode_config, "fee_per_user", 0.0) or 0.0)
+    net_per_user = max(subscription_amount - fee_per_user, 0.0)
+    prize_pool_share = float(getattr(mode_config, "prize_pool_share", 0.005) or 0.005)
+    expenditure_offset = int(getattr(mode_config, "expenditure_offset", 0) or 0)
+    required_amount_minor = int(subscription_amount * 100)
+
+    # Count active subscribers at the configured price point
     active_subscribers = (
         db.query(UserSubscription)
         .join(SubscriptionPlan)
@@ -141,8 +155,8 @@ def calculate_total_pool_bronze_mode(
             and_(
                 UserSubscription.status == "active",
                 or_(
-                    SubscriptionPlan.unit_amount_minor == 500,  # $5.00 in cents
-                    SubscriptionPlan.price_usd == 5.0,
+                    SubscriptionPlan.unit_amount_minor == required_amount_minor,
+                    SubscriptionPlan.price_usd == subscription_amount,
                 ),
                 UserSubscription.current_period_end > datetime.utcnow(),
             )
@@ -150,9 +164,23 @@ def calculate_total_pool_bronze_mode(
         .count()
     )
 
-    total_pool = active_subscribers * 5.0 * profit_share
+    apply_share = active_subscribers >= expenditure_offset if expenditure_offset else True
+    monthly_pool = active_subscribers * net_per_user
+    monthly_prize_pool = (
+        monthly_pool * prize_pool_share if apply_share else monthly_pool
+    )
+    if draw_date is None:
+        draw_date = date.today()
+    days_in_month = calendar.monthrange(draw_date.year, draw_date.month)[1]
+    total_pool = monthly_prize_pool / days_in_month if days_in_month else 0.0
     logger.info(
-        f"Bronze mode pool for {draw_date}: {active_subscribers} subscribers * $5 * {profit_share} = ${total_pool:.2f}"
+        "Bronze mode pool for %s: %s subscribers, net_per_user=%s, share=%s, offset=%s, daily_pool=$%.2f",
+        draw_date,
+        active_subscribers,
+        net_per_user,
+        prize_pool_share if apply_share else "n/a",
+        expenditure_offset,
+        total_pool,
     )
 
     return total_pool
