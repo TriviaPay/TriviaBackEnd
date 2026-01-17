@@ -1287,7 +1287,11 @@ def ensure_silver_mode_config(db):
 async def bronze_mode_get_question(db, *, user):
     from fastapi import HTTPException, status
     from utils.subscription_service import check_mode_access
-    from utils.trivia_mode_service import get_active_draw_date, get_date_range_for_query
+    from utils.trivia_mode_service import (
+        get_active_draw_date,
+        get_correct_answer_letter,
+        get_date_range_for_query,
+    )
 
     ensure_bronze_mode_config(db)
 
@@ -1330,18 +1334,38 @@ async def bronze_mode_get_question(db, *, user):
     if not question:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
 
+    answered_at = (
+        user_attempt.submitted_at.isoformat()
+        if user_attempt and user_attempt.submitted_at
+        else None
+    )
     return {
         "question": {
+            "question_id": question.id,
             "id": question.id,
             "question": question.question,
             "option_a": question.option_a,
             "option_b": question.option_b,
             "option_c": question.option_c,
             "option_d": question.option_d,
+            "correct_answer": get_correct_answer_letter(question),
+            "hint": question.hint,
+            "fill_in_answer": (
+                user_attempt.user_answer
+                if user_attempt and user_attempt.user_answer
+                else None
+            ),
+            "explanation": question.explanation,
+            "category": question.category,
+            "difficulty_level": question.difficulty_level,
+            "picture_url": question.picture_url,
+            "status": user_attempt.status if user_attempt else "locked",
+            "is_correct": user_attempt.is_correct if user_attempt else None,
+            "answered_at": answered_at,
             "date": target_date.isoformat(),
         },
         "has_submitted": bool(user_attempt and user_attempt.submitted_at),
-        "submitted_at": user_attempt.submitted_at.isoformat() if user_attempt and user_attempt.submitted_at else None,
+        "submitted_at": answered_at,
         "has_access": access_check["has_access"],
         "subscription_status": access_check.get("subscription_status"),
     }
@@ -1352,7 +1376,11 @@ async def silver_mode_get_question(db, *, user):
 
     from fastapi import HTTPException, status
     from utils.subscription_service import check_mode_access
-    from utils.trivia_mode_service import get_active_draw_date, get_date_range_for_query
+    from utils.trivia_mode_service import (
+        get_active_draw_date,
+        get_correct_answer_letter,
+        get_date_range_for_query,
+    )
 
     ensure_silver_mode_config(db)
 
@@ -1409,18 +1437,38 @@ async def silver_mode_get_question(db, *, user):
     if not question:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
 
+    answered_at = (
+        user_attempt.submitted_at.isoformat()
+        if user_attempt and user_attempt.submitted_at
+        else None
+    )
     return {
         "question": {
+            "question_id": question.id,
             "id": question.id,
             "question": question.question,
             "option_a": question.option_a,
             "option_b": question.option_b,
             "option_c": question.option_c,
             "option_d": question.option_d,
+            "correct_answer": get_correct_answer_letter(question),
+            "hint": question.hint,
+            "fill_in_answer": (
+                user_attempt.user_answer
+                if user_attempt and user_attempt.user_answer
+                else None
+            ),
+            "explanation": question.explanation,
+            "category": question.category,
+            "difficulty_level": question.difficulty_level,
+            "picture_url": question.picture_url,
+            "status": user_attempt.status if user_attempt else "locked",
+            "is_correct": user_attempt.is_correct if user_attempt else None,
+            "answered_at": answered_at,
             "date": target_date.isoformat(),
         },
         "has_submitted": bool(user_attempt and user_attempt.submitted_at),
-        "submitted_at": user_attempt.submitted_at.isoformat() if user_attempt and user_attempt.submitted_at else None,
+        "submitted_at": answered_at,
         "has_access": access_check["has_access"],
         "subscription_status": access_check.get("subscription_status"),
     }
