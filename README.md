@@ -28,8 +28,8 @@ This application is deployed on [Vercel](https://vercel.com) using the configura
 # Build the image (only needed the first time or when dependencies change)
 docker build -t triviapay-api .
 
-# Run the container (requires a populated .env file)
-docker run --env-file .env -p 8000:8000 triviapay-api
+# Run the container (requires a populated .env.docker file)
+docker run --env-file .env.docker -p 8000:8000 triviapay-api
 ```
 
 ### Using Docker Compose
@@ -44,7 +44,14 @@ docker compose up --build
 docker compose down
 ```
 
-The compose file automatically wires `DATABASE_URL` and `REDIS_URL` to the local Postgres/Redis containers unless they are already defined in your shell. Override them in your `.env` if you need to connect to external services.
+The compose file reads secrets from `.env.docker` and always targets the bundled Postgres/Redis by default (ignoring `DATABASE_URL` and `REDIS_URL` from `.env`). To point at external services or tune runtime settings, set the `DOCKER_*` overrides before running compose:
+
+```bash
+export DOCKER_DATABASE_URL=postgresql://user:pass@host:5432/triviapay?sslmode=require
+export DOCKER_REDIS_URL=redis://host:6379/0
+export DOCKER_ENVIRONMENT=production
+export DOCKER_UVICORN_WORKERS=2
+```
 
 ## Configuration
 

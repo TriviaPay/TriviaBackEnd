@@ -1,38 +1,100 @@
+x-app-env: &app-env
+  ENVIRONMENT: ${DOCKER_ENVIRONMENT:-production}
+  APP_ENV: ${DOCKER_APP_ENV:-production}
+  PORT: ${DOCKER_PORT:-8000}
+  DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://postgres:postgres@db:5432/triviapay?sslmode=disable}
+  REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
+  LOG_LEVEL: ${DOCKER_LOG_LEVEL:-INFO}
+  USE_WORKER_QUEUE: ${DOCKER_USE_WORKER_QUEUE:-false}
+  HOME: /tmp
+
+x-api-env: &api-env
+  <<: *app-env
+  UVICORN_WORKERS: ${DOCKER_UVICORN_WORKERS:-}
+  UVICORN_KEEP_ALIVE: ${DOCKER_UVICORN_KEEP_ALIVE:-300}
+  UVICORN_BACKLOG: ${DOCKER_UVICORN_BACKLOG:-2048}
+  UVICORN_LOG_LEVEL: ${DOCKER_UVICORN_LOG_LEVEL:-info}
+
+x-worker-env: &worker-env
+  <<: *app-env
+  WORKER_QUEUE: ${DOCKER_WORKER_QUEUE:-tasks}
+  WORKER_POLL_TIMEOUT_SECONDS: ${DOCKER_WORKER_POLL_TIMEOUT_SECONDS:-5}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   api:
     build: .
     container_name: triviapay-api
     restart: unless-stopped
+    init: true
+    command: ["./start.sh"]
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - .env.docker
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/triviapay}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      PORT: 8000
+      <<: *api-env
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    stop_grace_period: 30s
+    logging: *default-logging
 
   worker:
     build: .
     container_name: triviapay-worker
     restart: unless-stopped
     profiles: ["worker"]
-    command: ["python3", "-m", "workers.worker"]
+    init: true
+    command: ["python", "-m", "workers.worker"]
     env_file:
-      - .env
+      - .env.docker
     environment:
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      WORKER_QUEUE: ${WORKER_QUEUE:-tasks}
+      <<: *worker-env
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os, redis; redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')).ping()\""]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    stop_grace_period: 30s
+    logging: *default-logging
 
   db:
     image: postgres:15
@@ -41,7 +103,7 @@ services:
     environment:
       POSTGRES_DB: triviapay
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${DOCKER_POSTGRES_PASSWORD:-postgres}
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -49,6 +111,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    stop_grace_period: 30s
+    logging: *default-logging
 
   redis:
     image: redis:7
@@ -57,6 +121,13 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    stop_grace_period: 30s
+    logging: *default-logging
 
 volumes:
   db-data:

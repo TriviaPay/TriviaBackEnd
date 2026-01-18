@@ -95,6 +95,12 @@ def get_recent_winners(db, current_user):
 
     profile_map = get_user_chat_profile_data_bulk(list(users.values()), db)
 
+    def _sanitize_subscription_badges(badges):
+        return [
+            {key: value for key, value in badge.items() if key not in ("name", "price")}
+            for badge in (badges or [])
+        ]
+
     result = []
     for winner in bronze_winners:
         user = users.get(winner.account_id)
@@ -109,14 +115,12 @@ def get_recent_winners(db, current_user):
                 "username": user.username,
                 "user_id": winner.account_id,
                 "money_awarded": round_down(float(winner.money_awarded), 2),
-                "submitted_at": (
-                    winner.submitted_at.isoformat() if winner.submitted_at else None
-                ),
                 "profile_pic": profile_data.get("profile_pic_url"),
                 "badge_image_url": badge_data.get("image_url"),
                 "avatar_url": profile_data.get("avatar_url"),
-                "frame_url": profile_data.get("frame_url"),
-                "subscription_badges": profile_data.get("subscription_badges", []),
+                "subscription_badges": _sanitize_subscription_badges(
+                    profile_data.get("subscription_badges", [])
+                ),
                 "level": profile_data.get("level", 1),
                 "level_progress": profile_data.get("level_progress", "0/100"),
                 "draw_date": draw_date.isoformat(),
@@ -136,14 +140,12 @@ def get_recent_winners(db, current_user):
                 "username": user.username,
                 "user_id": winner.account_id,
                 "money_awarded": round_down(float(winner.money_awarded), 2),
-                "submitted_at": (
-                    winner.submitted_at.isoformat() if winner.submitted_at else None
-                ),
                 "profile_pic": profile_data.get("profile_pic_url"),
                 "badge_image_url": badge_data.get("image_url"),
                 "avatar_url": profile_data.get("avatar_url"),
-                "frame_url": profile_data.get("frame_url"),
-                "subscription_badges": profile_data.get("subscription_badges", []),
+                "subscription_badges": _sanitize_subscription_badges(
+                    profile_data.get("subscription_badges", [])
+                ),
                 "level": profile_data.get("level", 1),
                 "level_progress": profile_data.get("level_progress", "0/100"),
                 "draw_date": draw_date.isoformat(),
