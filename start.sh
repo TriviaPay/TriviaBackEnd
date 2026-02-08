@@ -10,6 +10,7 @@ ENVIRONMENT="${ENVIRONMENT:-development}"
 UVICORN_KEEP_ALIVE="${UVICORN_KEEP_ALIVE:-300}"
 UVICORN_BACKLOG="${UVICORN_BACKLOG:-2048}"
 UVICORN_LOG_LEVEL="${UVICORN_LOG_LEVEL:-info}"
+APP_LOG_PATH="${APP_LOG_PATH:-}"
 
 if [ -z "${UVICORN_WORKERS:-}" ]; then
   if [ "${ENVIRONMENT}" = "development" ]; then
@@ -20,6 +21,10 @@ if [ -z "${UVICORN_WORKERS:-}" ]; then
 fi
 
 echo "Starting app on port ${PORT} with ${UVICORN_WORKERS} workers"
+
+if [ -n "${APP_LOG_PATH}" ]; then
+  mkdir -p "$(dirname "${APP_LOG_PATH}")"
+fi
 
 exec uvicorn main:app \
   --host 0.0.0.0 \

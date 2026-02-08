@@ -1646,6 +1646,58 @@ def get_all_modes_status(user: User, db: Session):
     free_mode_access = access_map.get("free_mode", {})
     bronze_mode_access = access_map.get("bronze", {})
     silver_mode_access = access_map.get("silver", {})
+    target_date = get_active_draw_date()
+
+    from routers.trivia import repository as trivia_repository
+
+    def _build_mode_progress(mode_id: str, total_questions: int):
+        if mode_id == "free_mode":
+            attempts = trivia_repository.list_free_mode_attempts(
+                db, account_id=user.account_id, target_date=target_date
+            )
+            question_orders = set(range(1, total_questions + 1))
+            answered_attempts = [
+                a
+                for a in attempts
+                if a.question_order in question_orders
+                and a.status in ["answered_correct", "answered_wrong"]
+            ]
+            questions_answered = len(answered_attempts)
+        elif mode_id == "bronze":
+            attempt = trivia_repository.get_bronze_attempt(
+                db, account_id=user.account_id, target_date=target_date
+            )
+            questions_answered = 1 if attempt and attempt.submitted_at else 0
+        elif mode_id == "silver":
+            attempt = trivia_repository.get_silver_attempt(
+                db, account_id=user.account_id, target_date=target_date
+            )
+            questions_answered = 1 if attempt and attempt.submitted_at else 0
+        else:
+            questions_answered = 0
+
+        remaining = max(total_questions - questions_answered, 0)
+        completed = questions_answered >= total_questions
+        message = (
+            "Woohoo! Challenge Complete !! Rewards reveal at 6:00 PM EST  --- stay tunned !!"
+            if completed
+            else "Complete the mode before 6PM EST to earn rewards !"
+        )
+        return {
+            "completed": completed,
+            "remaining_questions": remaining,
+            "message": message,
+        }
+
+    free_mode_config = get_mode_config(db, "free_mode")
+    bronze_mode_config = get_mode_config(db, "bronze")
+    silver_mode_config = get_mode_config(db, "silver")
+    free_total = free_mode_config.questions_count if free_mode_config else 3
+    bronze_total = bronze_mode_config.questions_count if bronze_mode_config else 1
+    silver_total = silver_mode_config.questions_count if silver_mode_config else 1
+    free_progress = _build_mode_progress("free_mode", free_total)
+    bronze_progress = _build_mode_progress("bronze", bronze_total)
+    silver_progress = _build_mode_progress("silver", silver_total)
 
     return {
         "free_mode": {
@@ -1656,6 +1708,9 @@ def get_all_modes_status(user: User, db: Session):
             "subscription_details": free_mode_access.get("subscription_details"),
             "mode_name": "Free Mode",
             "price": 0.0,
+            "questions_remaining": free_progress["remaining_questions"],
+            "task_completed": free_progress["completed"],
+            "message": free_progress["message"],
         },
         "bronze_mode": {
             "has_access": bronze_mode_access["has_access"],
@@ -1665,6 +1720,9 @@ def get_all_modes_status(user: User, db: Session):
             "subscription_details": bronze_mode_access.get("subscription_details"),
             "mode_name": "Bronze Mode",
             "price": 5.0,
+            "questions_remaining": bronze_progress["remaining_questions"],
+            "task_completed": bronze_progress["completed"],
+            "message": bronze_progress["message"],
         },
         "silver_mode": {
             "has_access": silver_mode_access["has_access"],
@@ -1674,6 +1732,9 @@ def get_all_modes_status(user: User, db: Session):
             "subscription_details": silver_mode_access.get("subscription_details"),
             "mode_name": "Silver Mode",
             "price": 10.0,
+            "questions_remaining": silver_progress["remaining_questions"],
+            "task_completed": silver_progress["completed"],
+            "message": silver_progress["message"],
         },
     }
 

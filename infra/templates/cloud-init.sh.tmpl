@@ -1,0 +1,97 @@
+#!/bin/bash
+set -euo pipefail
+
+export PATH=/usr/local/bin:/usr/bin:/bin
+
+BOOTSTRAP_MARKER="/var/lib/triviapay/bootstrap.done"
+mkdir -p /var/lib/triviapay
+
+needs_packages=0
+for bin in docker python3 logrotate; do
+  if ! command -v "${bin}" >/dev/null 2>&1; then
+    needs_packages=1
+  fi
+done
+
+if [ "${needs_packages}" -eq 1 ]; then
+  if command -v dnf >/dev/null 2>&1; then
+    dnf -y update
+    dnf -y install oraclelinux-developer-release-el8
+    dnf -y install docker-engine python3 python3-pip jq logrotate
+  else
+    yum -y update
+    yum -y install oraclelinux-developer-release-el8
+    yum -y install docker-engine python3 python3-pip jq logrotate
+  fi
+fi
+
+systemctl enable --now docker
+
+if ! command -v oci >/dev/null 2>&1; then
+  python3 -m pip install --upgrade pip
+  python3 -m pip install oci-cli
+fi
+
+app_env=$(oci --auth instance_principal secrets secret-bundle get --secret-id "${app_env_secret_id}" --query "data.\"secret-bundle-content\".content" --raw-output | base64 -d)
+
+install -m 600 /dev/null /etc/triviapay.env
+printf '%s\n' "${app_env}" > /etc/triviapay.env
+if ! grep -q '^APP_LOG_PATH=' /etc/triviapay.env; then
+  echo "APP_LOG_PATH=/var/log/triviapay/app.log" >> /etc/triviapay.env
+fi
+if ! grep -q '^PORT=' /etc/triviapay.env; then
+  echo "PORT=${backend_port}" >> /etc/triviapay.env
+fi
+
+app_log_path=$(grep -E '^APP_LOG_PATH=' /etc/triviapay.env | tail -n 1 | cut -d= -f2-)
+app_log_path="${app_log_path:-/var/log/triviapay/app.log}"
+app_log_dir=$(dirname "${app_log_path}")
+
+mkdir -p "${app_log_dir}"
+chown 10001:10001 "${app_log_dir}"
+chmod 750 "${app_log_dir}"
+touch "${app_log_path}"
+chown 10001:10001 "${app_log_path}"
+chmod 640 "${app_log_path}"
+
+cat >/etc/logrotate.d/triviapay <<LOGROTATE_EOF
+${app_log_path} {
+  daily
+  rotate 14
+  compress
+  delaycompress
+  missingok
+  notifempty
+  create 0640 10001 10001
+}
+LOGROTATE_EOF
+
+ocir_username=$(oci --auth instance_principal secrets secret-bundle get --secret-id "${ocir_username_secret_id}" --query "data.\"secret-bundle-content\".content" --raw-output | base64 -d)
+ocir_token=$(oci --auth instance_principal secrets secret-bundle get --secret-id "${ocir_auth_token_secret_id}" --query "data.\"secret-bundle-content\".content" --raw-output | base64 -d)
+
+docker login "${ocir_registry}" -u "${ocir_username}" -p "${ocir_token}"
+docker pull "${image}"
+
+cat >/etc/systemd/system/triviapay.service <<SERVICE_EOF
+[Unit]
+Description=TriviaPay API
+After=docker.service
+Requires=docker.service
+
+[Service]
+Restart=always
+ExecStartPre=-/usr/bin/docker rm -f triviapay-api
+ExecStart=/usr/bin/docker run --name triviapay-api --env-file /etc/triviapay.env -p ${backend_port}:${backend_port} -v ${app_log_dir}:${app_log_dir} --log-opt max-size=50m --log-opt max-file=3 ${image}
+ExecStop=/usr/bin/docker stop triviapay-api
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+systemctl daemon-reload
+systemctl enable --now triviapay.service
+systemctl restart triviapay.service
+
+if [ ! -f "${BOOTSTRAP_MARKER}" ]; then
+  date -u +"%Y-%m-%dT%H:%M:%SZ" > "${BOOTSTRAP_MARKER}"
+fi

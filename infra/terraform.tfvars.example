@@ -1,0 +1,24 @@
+tenancy_ocid       = "ocid1.tenancy.oc1..example"
+compartment_ocid   = "ocid1.compartment.oc1..example"
+compartment_name   = "your-compartment-name"
+region             = "us-ashburn-1"
+availability_domain = ""  # Optional override
+
+ocir_namespace     = "yourtenancy"
+ocir_registry      = "iad.ocir.io"
+ocir_repo_name     = "triviapay-api"
+image_tag          = "latest"
+
+instance_image_id  = "ocid1.image.oc1..example"
+instance_shape     = "VM.Standard.A1.Flex"
+instance_ocpus     = 2
+instance_memory_gbs = 12
+
+instance_pool_size = 1
+instance_pool_max  = 4
+
+lb_ingress_cidrs   = ["0.0.0.0/0"]
+
+# Optional: override log paths for UMA
+# log_source_paths = ["/var/log/triviapay/app.log"]
+# log_source_paths = ["/var/lib/docker/containers/*/*-json.log"]

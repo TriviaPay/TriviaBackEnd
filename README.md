@@ -44,6 +44,12 @@ docker compose up --build
 docker compose down
 ```
 
+Sanity check a non-default port:
+```bash
+DOCKER_HOST_PORT=8080 DOCKER_CONTAINER_PORT=8080 docker compose up --build
+docker compose exec api python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health' % os.getenv('PORT','8000'), timeout=2).read()"
+```
+
 The compose file reads secrets from `.env.docker` and always targets the bundled Postgres/Redis by default (ignoring `DATABASE_URL` and `REDIS_URL` from `.env`). To point at external services or tune runtime settings, set the `DOCKER_*` overrides before running compose:
 
 ```bash
@@ -51,7 +57,11 @@ export DOCKER_DATABASE_URL=postgresql://user:pass@host:5432/triviapay?sslmode=re
 export DOCKER_REDIS_URL=redis://host:6379/0
 export DOCKER_ENVIRONMENT=production
 export DOCKER_UVICORN_WORKERS=2
+export DOCKER_HOST_PORT=8080
+export DOCKER_CONTAINER_PORT=8000
 ```
+
+`DOCKER_CONTAINER_PORT` sets the port the app binds to (via `PORT`), and `DOCKER_HOST_PORT` controls the host mapping.
 
 ## Configuration
 
@@ -59,7 +69,11 @@ The application uses environment variables for configuration, which can be set i
 
 ## Automatic Deployment
 
-The application is automatically deployed to Vercel when changes are pushed to the main branch using GitHub Actions.
+The Vercel workflow is set to manual dispatch to avoid double-deploys. For OCI instance pool deployment, see `OCI_DEPLOYMENT.md`.
+
+## OCI Deployment (Instance Pool + Autoscaling)
+
+See `OCI_DEPLOYMENT.md` for Terraform and GitHub Actions setup to run on OCI ARM instance pools with autoscaling and an OCI load balancer.
 
 ## Authentication (Descope)
 

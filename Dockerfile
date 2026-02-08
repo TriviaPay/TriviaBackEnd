@@ -10,6 +10,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+ARG APP_UID=10001
+ARG APP_GID=10001
+
 # Install build dependencies for packages like bcrypt
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libffi-dev libssl-dev \
@@ -25,8 +28,8 @@ RUN pip install --upgrade pip \
 COPY . .
 
 # Create a non-root user for runtime and ensure the start script is executable
-RUN groupadd --system app \
-    && useradd --system --gid app --home-dir /home/app --create-home --shell /usr/sbin/nologin app \
+RUN groupadd --system --gid "${APP_GID}" app \
+    && useradd --system --uid "${APP_UID}" --gid "${APP_GID}" --home-dir /home/app --create-home --shell /usr/sbin/nologin app \
     && chmod +x /app/start.sh
 
 USER app

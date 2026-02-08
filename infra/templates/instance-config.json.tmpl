@@ -1,0 +1,35 @@
+{
+  "instanceType": "compute",
+  "launchDetails": {
+    "availabilityDomain": "${availability_domain}",
+    "compartmentId": "${compartment_ocid}",
+    "displayName": "triviapay-api",
+    "shape": "${instance_shape}",
+    "shapeConfig": {
+      "ocpus": ${instance_ocpus},
+      "memoryInGBs": ${instance_memory_gbs}
+    },
+    "createVnicDetails": {
+      "subnetId": "${subnet_id}",
+      "assignPublicIp": false,
+      "nsgIds": ["${nsg_id}"]
+    },
+    "agentConfig": {
+      "isManagementDisabled": false,
+      "isMonitoringDisabled": false,
+      "pluginsConfig": [
+        {
+          "name": "CustomLogsMonitoring",
+          "desiredState": "ENABLED"
+        }
+      ]
+    },
+    "metadata": {
+      "user_data": "${user_data_b64}"
+    },
+    "sourceDetails": {
+      "sourceType": "image",
+      "imageId": "${image_id}"
+    }
+  }
+}

@@ -1,0 +1,385 @@
+name: OCI Deploy
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment (used for concurrency and protection rules)"
+        type: choice
+        options:
+          - prod
+          - staging
+        default: prod
+
+concurrency:
+  group: oci-${{ github.event.inputs.environment || 'prod' }}-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  OCI_WIF_AUDIENCE: ${{ vars.OCI_WIF_AUDIENCE }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'prod' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard: canonical repo + main branch
+        env:
+          OCI_CANONICAL_REPO: ${{ vars.OCI_CANONICAL_REPO }}
+          DEPLOY_ENV: ${{ github.event.inputs.environment || 'prod' }}
+        run: |
+          if [ -z "${OCI_CANONICAL_REPO}" ]; then
+            echo "Set vars.OCI_CANONICAL_REPO (e.g., org/repo) to enable deploys."
+            exit 1
+          fi
+          canonical_repo=$(echo "${OCI_CANONICAL_REPO}" | tr '[:upper:]' '[:lower:]' | xargs)
+          current_repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]' | xargs)
+          if [ "${current_repo}" != "${canonical_repo}" ]; then
+            echo "Deploy blocked: wrong repository (${GITHUB_REPOSITORY})."
+            exit 1
+          fi
+          case "${DEPLOY_ENV}" in
+            prod)
+              if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+                echo "Deploy blocked: prod only allows main."
+                exit 1
+              fi
+              ;;
+            staging)
+              if [ "${GITHUB_REF}" != "refs/heads/main" ] && [ "${GITHUB_REF}" != "refs/heads/staging" ] && [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+                echo "Deploy blocked: staging allows main, staging, or tags."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Deploy blocked: invalid environment ${DEPLOY_ENV}."
+              exit 1
+              ;;
+          esac
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Set deploy defaults
+        run: |
+          if [ -z "${OCI_WIF_AUDIENCE:-}" ]; then
+            echo "OCI_WIF_AUDIENCE=https://github.com/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
+          fi
+          echo "BACKEND_DRAIN_TIMEOUT_SECONDS=${OCI_BACKEND_DRAIN_TIMEOUT_SECONDS:-120}" >> "$GITHUB_ENV"
+        env:
+          OCI_BACKEND_DRAIN_TIMEOUT_SECONDS: ${{ secrets.OCI_BACKEND_DRAIN_TIMEOUT_SECONDS }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install OCI CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gettext-base
+          python3 -m pip install --upgrade pip
+          python3 -m pip install oci-cli
+
+      - name: OCI WIF (OIDC) Login
+        uses: gtrevorrow/oci-token-exchange-action@v1
+        with:
+          domain_base_url: ${{ secrets.OCI_WIF_DOMAIN_BASE_URL }}
+          oci_tenancy: ${{ secrets.OCI_TENANCY_OCID }}
+          oci_region: ${{ secrets.OCI_REGION }}
+          oidc_client_identifier: ${{ vars.OCI_WIF_CLIENT_IDENTIFIER }}
+          ci_platform: github
+        env:
+          OIDC_AUDIENCE: ${{ env.OCI_WIF_AUDIENCE }}
+
+      - name: Verify OCI auth
+        run: |
+          oci os ns get --query "data" --raw-output
+
+      - name: Terraform init (outputs)
+        run: |
+          terraform -chdir=infra init \
+            -reconfigure \
+            -backend-config="bucket=${OCI_STATE_BUCKET}" \
+            -backend-config="namespace=${OCI_STATE_NAMESPACE}" \
+            -backend-config="region=${OCI_STATE_REGION}" \
+            -backend-config="compartment_ocid=${OCI_STATE_COMPARTMENT_OCID}"
+        env:
+          OCI_STATE_BUCKET: ${{ secrets.OCI_STATE_BUCKET }}
+          OCI_STATE_NAMESPACE: ${{ secrets.OCI_STATE_NAMESPACE }}
+          OCI_STATE_REGION: ${{ secrets.OCI_STATE_REGION }}
+          OCI_STATE_COMPARTMENT_OCID: ${{ secrets.OCI_STATE_COMPARTMENT_OCID }}
+
+      - name: Load terraform outputs
+        run: |
+          read_output() {
+            terraform -chdir=infra output -raw "$1" 2>/dev/null || true
+          }
+          echo "TF_TENANCY_OCID=$(read_output tenancy_ocid)" >> "$GITHUB_ENV"
+          echo "TF_COMPARTMENT_NAME=$(read_output compartment_name)" >> "$GITHUB_ENV"
+          echo "TF_REGION=$(read_output region)" >> "$GITHUB_ENV"
+          echo "TF_BACKEND_PORT=$(read_output backend_port)" >> "$GITHUB_ENV"
+          echo "TF_INSTANCE_POOL_ID=$(read_output instance_pool_id)" >> "$GITHUB_ENV"
+          echo "TF_PRIVATE_SUBNET_ID=$(read_output private_subnet_id)" >> "$GITHUB_ENV"
+          echo "TF_API_NSG_ID=$(read_output api_nsg_id)" >> "$GITHUB_ENV"
+          echo "TF_LB_ID=$(read_output lb_id)" >> "$GITHUB_ENV"
+          echo "TF_LB_BACKEND_SET_NAME=$(read_output lb_backend_set_name)" >> "$GITHUB_ENV"
+          echo "TF_APP_ENV_SECRET_ID=$(read_output app_env_secret_id)" >> "$GITHUB_ENV"
+          echo "TF_OCIR_USERNAME_SECRET_ID=$(read_output ocir_username_secret_id)" >> "$GITHUB_ENV"
+          echo "TF_OCIR_AUTH_TOKEN_SECRET_ID=$(read_output ocir_auth_token_secret_id)" >> "$GITHUB_ENV"
+          echo "TF_AVAILABILITY_DOMAIN=$(read_output availability_domain)" >> "$GITHUB_ENV"
+          echo "TF_COMPARTMENT_OCID=$(read_output compartment_ocid)" >> "$GITHUB_ENV"
+          echo "TF_INSTANCE_IMAGE_ID=$(read_output instance_image_id)" >> "$GITHUB_ENV"
+          echo "TF_INSTANCE_SHAPE=$(read_output instance_shape)" >> "$GITHUB_ENV"
+          echo "TF_INSTANCE_OCPUS=$(read_output instance_ocpus)" >> "$GITHUB_ENV"
+          echo "TF_INSTANCE_MEMORY_GBS=$(read_output instance_memory_gbs)" >> "$GITHUB_ENV"
+          echo "TF_OCIR_NAMESPACE=$(read_output ocir_namespace)" >> "$GITHUB_ENV"
+          echo "TF_OCIR_REGISTRY=$(read_output ocir_registry)" >> "$GITHUB_ENV"
+          echo "TF_OCIR_REPO_NAME=$(read_output ocir_repo_name)" >> "$GITHUB_ENV"
+          echo "TF_OCIR_REPO_URL=$(read_output ocir_repo_url)" >> "$GITHUB_ENV"
+
+      - name: Validate terraform outputs
+        run: |
+          missing=0
+          required_vars=(
+            TF_TENANCY_OCID
+            TF_COMPARTMENT_NAME
+            TF_REGION
+            TF_BACKEND_PORT
+            TF_INSTANCE_POOL_ID
+            TF_PRIVATE_SUBNET_ID
+            TF_API_NSG_ID
+            TF_LB_ID
+            TF_LB_BACKEND_SET_NAME
+            TF_APP_ENV_SECRET_ID
+            TF_OCIR_USERNAME_SECRET_ID
+            TF_OCIR_AUTH_TOKEN_SECRET_ID
+            TF_AVAILABILITY_DOMAIN
+            TF_COMPARTMENT_OCID
+            TF_INSTANCE_IMAGE_ID
+            TF_INSTANCE_SHAPE
+            TF_INSTANCE_OCPUS
+            TF_INSTANCE_MEMORY_GBS
+            TF_OCIR_NAMESPACE
+            TF_OCIR_REGISTRY
+            TF_OCIR_REPO_NAME
+            TF_OCIR_REPO_URL
+          )
+          for var in "${required_vars[@]}"; do
+            val="${!var}"
+            if [ -z "${val}" ]; then
+              echo "Missing terraform output for ${var}"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "Required outputs are missing. Run 'terraform apply' in infra before deploy."
+            exit 1
+          fi
+
+      - name: Fetch OCIR creds from Vault
+        run: |
+          ocir_username=$(oci secrets secret-bundle get \
+            --secret-id "${TF_OCIR_USERNAME_SECRET_ID}" \
+            --query "data.\"secret-bundle-content\".content" \
+            --raw-output | base64 -d)
+          ocir_token=$(oci secrets secret-bundle get \
+            --secret-id "${TF_OCIR_AUTH_TOKEN_SECRET_ID}" \
+            --query "data.\"secret-bundle-content\".content" \
+            --raw-output | base64 -d)
+
+          if [ -z "${ocir_username}" ] || [ -z "${ocir_token}" ]; then
+            echo "Vault read failed: missing OCIR credentials."
+            exit 1
+          fi
+          echo "Vault read succeeded."
+
+          echo "::add-mask::${ocir_username}"
+          echo "::add-mask::${ocir_token}"
+          echo "OCIR_USERNAME=${ocir_username}" >> "$GITHUB_ENV"
+          echo "OCIR_AUTH_TOKEN=${ocir_token}" >> "$GITHUB_ENV"
+
+      - name: Drift check (optional)
+        if: ${{ vars.OCI_TF_DRIFT_CHECK == 'true' }}
+        env:
+          TF_VAR_tenancy_ocid: ${{ env.TF_TENANCY_OCID }}
+          TF_VAR_compartment_ocid: ${{ env.TF_COMPARTMENT_OCID }}
+          TF_VAR_compartment_name: ${{ env.TF_COMPARTMENT_NAME }}
+          TF_VAR_region: ${{ env.TF_REGION }}
+          TF_VAR_instance_image_id: ${{ env.TF_INSTANCE_IMAGE_ID }}
+          TF_VAR_ocir_namespace: ${{ env.TF_OCIR_NAMESPACE }}
+          TF_VAR_ocir_repo_name: ${{ env.TF_OCIR_REPO_NAME }}
+        run: |
+          set +e
+          plan_path="/tmp/plan.tfplan"
+          plan_text="/tmp/plan.txt"
+          terraform -chdir=infra plan -detailed-exitcode -input=false -no-color -out="${plan_path}"
+          exit_code=$?
+          set -e
+          if [ "${exit_code}" -eq 2 ]; then
+            terraform -chdir=infra show -no-color "${plan_path}" > "${plan_text}"
+            if grep -q "secret_content" "${plan_text}"; then
+              if ! grep -q "CHANGEME" "${plan_text}"; then
+                echo "Plan output contains secret content; aborting."
+                exit 1
+              fi
+            fi
+            echo "TF_DRIFT_DETECTED=true" >> "$GITHUB_ENV"
+            echo "Terraform drift detected (exit code 2). Run infra apply to reconcile." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${exit_code}" -ne 0 ]; then
+            echo "Terraform plan failed."
+            exit "${exit_code}"
+          fi
+
+      - name: Upload drift plan
+        if: ${{ env.TF_DRIFT_DETECTED == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: /tmp/plan.txt
+          retention-days: 3
+
+      - name: Login to OCIR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.TF_OCIR_REGISTRY }}
+          username: ${{ env.OCIR_USERNAME }}
+          password: ${{ env.OCIR_AUTH_TOKEN }}
+
+      - name: Build and push (multi-arch)
+        run: |
+          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE="${TF_OCIR_REPO_URL}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            -t "${IMAGE}:${IMAGE_TAG}" \
+            -t "${IMAGE}:latest" \
+            --push \
+            .
+
+      - name: Capture current instance configuration
+        id: current_config
+        run: |
+          CURRENT_CONFIG_ID=$(oci compute-management instance-pool get \
+            --instance-pool-id "${TF_INSTANCE_POOL_ID}" \
+            --query "data.instance-configuration-id" \
+            --raw-output)
+          echo "current_config_id=${CURRENT_CONFIG_ID}" >> "$GITHUB_OUTPUT"
+          echo "Current instance config: ${CURRENT_CONFIG_ID}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create instance configuration
+        id: instance_config
+        run: |
+          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE="${TF_OCIR_REPO_URL}:${IMAGE_TAG}"
+          export ocir_registry="${TF_OCIR_REGISTRY}"
+          export image="${IMAGE}"
+          export backend_port="${TF_BACKEND_PORT}"
+          export app_env_secret_id="${TF_APP_ENV_SECRET_ID}"
+          export ocir_username_secret_id="${TF_OCIR_USERNAME_SECRET_ID}"
+          export ocir_auth_token_secret_id="${TF_OCIR_AUTH_TOKEN_SECRET_ID}"
+
+          envsubst < infra/templates/cloud-init.sh.tmpl > /tmp/cloud-init.sh
+          USER_DATA_B64=$(base64 -w 0 /tmp/cloud-init.sh)
+
+          export availability_domain="${TF_AVAILABILITY_DOMAIN}"
+          export compartment_ocid="${TF_COMPARTMENT_OCID}"
+          export instance_shape="${TF_INSTANCE_SHAPE}"
+          export instance_ocpus="${TF_INSTANCE_OCPUS}"
+          export instance_memory_gbs="${TF_INSTANCE_MEMORY_GBS}"
+          export subnet_id="${TF_PRIVATE_SUBNET_ID}"
+          export nsg_id="${TF_API_NSG_ID}"
+          export image_id="${TF_INSTANCE_IMAGE_ID}"
+          export user_data_b64="${USER_DATA_B64}"
+
+          envsubst < infra/templates/instance-config.json.tmpl > /tmp/instance-config.json
+
+          NEW_CONFIG_ID=$(oci compute-management instance-configuration create \
+            --compartment-id "${TF_COMPARTMENT_OCID}" \
+            --display-name "triviapay-api-${IMAGE_TAG}" \
+            --instance-details file:///tmp/instance-config.json \
+            --query "data.id" \
+            --raw-output)
+
+          echo "config_id=${NEW_CONFIG_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Update instance pool
+        run: |
+          oci compute-management instance-pool update \
+            --instance-pool-id "${TF_INSTANCE_POOL_ID}" \
+            --instance-configuration-id "${NEW_CONFIG_ID}"
+        env:
+          NEW_CONFIG_ID: ${{ steps.instance_config.outputs.config_id }}
+
+      - name: Rolling replacement
+        run: |
+          infra/scripts/rolling_update.sh "${TF_INSTANCE_POOL_ID}" "${TF_COMPARTMENT_OCID}" 60 1
+        env:
+          LB_ID: ${{ env.TF_LB_ID }}
+          BACKEND_SET_NAME: ${{ env.TF_LB_BACKEND_SET_NAME }}
+          MAX_WAIT_SECONDS: ${{ secrets.OCI_LB_WAIT_TIMEOUT_SECONDS }}
+          BACKEND_PORT: ${{ env.TF_BACKEND_PORT }}
+          BACKEND_DRAIN_TIMEOUT_SECONDS: ${{ env.BACKEND_DRAIN_TIMEOUT_SECONDS }}
+          VNIC_SUBNET_ID: ${{ env.TF_PRIVATE_SUBNET_ID }}
+
+      - name: Post-deploy health check
+        if: ${{ secrets.HEALTHCHECK_URL != '' }}
+        env:
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+          HEALTHCHECK_ALLOWED_PORTS: ${{ vars.OCI_HEALTHCHECK_ALLOWED_PORTS }}
+        run: |
+          python - <<'PY'
+import os
+from urllib.parse import urlparse
+
+url = os.environ.get("HEALTHCHECK_URL", "")
+backend = os.environ.get("TF_BACKEND_PORT", "")
+extra_ports = os.environ.get("HEALTHCHECK_ALLOWED_PORTS", "")
+allowed = {backend, "80", "443"}
+for port in extra_ports.split(","):
+    port = port.strip()
+    if port:
+        allowed.add(port)
+if url:
+    parsed = urlparse(url)
+    if parsed.port:
+        if str(parsed.port) not in allowed:
+            raise SystemExit(
+                f"HEALTHCHECK_URL port {parsed.port} is not in allowed ports: {sorted(allowed)}"
+            )
+PY
+          if [[ "${HEALTHCHECK_URL}" == *"?"* ]]; then
+            SMOKE_URL="${HEALTHCHECK_URL}&nocache=${GITHUB_SHA}"
+          else
+            SMOKE_URL="${HEALTHCHECK_URL}?nocache=${GITHUB_SHA}"
+          fi
+          curl -fsS --retry 10 --retry-connrefused --retry-delay 5 \
+            -H "Cache-Control: no-cache" \
+            -H "Pragma: no-cache" \
+            -H "X-Deploy-Id: ${GITHUB_SHA}" \
+            "${SMOKE_URL}"
+
+      - name: Post-deploy DB check
+        if: ${{ secrets.HEALTHCHECK_DB_URL != '' }}
+        env:
+          HEALTHCHECK_DB_URL: ${{ secrets.HEALTHCHECK_DB_URL }}
+        run: |
+          if [[ "${HEALTHCHECK_DB_URL}" == *"?"* ]]; then
+            SMOKE_URL="${HEALTHCHECK_DB_URL}&nocache=${GITHUB_SHA}"
+          else
+            SMOKE_URL="${HEALTHCHECK_DB_URL}?nocache=${GITHUB_SHA}"
+          fi
+          curl -fsS --retry 10 --retry-connrefused --retry-delay 5 \
+            -H "Cache-Control: no-cache" \
+            -H "Pragma: no-cache" \
+            -H "X-Deploy-Id: ${GITHUB_SHA}" \
+            "${SMOKE_URL}"
