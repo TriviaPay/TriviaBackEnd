@@ -63,6 +63,7 @@ from utils.subscription_service import get_modes_access_status
 from utils.trivia_mode_service import (
     get_active_draw_date,
     get_mode_config,
+    get_reset_window_status,
     get_today_in_app_timezone,
 )
 from utils.user_level_service import count_total_correct_answers, get_level_progress
@@ -1647,6 +1648,9 @@ def get_all_modes_status(user: User, db: Session):
     bronze_mode_access = access_map.get("bronze", {})
     silver_mode_access = access_map.get("silver", {})
     target_date = get_active_draw_date()
+    reset_status = get_reset_window_status()
+    in_reset_window = reset_status["in_reset_window"]
+    reset_minutes_left = reset_status["minutes_left"] if in_reset_window else 0
 
     from routers.trivia import repository as trivia_repository
 
@@ -1711,6 +1715,8 @@ def get_all_modes_status(user: User, db: Session):
             "questions_remaining": free_progress["remaining_questions"],
             "task_completed": free_progress["completed"],
             "message": free_progress["message"],
+            "in_reset_window": in_reset_window,
+            "reset_window_minutes_left": reset_minutes_left,
         },
         "bronze_mode": {
             "has_access": bronze_mode_access["has_access"],
@@ -1723,6 +1729,8 @@ def get_all_modes_status(user: User, db: Session):
             "questions_remaining": bronze_progress["remaining_questions"],
             "task_completed": bronze_progress["completed"],
             "message": bronze_progress["message"],
+            "in_reset_window": in_reset_window,
+            "reset_window_minutes_left": reset_minutes_left,
         },
         "silver_mode": {
             "has_access": silver_mode_access["has_access"],
@@ -1735,6 +1743,8 @@ def get_all_modes_status(user: User, db: Session):
             "questions_remaining": silver_progress["remaining_questions"],
             "task_completed": silver_progress["completed"],
             "message": silver_progress["message"],
+            "in_reset_window": in_reset_window,
+            "reset_window_minutes_left": reset_minutes_left,
         },
     }
 

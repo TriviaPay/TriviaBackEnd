@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 from datetime import date, datetime, timedelta
 
@@ -211,9 +212,13 @@ def schedule_draws() -> None:
     hour = draw_time["hour"]
     minute = draw_time["minute"]
     timezone = draw_time["timezone"]
+    reset_delay_minutes = int(os.getenv("DRAW_RESET_DELAY_MINUTES", "30"))
+    reset_time = datetime(2000, 1, 1, hour, minute) + timedelta(minutes=reset_delay_minutes)
+    reset_hour = reset_time.hour
+    reset_minute = reset_time.minute
 
     logger.info(f"Scheduling daily draw at {hour}:{minute} {timezone}")
-    logger.info(f"Question reset at {hour}:{minute+1} {timezone}")
+    logger.info(f"Question reset at {reset_hour}:{reset_minute} {timezone}")
 
     # Legacy daily draw and question reset jobs removed - use mode-specific draws instead
     # Legacy tables (TriviaQuestionsDaily, TriviaUserDaily, Trivia, TriviaQuestionsEntries) deleted
@@ -257,7 +262,7 @@ def schedule_draws() -> None:
     # Schedule free mode question allocation (1 minute after draw, same as regular questions)
     scheduler.add_job(
         allocate_free_mode_questions,
-        CronTrigger(hour=hour, minute=minute + 1, timezone=timezone),
+        CronTrigger(hour=reset_hour, minute=reset_minute, timezone=timezone),
         id="free_mode_question_allocation",
         replace_existing=True,
         misfire_grace_time=3600,
@@ -275,7 +280,7 @@ def schedule_draws() -> None:
     # Schedule $5 mode question allocation (1 minute after draw, same as regular questions)
     scheduler.add_job(
         allocate_bronze_mode_questions,
-        CronTrigger(hour=hour, minute=minute + 1, timezone=timezone),
+        CronTrigger(hour=reset_hour, minute=reset_minute, timezone=timezone),
         id="bronze_mode_question_allocation",
         replace_existing=True,
         misfire_grace_time=3600,

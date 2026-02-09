@@ -76,6 +76,47 @@ def get_today_in_app_timezone() -> date:
     return now.date()
 
 
+def get_draw_time_settings() -> Dict[str, Any]:
+    return {
+        "hour": int(os.getenv("DRAW_TIME_HOUR", "18")),
+        "minute": int(os.getenv("DRAW_TIME_MINUTE", "0")),
+        "timezone": os.getenv("DRAW_TIMEZONE", "US/Eastern"),
+        "reset_delay_minutes": int(os.getenv("DRAW_RESET_DELAY_MINUTES", "30")),
+    }
+
+
+def get_reset_window_status(current_time: datetime = None) -> Dict[str, Any]:
+    """
+    Return whether we are in the post-draw reset window and how many minutes remain.
+    """
+    import math
+
+    settings = get_draw_time_settings()
+    tz = pytz.timezone(settings["timezone"])
+    now = current_time.astimezone(tz) if current_time else datetime.now(tz)
+
+    draw_time = now.replace(
+        hour=settings["hour"],
+        minute=settings["minute"],
+        second=0,
+        microsecond=0,
+    )
+    reset_time = draw_time + timedelta(minutes=settings["reset_delay_minutes"])
+    in_window = draw_time <= now < reset_time
+    minutes_left = 0
+    if in_window:
+        remaining_seconds = max((reset_time - now).total_seconds(), 0)
+        minutes_left = int(math.ceil(remaining_seconds / 60.0))
+
+    return {
+        "in_reset_window": in_window,
+        "minutes_left": minutes_left,
+        "reset_time": reset_time,
+        "draw_time": draw_time,
+        "reset_delay_minutes": settings["reset_delay_minutes"],
+    }
+
+
 def get_active_draw_date() -> date:
     """
     Get the draw date for which users should see questions.

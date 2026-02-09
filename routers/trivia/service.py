@@ -65,6 +65,20 @@ def round_down(value: float, decimals: int = 2) -> float:
     return math.floor(value * multiplier) / multiplier
 
 
+def _reset_window_block():
+    from utils.trivia_mode_service import get_reset_window_status
+
+    status = get_reset_window_status()
+    if not status["in_reset_window"]:
+        return None
+    minutes_left = status["minutes_left"]
+    return {
+        "status": "reset_window",
+        "reset_window_minutes_left": minutes_left,
+        "message": f"New questions unlock in {minutes_left} minutes.",
+    }
+
+
 def get_recent_winners(db, current_user):
     from utils.chat_helpers import get_user_chat_profile_data_bulk
     from utils.trivia_mode_service import (
@@ -1015,6 +1029,10 @@ def free_mode_current_question(db, *, user):
         get_date_range_for_query,
     )
 
+    reset_block = _reset_window_block()
+    if reset_block:
+        return reset_block
+
     questions = get_daily_questions_for_mode(db, "free_mode", user)
     if not questions:
         target_date = get_active_draw_date()
@@ -1301,6 +1319,10 @@ async def bronze_mode_get_question(db, *, user):
     if not access_check["has_access"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=access_check["message"])
 
+    reset_block = _reset_window_block()
+    if reset_block:
+        return reset_block
+
     target_date = get_active_draw_date()
     start_datetime, end_datetime = get_date_range_for_query(target_date)
 
@@ -1389,6 +1411,10 @@ async def silver_mode_get_question(db, *, user):
     access_check = check_mode_access(db, user, "silver")
     if not access_check["has_access"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=access_check["message"])
+
+    reset_block = _reset_window_block()
+    if reset_block:
+        return reset_block
 
     target_date = get_active_draw_date()
     start_datetime, end_datetime = get_date_range_for_query(target_date)
@@ -2253,6 +2279,10 @@ def process_daily_login(db, user):
 
 def get_free_mode_questions(db, user):
     from utils.trivia_mode_service import get_daily_questions_for_mode
+
+    reset_block = _reset_window_block()
+    if reset_block:
+        return reset_block
 
     questions = get_daily_questions_for_mode(db, "free_mode", user)
     return {"questions": questions}
