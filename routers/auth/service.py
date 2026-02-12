@@ -1437,7 +1437,6 @@ async def get_profile_summary(db: Session, current_user: User):
         )
 
         recent_draw_earnings = get_recent_draw_earnings(user, db)
-
         profile_pic_type = None
         if user.profile_pic_url:
             profile_pic_type = "custom"

@@ -12,6 +12,7 @@ from models import (
     Frame,
     SubscriptionPlan,
     TriviaBronzeModeLeaderboard,
+    TriviaFreeModeWinners,
     TriviaModeConfig,
     TriviaSilverModeLeaderboard,
     User,
@@ -168,3 +169,16 @@ def get_recent_draw_earnings_sum(db: Session, account_id: int, draw_date):
     earnings_union = union_all(bronze_query, silver_query).alias("earnings")
     sum_stmt = select(func.coalesce(func.sum(earnings_union.c.amount), 0.0))
     return db.execute(sum_stmt).scalar() or 0.0
+
+
+def get_daily_gems_sum(db: Session, account_id: int, draw_date):
+    sum_stmt = select(
+        func.coalesce(
+            func.sum(func.coalesce(TriviaFreeModeWinners.final_gems, TriviaFreeModeWinners.gems_awarded)),
+            0,
+        )
+    ).where(
+        TriviaFreeModeWinners.account_id == account_id,
+        TriviaFreeModeWinners.draw_date == draw_date,
+    )
+    return db.execute(sum_stmt).scalar() or 0

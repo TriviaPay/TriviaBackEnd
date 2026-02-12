@@ -13,14 +13,16 @@ router = APIRouter(prefix="/draw", tags=["Draw"])
 
 
 @router.get("/next")
-def get_draw_time(_ = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_draw_time(
+    current_user = Depends(get_current_user), db: Session = Depends(get_db)
+):
     """
     Endpoint to get the next draw time and current prize pool.
     Returns the next daily draw time (default 8 PM EST) and the prize pool for today's draw.
     If current time is before today's draw time, returns today's draw time.
     If current time is after today's draw time, returns tomorrow's draw time.
     """
-    return get_next_draw_with_prize_pool(db)
+    return get_next_draw_with_prize_pool(db, current_user)
 
 
 # Legacy /eligible-participants endpoint removed - TriviaUserDaily table deleted

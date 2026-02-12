@@ -9,13 +9,39 @@ from utils.trivia_mode_service import get_today_in_app_timezone
 
 from . import repository as trivia_repository
 
-def get_next_draw_with_prize_pool(db):
+def get_next_draw_with_prize_pool(db, current_user=None):
     next_draw_time = get_next_draw_time()
 
     mode_pools = _get_mode_prize_pools(db)
+    daily_trivia_coins = 0.0
+    daily_gems_count = 0
+    if current_user:
+        try:
+            from routers.auth import repository as auth_repository
+
+            today_draw_date = get_today_in_app_timezone()
+            daily_trivia_coins = round(
+                float(
+                    auth_repository.get_recent_draw_earnings_sum(
+                        db, current_user.account_id, today_draw_date
+                    )
+                ),
+                2,
+            )
+            daily_gems_count = int(
+                auth_repository.get_daily_gems_sum(
+                    db, current_user.account_id, today_draw_date
+                )
+                or 0
+            )
+        except Exception:
+            daily_trivia_coins = 0.0
+            daily_gems_count = 0
     return {
         "next_draw_time": next_draw_time.isoformat(),
         "mode_pools": mode_pools,
+        "daily_trivia_coins": daily_trivia_coins,
+        "daily_gems_count": daily_gems_count,
     }
 
 
