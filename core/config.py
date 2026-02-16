@@ -43,16 +43,22 @@ DEBUG = ENVIRONMENT == "development"
 # Database settings
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Stripe settings
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
-STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-
 # IAP (In-App Purchase) settings
 APPLE_IAP_SHARED_SECRET = os.getenv("APPLE_IAP_SHARED_SECRET", "")
 APPLE_IAP_USE_SANDBOX = os.getenv("APPLE_IAP_USE_SANDBOX", "false").lower() == "true"
+APPLE_APP_BUNDLE_ID = os.getenv("APPLE_APP_BUNDLE_ID", "")
+APPLE_ROOT_CERT_PATHS = [
+    p.strip()
+    for p in os.getenv("APPLE_ROOT_CERT_PATHS", "").split(",")
+    if p.strip()
+]
 GOOGLE_IAP_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_IAP_SERVICE_ACCOUNT_JSON", "")
 GOOGLE_IAP_PACKAGE_NAME = os.getenv("GOOGLE_IAP_PACKAGE_NAME", "com.triviapay.app")
+GOOGLE_IAP_REFUND_NOTIFICATION_TYPES = [
+    int(x)
+    for x in os.getenv("GOOGLE_IAP_REFUND_NOTIFICATION_TYPES", "2,3,4,5").split(",")
+    if x.strip().isdigit()
+]
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

@@ -58,24 +58,11 @@ class User(Base):
     total_spent = Column(BigInteger, nullable=True)
     last_wallet_update = Column(DateTime, nullable=True)
 
-    # Stripe fields
-    stripe_customer_id = Column(String, nullable=True, index=True)
-    stripe_connect_account_id = Column(String(255), nullable=True)
-    instant_withdrawal_enabled = Column(Boolean, default=True, nullable=False)
-    instant_withdrawal_daily_limit_minor = Column(
-        BigInteger, default=100000, nullable=False
-    )
-
     selected_avatar_id = Column(String, nullable=True)
     selected_frame_id = Column(String, nullable=True)
 
     # Relationships
     wallet_transactions = relationship("WalletTransaction", back_populates="user")
-    withdrawal_requests = relationship(
-        "WithdrawalRequest",
-        foreign_keys="[WithdrawalRequest.user_id]",
-        back_populates="user",
-    )
     iap_receipts = relationship("IapReceipt", back_populates="user")
 
     @property

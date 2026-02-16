@@ -11,7 +11,7 @@ from contextlib import contextmanager
 
 from sqlalchemy import event
 from sqlalchemy import MetaData, create_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 # Suppress ALL warnings from dotenv BEFORE importing it

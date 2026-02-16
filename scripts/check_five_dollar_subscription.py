@@ -44,7 +44,6 @@ def check_five_dollar_subscription():
             print(f"   Price USD: {plan.price_usd}")
             print(f"   Unit Amount Minor: {plan.unit_amount_minor}")
             print(f"   Interval: {plan.interval}")
-            print(f"   Stripe Price ID: {plan.stripe_price_id}")
             print()
 
         # Check for active subscriptions

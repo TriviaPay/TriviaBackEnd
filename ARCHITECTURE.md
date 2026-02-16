@@ -10,9 +10,7 @@ Domains (by router file):
   `routers/trivia/rewards.py`, `routers/trivia/internal.py`,
   `updated_scheduler.py`
 - Payments/Wallet/IAP: `app/routers/payments/wallet.py`,
-  `app/routers/payments/payments.py`, `app/routers/payments/stripe_webhook.py`,
-  `app/routers/payments/stripe_connect.py`, `app/routers/payments/iap.py`,
-  `app/routers/payments/admin_withdrawals.py`
+  `app/routers/payments/iap.py`
 - Store/Cosmetics: `routers/store/store.py`, `routers/store/cosmetics.py`,
   `routers/store/badges.py`
 - Messaging/Realtime: `routers/messaging/global_chat.py`,
@@ -46,7 +44,7 @@ Module layout (per domain):
 - Auth/Profile owns: `User`, `UserSubscription`, login/profile related tables.
 - Trivia/Draws/Rewards owns: trivia mode configs, questions, winners, daily draw data.
 - Store/Cosmetics owns: avatars, frames, badges, gem packages.
-- Payments/Wallet/IAP owns: wallet balances, wallet transactions, withdrawals, Stripe tables.
+- Payments/Wallet/IAP owns: wallet balances, wallet transactions, IAP receipts.
 - Messaging/Realtime owns: DM/group/status tables, presence tables.
 - Notifications owns: OneSignal player registrations, push settings.
 

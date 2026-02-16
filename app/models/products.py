@@ -17,6 +17,7 @@ class Avatar(Base):
     description = Column(String, nullable=True)
     product_id = Column(String(5), unique=True, nullable=True, index=True)
     price_minor = Column(BigInteger, nullable=True)
+    product_type = Column(String, nullable=False, default="non_consumable")
     is_premium = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -36,6 +37,7 @@ class Frame(Base):
     description = Column(String, nullable=True)
     product_id = Column(String(5), unique=True, nullable=True, index=True)
     price_minor = Column(BigInteger, nullable=True)
+    product_type = Column(String, nullable=False, default="non_consumable")
     is_premium = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -53,6 +55,7 @@ class GemPackageConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(String(5), unique=True, nullable=True, index=True)
     price_minor = Column(BigInteger, nullable=True)
+    product_type = Column(String, nullable=False, default="consumable")
     gems_amount = Column(Integer, nullable=False)
     is_one_time = Column(Boolean, default=False)
     description = Column(String, nullable=True)
@@ -75,6 +78,7 @@ class Badge(Base):
     description = Column(String, nullable=True)
     product_id = Column(String(5), unique=True, nullable=True, index=True)
     price_minor = Column(BigInteger, nullable=True)
+    product_type = Column(String, nullable=False, default="non_consumable")
     level = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

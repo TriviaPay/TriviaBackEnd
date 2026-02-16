@@ -211,34 +211,6 @@ def test_auth_endpoints():
     except Exception as e:
         print(f"   ❌ ERROR: Exception with expired token: {e}")
 
-    # Test 9: Stripe Endpoints (Protected)
-    print("\n9️⃣ Testing Protected Stripe Endpoints")
-    print("-" * 40)
-
-    # Test stripe payment methods with expired token
-    try:
-        headers = {"Authorization": f"Bearer {expired_token}"}
-        response = requests.get(f"{base_url}/stripe/payment-methods", headers=headers)
-        print(
-            f"   Stripe payment methods with expired token: {response.status_code} - {response.text[:100]}"
-        )
-        if response.status_code != 401:
-            print("   ❌ ERROR: Should return 401 for expired token")
-    except Exception as e:
-        print(f"   ❌ ERROR: Exception with expired token: {e}")
-
-    # Test stripe create customer with expired token
-    try:
-        headers = {"Authorization": f"Bearer {expired_token}"}
-        response = requests.post(f"{base_url}/stripe/create-customer", headers=headers)
-        print(
-            f"   Stripe create customer with expired token: {response.status_code} - {response.text[:100]}"
-        )
-        if response.status_code != 401:
-            print("   ❌ ERROR: Should return 401 for expired token")
-    except Exception as e:
-        print(f"   ❌ ERROR: Exception with expired token: {e}")
-
     # Test refresh endpoint with expired token
     try:
         headers = {"Authorization": f"Bearer {expired_token}"}

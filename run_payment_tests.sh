@@ -13,20 +13,13 @@ fi
 
 # Run tests with verbose output
 echo "📋 Test Files:"
-echo "  - test_wallet_endpoints.py"
-echo "  - test_stripe_connect.py"
 echo "  - test_iap_endpoints.py"
-echo "  - test_admin_withdrawals.py"
 echo ""
 
-pytest tests/test_wallet_endpoints.py \
-       tests/test_stripe_connect.py \
-       tests/test_iap_endpoints.py \
-       tests/test_admin_withdrawals.py \
+pytest tests/test_iap_endpoints.py \
        -v \
        --tb=short \
        --color=yes
 
 echo ""
 echo "✅ Tests completed!"
-

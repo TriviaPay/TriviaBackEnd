@@ -14,10 +14,7 @@
 ## Files to Fix
 
 1. ✅ `pytest.ini` - Fixed
-2. ✅ `tests/test_wallet_endpoints.py` - Fixed
-3. ⚠️ `tests/test_stripe_connect.py` - Partially fixed (needs client calls updated)
-4. ⚠️ `tests/test_iap_endpoints.py` - Needs fixing
-5. ⚠️ `tests/test_admin_withdrawals.py` - Needs fixing
+2. ⚠️ `tests/test_iap_endpoints.py` - Needs fixing
 
 ## Pattern to Apply
 
@@ -50,9 +47,7 @@ import re
 import os
 
 test_files = [
-    'tests/test_stripe_connect.py',
-    'tests/test_iap_endpoints.py',
-    'tests/test_admin_withdrawals.py'
+    'tests/test_iap_endpoints.py'
 ]
 
 for file_path in test_files:
@@ -85,4 +80,3 @@ for file_path in test_files:
     
     print(f'Fixed {file_path}')
 ```
-

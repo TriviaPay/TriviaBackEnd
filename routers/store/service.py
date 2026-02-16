@@ -262,40 +262,10 @@ def buy_avatar(db, *, current_user, avatar_id: str, payment_method: str):
             }
 
     if payment_method == "usd":
-        if avatar.price_minor is None or avatar.price_minor == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Avatar '{avatar.name}' cannot be purchased with USD",
-            )
-
-        try:
-            ownership = store_repository.create_user_avatar_ownership(
-                db,
-                user_id=current_user.account_id,
-                avatar_id=avatar_id,
-                purchase_date=datetime.utcnow(),
-            )
-            db.commit()
-            db.refresh(ownership)
-            return {
-                "status": "success",
-                "message": f"Successfully purchased avatar '{avatar.name}' for ${getattr(avatar, 'price_usd', None)}",
-                "item_id": avatar_id,
-                "purchase_date": ownership.purchase_date,
-                "usd_spent": getattr(avatar, "price_usd", None),
-            }
-        except IntegrityError:
-            db.rollback()
-            existing = store_repository.get_user_avatar_ownership(
-                db, user_id=current_user.account_id, avatar_id=avatar_id
-            )
-            return {
-                "status": "success",
-                "message": f"You already own the avatar '{avatar.name}'",
-                "item_id": avatar_id,
-                "purchase_date": existing.purchase_date,
-                "usd_spent": 0,
-            }
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="USD purchases are disabled. Use IAP or gems instead.",
+        )
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -511,40 +481,10 @@ def buy_frame(db, *, current_user, frame_id: str, payment_method: str):
             }
 
     if payment_method == "usd":
-        if frame.price_minor is None or frame.price_minor == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Frame '{frame.name}' cannot be purchased with USD",
-            )
-
-        try:
-            ownership = store_repository.create_user_frame_ownership(
-                db,
-                user_id=current_user.account_id,
-                frame_id=frame_id,
-                purchase_date=datetime.utcnow(),
-            )
-            db.commit()
-            db.refresh(ownership)
-            return {
-                "status": "success",
-                "message": f"Successfully purchased frame '{frame.name}' for ${getattr(frame, 'price_usd', None)}",
-                "item_id": frame_id,
-                "purchase_date": ownership.purchase_date,
-                "usd_spent": getattr(frame, "price_usd", None),
-            }
-        except IntegrityError:
-            db.rollback()
-            existing = store_repository.get_user_frame_ownership(
-                db, user_id=current_user.account_id, frame_id=frame_id
-            )
-            return {
-                "status": "success",
-                "message": f"You already own the frame '{frame.name}'",
-                "item_id": frame_id,
-                "purchase_date": existing.purchase_date,
-                "usd_spent": 0,
-            }
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="USD purchases are disabled. Use IAP or gems instead.",
+        )
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,

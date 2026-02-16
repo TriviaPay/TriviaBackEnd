@@ -786,6 +786,78 @@ def list_unread_counts_for_user_as_user2(db: Session, *, conversation_ids, user_
     )
 
 
+def count_total_unread_private_messages(db: Session, *, user_id: int) -> int:
+    from sqlalchemy import func, or_
+
+    from models import PrivateChatConversation, PrivateChatMessage
+
+    user1_count = (
+        db.query(func.count(PrivateChatMessage.id))
+        .join(
+            PrivateChatConversation,
+            PrivateChatConversation.id == PrivateChatMessage.conversation_id,
+        )
+        .filter(
+            PrivateChatConversation.user1_id == user_id,
+            or_(
+                PrivateChatConversation.status == "accepted",
+                PrivateChatConversation.status == "pending",
+            ),
+            PrivateChatMessage.sender_id != user_id,
+            or_(
+                PrivateChatConversation.last_read_message_id_user1.is_(None),
+                PrivateChatMessage.id > PrivateChatConversation.last_read_message_id_user1,
+            ),
+        )
+        .scalar()
+        or 0
+    )
+
+    user2_count = (
+        db.query(func.count(PrivateChatMessage.id))
+        .join(
+            PrivateChatConversation,
+            PrivateChatConversation.id == PrivateChatMessage.conversation_id,
+        )
+        .filter(
+            PrivateChatConversation.user2_id == user_id,
+            or_(
+                PrivateChatConversation.status == "accepted",
+                PrivateChatConversation.status == "pending",
+            ),
+            PrivateChatMessage.sender_id != user_id,
+            or_(
+                PrivateChatConversation.last_read_message_id_user2.is_(None),
+                PrivateChatMessage.id > PrivateChatConversation.last_read_message_id_user2,
+            ),
+        )
+        .scalar()
+        or 0
+    )
+
+    return int(user1_count) + int(user2_count)
+
+
+def count_pending_private_chat_requests(db: Session, *, user_id: int) -> int:
+    from sqlalchemy import func, or_
+
+    from models import PrivateChatConversation
+
+    return (
+        db.query(func.count(PrivateChatConversation.id))
+        .filter(
+            or_(
+                PrivateChatConversation.user1_id == user_id,
+                PrivateChatConversation.user2_id == user_id,
+            ),
+            PrivateChatConversation.status == "pending",
+            PrivateChatConversation.requested_by != user_id,
+        )
+        .scalar()
+        or 0
+    )
+
+
 def list_user_presence_rows(db: Session, *, user_ids):
     from models import UserPresence
 

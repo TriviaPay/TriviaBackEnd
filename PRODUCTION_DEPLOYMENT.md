@@ -98,9 +98,6 @@ Set these in your Vercel dashboard:
 - `DATABASE_URL`: Your production database connection string
 - `DESCOPE_PROJECT_ID`: Your Descope project ID
 - `DESCOPE_MANAGEMENT_KEY`: Your Descope management key
-- `STRIPE_PUBLISHABLE_KEY`: Your Stripe publishable key
-- `STRIPE_SECRET_KEY`: Your Stripe secret key
-- `STRIPE_WEBHOOK_SECRET`: Your Stripe webhook secret
 
 ### Optional
 - `DRAW_TIME_HOUR`: Default 20 (8 PM)

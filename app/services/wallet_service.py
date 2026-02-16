@@ -3,10 +3,10 @@ Wallet Service - Handles wallet balance adjustments and queries
 """
 
 import logging
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -140,11 +140,35 @@ async def adjust_wallet_balance(
     current_balance = user.wallet_balance_minor or 0
     new_balance = current_balance + delta_minor
 
-    # Prevent negative balances (except for adjustments and dispute holds)
-    if new_balance < 0 and kind not in ("adjustment", "dispute_hold"):
-        raise ValueError(
-            f"Insufficient balance. Current: {current_balance}, Attempted: {delta_minor}"
-        )
+    # Prevent negative balances. For IAP refunds, clamp to zero instead of going negative.
+    if new_balance < 0:
+        if kind == "iap_refund":
+            applied_delta = -current_balance
+            if applied_delta == 0:
+                logger.info(
+                    "IAP refund clamped to zero: user=%s, current_balance=%s, "
+                    "requested_delta=%s, event_id=%s",
+                    user_id,
+                    current_balance,
+                    delta_minor,
+                    event_id,
+                )
+                return current_balance
+            logger.warning(
+                "IAP refund clamped to zero: user=%s, current_balance=%s, "
+                "requested_delta=%s, applied_delta=%s, event_id=%s",
+                user_id,
+                current_balance,
+                delta_minor,
+                applied_delta,
+                event_id,
+            )
+            delta_minor = applied_delta
+            new_balance = 0
+        else:
+            raise ValueError(
+                f"Insufficient balance. Current: {current_balance}, Attempted: {delta_minor}"
+            )
 
     # Create wallet transaction
     transaction = WalletTransaction(
@@ -226,59 +250,3 @@ async def get_wallet_balance(
         return user.wallet_balance_minor
 
     return 0
-
-
-async def get_daily_instant_withdrawal_count(
-    db: AsyncSession, user_id: int, withdrawal_date: date
-) -> int:
-    """
-    Get total amount of instant withdrawals for a user on a specific date.
-
-    Args:
-        db: Async database session
-        user_id: User account ID
-        withdrawal_date: Date to check
-
-    Returns:
-        Total amount in minor units
-    """
-    from app.models.wallet import WithdrawalRequest
-
-    start_of_day = datetime.combine(withdrawal_date, datetime.min.time())
-    end_of_day = datetime.combine(withdrawal_date, datetime.max.time())
-
-    stmt = select(func.sum(WithdrawalRequest.amount_minor)).where(
-        and_(
-            WithdrawalRequest.user_id == user_id,
-            WithdrawalRequest.type == "instant",
-            WithdrawalRequest.status.in_(["processing", "paid"]),
-            WithdrawalRequest.requested_at >= start_of_day,
-            WithdrawalRequest.requested_at <= end_of_day,
-        )
-    )
-    result = await db.execute(stmt)
-    total = result.scalar() or 0
-
-    return total
-
-
-def calculate_withdrawal_fee(amount_minor: int, withdrawal_type: str) -> int:
-    """
-    Calculate withdrawal fee based on amount and type.
-
-    Args:
-        amount_minor: Amount in minor units
-        withdrawal_type: 'standard' or 'instant'
-
-    Returns:
-        Fee in minor units
-    """
-    if withdrawal_type == "instant":
-        # Instant withdrawal fee: 2% or minimum $0.50 (50 cents)
-        fee_percent = 0.02
-        fee = int(amount_minor * fee_percent)
-        min_fee = 50  # $0.50 minimum
-        return max(fee, min_fee)
-    else:
-        # Standard withdrawal: no fee
-        return 0

@@ -101,20 +101,6 @@ class User(Base):
     total_spent = Column(Float, default=0.0)  # Total amount spent in the app
     last_wallet_update = Column(DateTime, nullable=True)  # Last time wallet was updated
 
-    # Stripe integration fields
-    stripe_customer_id = Column(
-        String, nullable=True, index=True
-    )  # Stripe customer ID for payment methods
-    stripe_connect_account_id = Column(
-        String(255), nullable=True
-    )  # Stripe Connect account ID
-    instant_withdrawal_enabled = Column(
-        Boolean, default=True, nullable=False
-    )  # Enable instant withdrawals
-    instant_withdrawal_daily_limit_minor = Column(
-        BigInteger, default=100000, nullable=False
-    )  # Daily limit in cents ($1000)
-
     # Cosmetic selections
     selected_avatar_id = Column(String, nullable=True)  # Currently selected avatar ID
     selected_frame_id = Column(String, nullable=True)  # Currently selected frame ID
@@ -126,11 +112,6 @@ class User(Base):
     )  # Badge functionality merged into TriviaModeConfig
     subscriptions = relationship("UserSubscription", back_populates="user")
     wallet_transactions = relationship("WalletTransaction", back_populates="user")
-    withdrawal_requests = relationship(
-        "WithdrawalRequest",
-        foreign_keys="[WithdrawalRequest.user_id]",
-        back_populates="user",
-    )
     iap_receipts = relationship("IapReceipt", back_populates="user")
     device_versions = relationship("UserDeviceVersion", back_populates="user")
 
@@ -181,7 +162,7 @@ class Withdrawal(Base):
     processed_at = Column(DateTime, nullable=True)
 
     # Relationship to user if desired
-    # Note: Withdrawal table is legacy - use WithdrawalRequest instead
+    # Note: Withdrawal table is legacy and currently unused
     user = relationship("User", backref="withdrawals")
 
 
@@ -243,6 +224,7 @@ class Avatar(Base):
         String(5), unique=True, nullable=True
     )  # Unique product ID (e.g., AV001)
     price_minor = Column(BigInteger, nullable=True)  # Price in minor units (cents)
+    product_type = Column(String, nullable=False, default="non_consumable")
     is_premium = Column(Boolean, default=False)  # Whether it's a premium avatar
     created_at = Column(
         DateTime, default=datetime.utcnow, nullable=False
@@ -278,6 +260,7 @@ class Frame(Base):
         String(5), unique=True, nullable=True
     )  # Unique product ID (e.g., FR001)
     price_minor = Column(BigInteger, nullable=True)  # Price in minor units (cents)
+    product_type = Column(String, nullable=False, default="non_consumable")
     is_premium = Column(Boolean, default=False)  # Whether it's a premium frame
     created_at = Column(
         DateTime, default=datetime.utcnow, nullable=False
@@ -364,6 +347,7 @@ class GemPackageConfig(Base):
         String(5), unique=True, nullable=True
     )  # Unique product ID (e.g., GP001)
     price_minor = Column(BigInteger, nullable=True)  # Price in minor units (cents)
+    product_type = Column(String, nullable=False, default="consumable")
     gems_amount = Column(Integer, nullable=False)
     is_one_time = Column(Boolean, default=False)  # For one-time offers
     description = Column(String, nullable=True)
@@ -413,9 +397,6 @@ class SubscriptionPlan(Base):
     )  # Deprecated: use unit_amount_minor instead
     billing_interval = Column(String, nullable=False)  # 'month' or 'year'
     features = Column(String, nullable=True)  # JSON string of features
-    stripe_price_id = Column(
-        String, nullable=True, unique=True
-    )  # Stripe price ID (source of truth)
     unit_amount_minor = Column(
         BigInteger, nullable=True
     )  # Price in minor units (cents)
@@ -442,16 +423,10 @@ class UserSubscription(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=False)
-    stripe_subscription_id = Column(String, nullable=True, unique=True)
     status = Column(String, nullable=False)  # 'active', 'canceled', 'past_due', etc.
     current_period_start = Column(DateTime, nullable=True)
     current_period_end = Column(DateTime, nullable=True)
     cancel_at_period_end = Column(Boolean, default=False)
-    payment_method_id = Column(String, nullable=True)  # Stripe payment method ID
-    stripe_customer_id = Column(String, nullable=True)
-    latest_invoice_id = Column(String, nullable=True)
-    default_payment_method_id = Column(String, nullable=True)
-    pending_setup_intent_id = Column(String, nullable=True)
     cancel_at = Column(DateTime, nullable=True)
     canceled_at = Column(DateTime, nullable=True)
     pause_collection = Column(
@@ -548,43 +523,6 @@ class UserPresence(Base):
 
     # Relationships
     user = relationship("User", backref="presence", uselist=False)
-
-
-# =================================
-#  Stripe Webhook Events Table
-# =================================
-class StripeWebhookEvent(Base):
-    __tablename__ = "stripe_webhook_events"
-
-    event_id = Column(String, primary_key=True)
-    type = Column(String, nullable=False)
-    livemode = Column(Boolean, nullable=False)
-    received_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    processed_at = Column(DateTime, nullable=True)
-    status = Column(
-        String, nullable=False, default="received"
-    )  # received/processed/failed
-    last_error = Column(String, nullable=True)
-
-
-# =================================
-#  Stripe Reconciliation Snapshots Table
-# =================================
-class StripeReconciliationSnapshot(Base):
-    __tablename__ = "stripe_reconciliation_snapshots"
-
-    id = Column(BigInteger, primary_key=True, index=True)
-    as_of_date = Column(Date, nullable=False)
-    currency = Column(String, nullable=False)
-    platform_available_minor = Column(BigInteger, nullable=False)
-    platform_pending_minor = Column(BigInteger, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint(
-            "as_of_date", "currency", name="uq_reconciliation_date_currency"
-        ),
-    )
 
 
 # =================================
@@ -904,7 +842,7 @@ class AppVersion(Base):
 class WalletTransaction(Base):
     __tablename__ = "wallet_transactions"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     amount_minor = Column(
         BigInteger, nullable=False
@@ -927,47 +865,30 @@ class WalletTransaction(Base):
 
 
 # =================================
-#  Withdrawal Request Table
-# =================================
-class WithdrawalRequest(Base):
-    __tablename__ = "withdrawal_requests"
-
-    id = Column(BigInteger, primary_key=True, index=True)
-    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
-    amount_minor = Column(BigInteger, nullable=False)
-    currency = Column(String, nullable=False)
-    type = Column(String, nullable=False)  # standard or instant
-    status = Column(
-        String, nullable=False
-    )  # pending_review, processing, paid, failed, rejected
-    fee_minor = Column(BigInteger, default=0, nullable=False)
-    stripe_payout_id = Column(String, nullable=True)
-    requested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    processed_at = Column(DateTime, nullable=True)
-    admin_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=True)
-    admin_notes = Column(Text, nullable=True)
-    livemode = Column(Boolean, default=False, nullable=False)
-
-    # Relationships
-    user = relationship(
-        "User", foreign_keys=[user_id], back_populates="withdrawal_requests"
-    )
-    admin = relationship("User", foreign_keys=[admin_id])
-
-
-# =================================
 #  IAP Receipt Table
 # =================================
 class IapReceipt(Base):
     __tablename__ = "iap_receipts"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
     user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
     platform = Column(String, nullable=False)  # apple or google
     transaction_id = Column(String, nullable=False)
+    original_transaction_id = Column(String, nullable=True)
+    web_order_line_item_id = Column(String, nullable=True)
     product_id = Column(String, nullable=False)
+    bundle_id = Column(String, nullable=True)
+    environment = Column(String, nullable=True)  # sandbox or production
+    product_type = Column(String, nullable=True)  # consumable, non_consumable, subscription
     receipt_data = Column(Text, nullable=True)
-    status = Column(String, nullable=False)  # verified, failed, consumed
+    purchase_token = Column(String, nullable=True)
+    purchase_time_ms = Column(BigInteger, nullable=True)
+    purchase_state = Column(Integer, nullable=True)
+    acknowledgement_state = Column(Integer, nullable=True)
+    revocation_date = Column(DateTime, nullable=True)
+    revocation_reason = Column(String, nullable=True)
+    app_account_token = Column(String, nullable=True)
+    status = Column(String, nullable=False)  # received, verified, credited, revoked, failed
     credited_amount_minor = Column(BigInteger, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -981,7 +902,29 @@ class IapReceipt(Base):
         UniqueConstraint(
             "platform", "transaction_id", name="uq_iap_receipts_platform_transaction"
         ),
+        UniqueConstraint(
+            "platform", "purchase_token", name="uq_iap_receipts_platform_purchase_token"
+        ),
     )
+
+
+# =================================
+#  IAP Events Table
+# =================================
+class IapEvent(Base):
+    __tablename__ = "iap_events"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True)
+    platform = Column(String, nullable=False)
+    event_id = Column(String, nullable=False, unique=True)
+    notification_type = Column(String, nullable=True)
+    subtype = Column(String, nullable=True)
+    transaction_id = Column(String, nullable=True)
+    purchase_token = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="received")
+    raw_payload = Column(Text, nullable=True)
+    received_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    processed_at = Column(DateTime, nullable=True)
 
 
 # =================================

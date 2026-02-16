@@ -30,7 +30,7 @@
    - **Action**: DELETE (already removed from models)
 
 6. **`withdrawals`** (Withdrawal)
-   - **Status**: ❌ LEGACY - Replaced by `withdrawal_requests` (WithdrawalRequest)
+   - **Status**: ❌ LEGACY
    - **Usage**: None found in routers
    - **Action**: DELETE
 
@@ -98,11 +98,6 @@
     - **Usage**: `rewards_logic.py` - Prize pool calculation
     - **Action**: KEEP
 
-13. **`withdrawal_requests`** (WithdrawalRequest)
-    - **Status**: ✅ ACTIVE (replaces `withdrawals`)
-    - **Usage**: Wallet/stripe withdrawal system
-    - **Action**: KEEP
-
 14. **All Mode-Specific Tables** (Active)
     - `trivia_mode_config` ✅
     - `trivia_questions_free_mode` ✅
@@ -133,8 +128,6 @@
     - `user_subscriptions` ✅
     - `blocks` ✅
     - `user_presence` ✅
-    - `stripe_webhook_events` ✅
-    - `stripe_reconciliation_snapshots` ✅
     - `global_chat_messages` ✅
     - `private_chat_conversations` ✅
     - `private_chat_messages` ✅
@@ -158,7 +151,7 @@
 3. ✅ `badges` - DELETE (migration in progress)
 4. ✅ `winners_draw_config` - DELETE (already removed from models)
 5. ✅ `winners_draw_results` - DELETE (already removed from models)
-6. ✅ `withdrawals` - DELETE (replaced by withdrawal_requests)
+6. ✅ `withdrawals` - DELETE
 
 ### Needs Verification (Potentially Legacy):
 7. ⚠️ `trivia` - Check if legacy draw system is still needed
@@ -170,7 +163,6 @@
 - All mode-specific tables
 - `user_daily_rewards` (daily login)
 - `company_revenue` (prize pool)
-- `withdrawal_requests` (withdrawals)
 - All other active tables
 
 ---
@@ -209,7 +201,7 @@
 3. ✅ `badges` - DELETED (merged into trivia_mode_config)
 4. ✅ `winners_draw_config` - DELETED (legacy draw config)
 5. ✅ `winners_draw_results` - DELETED (legacy draw winners)
-6. ✅ `withdrawals` - DELETED (replaced by withdrawal_requests)
+6. ✅ `withdrawals` - DELETED
 
 **Potentially Legacy (4 tables - VERIFIED AND DELETED):**
 7. ✅ `trivia` - DELETED (legacy question system)
@@ -221,7 +213,6 @@
 - All mode-specific tables
 - `user_daily_rewards` (daily login)
 - `company_revenue` (prize pool)
-- `withdrawal_requests` (withdrawals)
 - All other tables listed above
 
 ---

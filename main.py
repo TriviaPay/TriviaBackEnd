@@ -195,11 +195,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "payments",
             (
                 "/api/v1/wallet",
-                "/api/v1/payments",
-                "/api/v1/stripe-webhook",
-                "/api/v1/stripe-connect",
                 "/api/v1/iap",
-                "/api/v1/admin-withdrawals",
             ),
         ),
     )

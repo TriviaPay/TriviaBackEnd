@@ -133,6 +133,10 @@ class AppVersionResponse(BaseModel):
 class GemPackageRequest(BaseModel):
     price_minor: int = Field(..., description="Price in minor units (cents)")
     gems_amount: int = Field(..., description="Number of gems in the package")
+    product_type: Optional[str] = Field(
+        "consumable",
+        description="Product type: consumable, non_consumable, subscription",
+    )
     is_one_time: bool = Field(False, description="Whether this is a one-time offer")
     description: Optional[str] = Field(None, description="Description of the package")
     bucket: Optional[str] = Field(
@@ -148,6 +152,7 @@ class GemPackageResponse(BaseModel):
     id: int
     price_usd: float
     gems_amount: int
+    product_type: Optional[str] = None
     is_one_time: bool
     description: Optional[str]
     url: Optional[str] = None
@@ -164,6 +169,10 @@ class BadgeBase(BaseModel):
     description: Optional[str] = None
     image_url: str
     level: int
+    product_type: Optional[str] = Field(
+        "non_consumable",
+        description="Product type: consumable, non_consumable, subscription",
+    )
 
 
 class BadgeCreate(BadgeBase):
@@ -187,6 +196,10 @@ class CosmeticBase(BaseModel):
     description: Optional[str] = None
     price_gems: Optional[int] = None
     price_minor: Optional[int] = None
+    product_type: Optional[str] = Field(
+        "non_consumable",
+        description="Product type: consumable, non_consumable, subscription",
+    )
     is_premium: bool = False
     bucket: Optional[str] = None
     object_key: Optional[str] = None
@@ -237,7 +250,6 @@ class CreateSubscriptionPlanRequest(BaseModel):
     interval: str = "month"
     interval_count: int = 1
     billing_interval: Optional[str] = None
-    stripe_price_id: Optional[str] = None
     livemode: bool = False
 
 
@@ -251,7 +263,6 @@ class SubscriptionPlanResponse(BaseModel):
     interval: Optional[str] = None
     interval_count: int
     billing_interval: Optional[str] = None
-    stripe_price_id: Optional[str] = None
     livemode: bool
     trial_period_days: Optional[int] = None
     tax_behavior: Optional[str] = None

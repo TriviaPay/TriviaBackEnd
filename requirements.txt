@@ -6,10 +6,10 @@ python-dotenv==1.0.1
 passlib[bcrypt]==1.7.4
 bcrypt==3.2.2
 PyJWT==2.8.0
+cryptography>=42.0.0
 python-multipart==0.0.18
 requests==2.32.4
 descope>=1.7.0
-stripe>=5.0.0
 asyncpg>=0.29.0
 greenlet>=3.0.0  # Required for SQLAlchemy async
 pg8000==1.31.5  # Pure Python PostgreSQL driver
@@ -20,6 +20,7 @@ pydantic==2.6.1
 pydantic-settings==2.1.0
 pytest==8.3.5
 pytest-asyncio==1.2.0
+aiosqlite==0.20.0
 boto3==1.34.131
 redis[hiredis]>=5.0.0
 pusher==3.3.0

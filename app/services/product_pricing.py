@@ -3,6 +3,7 @@ Product Pricing Service - Provides product price lookup from database
 """
 
 import logging
+from typing import Any, Dict
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -99,3 +100,56 @@ async def get_price_minor_for_product_id(db: AsyncSession, product_id: str) -> i
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"Product ID '{product_id}' not found in product tables or price_minor is not set",
     )
+
+
+async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
+    """
+    Return product metadata (price and type) for a product_id.
+
+    Returns:
+        {
+            "product_id": str,
+            "price_minor": int,
+            "product_type": str
+        }
+    """
+    product = None
+
+    if product_id.startswith("AV"):
+        stmt = select(Avatar).where(Avatar.product_id == product_id)
+        result = await db.execute(stmt)
+        product = result.scalar_one_or_none()
+    elif product_id.startswith("FR"):
+        stmt = select(Frame).where(Frame.product_id == product_id)
+        result = await db.execute(stmt)
+        product = result.scalar_one_or_none()
+    elif product_id.startswith("GP"):
+        stmt = select(GemPackageConfig).where(GemPackageConfig.product_id == product_id)
+        result = await db.execute(stmt)
+        product = result.scalar_one_or_none()
+    elif product_id.startswith("BD"):
+        stmt = select(Badge).where(Badge.product_id == product_id)
+        result = await db.execute(stmt)
+        product = result.scalar_one_or_none()
+    else:
+        # Fallback: try all tables
+        for model in (Avatar, Frame, GemPackageConfig, Badge):
+            stmt = select(model).where(model.product_id == product_id)
+            result = await db.execute(stmt)
+            product = result.scalar_one_or_none()
+            if product:
+                break
+
+    if not product or product.price_minor is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Product ID '{product_id}' not found in product tables or price_minor is not set",
+        )
+
+    product_type = getattr(product, "product_type", None) or "consumable"
+
+    return {
+        "product_id": product_id,
+        "price_minor": product.price_minor,
+        "product_type": product_type,
+    }

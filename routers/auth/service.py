@@ -2263,7 +2263,6 @@ def check_subscription_status(
                 "currency": plan.currency,
                 "interval": plan.interval,
                 "interval_count": plan.interval_count,
-                "stripe_price_id": plan.stripe_price_id,
             }
         )
 
@@ -2338,7 +2337,6 @@ def list_subscription_plans(db: Session, livemode: Optional[bool] = None):
                 "interval": plan.interval,
                 "interval_count": plan.interval_count,
                 "billing_interval": plan.billing_interval,
-                "stripe_price_id": plan.stripe_price_id,
                 "livemode": plan.livemode,
                 "trial_period_days": plan.trial_period_days,
                 "tax_behavior": plan.tax_behavior,
@@ -2395,7 +2393,6 @@ def create_subscription_plan(db: Session, request):
         currency=request.currency,
         interval=request.interval,
         interval_count=request.interval_count,
-        stripe_price_id=request.stripe_price_id,
         livemode=request.livemode,
     )
 
@@ -2415,7 +2412,6 @@ def create_subscription_plan(db: Session, request):
             "currency": plan.currency,
             "interval": plan.interval,
             "interval_count": plan.interval_count,
-            "stripe_price_id": plan.stripe_price_id,
         },
     }
 
@@ -2502,6 +2498,7 @@ def create_gem_package(db: Session, package):
     new_package = GemPackageConfig(
         price_minor=package.price_minor,
         gems_amount=package.gems_amount,
+        product_type=getattr(package, "product_type", None) or "consumable",
         is_one_time=package.is_one_time,
         description=package.description,
         bucket=package.bucket,
@@ -2528,6 +2525,7 @@ def create_gem_package(db: Session, package):
         "id": new_package.id,
         "price_usd": new_package.price_usd,
         "gems_amount": new_package.gems_amount,
+        "product_type": new_package.product_type,
         "is_one_time": new_package.is_one_time,
         "description": new_package.description,
         "url": signed_url,
@@ -2548,6 +2546,8 @@ def update_gem_package(db: Session, package_id: int, package):
 
     db_package.price_minor = package.price_minor
     db_package.gems_amount = package.gems_amount
+    if getattr(package, "product_type", None):
+        db_package.product_type = package.product_type
     db_package.is_one_time = package.is_one_time
     db_package.description = package.description
     db_package.bucket = package.bucket
@@ -2573,6 +2573,7 @@ def update_gem_package(db: Session, package_id: int, package):
         "id": db_package.id,
         "price_usd": db_package.price_usd,
         "gems_amount": db_package.gems_amount,
+        "product_type": db_package.product_type,
         "is_one_time": db_package.is_one_time,
         "description": db_package.description,
         "url": signed_url,
@@ -2760,6 +2761,7 @@ def create_avatar(db: Session, avatar):
         description=avatar.description,
         price_gems=avatar.price_gems,
         price_usd=avatar.price_usd,
+        product_type=getattr(avatar, "product_type", None) or "non_consumable",
         is_premium=avatar.is_premium,
         bucket=avatar.bucket,
         object_key=avatar.object_key,
@@ -2783,6 +2785,8 @@ def update_avatar(db: Session, avatar_id: str, avatar_update):
     avatar.description = avatar_update.description
     avatar.price_gems = avatar_update.price_gems
     avatar.price_minor = avatar_update.price_minor
+    if getattr(avatar_update, "product_type", None):
+        avatar.product_type = avatar_update.product_type
     avatar.is_premium = avatar_update.is_premium
     avatar.bucket = avatar_update.bucket
     avatar.object_key = avatar_update.object_key
@@ -2830,6 +2834,7 @@ def create_frame(db: Session, frame):
         description=frame.description,
         price_gems=frame.price_gems,
         price_usd=frame.price_usd,
+        product_type=getattr(frame, "product_type", None) or "non_consumable",
         is_premium=frame.is_premium,
         bucket=frame.bucket,
         object_key=frame.object_key,
@@ -2853,6 +2858,8 @@ def update_frame(db: Session, frame_id: str, frame_update):
     frame.description = frame_update.description
     frame.price_gems = frame_update.price_gems
     frame.price_minor = frame_update.price_minor
+    if getattr(frame_update, "product_type", None):
+        frame.product_type = frame_update.product_type
     frame.is_premium = frame_update.is_premium
     frame.bucket = frame_update.bucket
     frame.object_key = frame_update.object_key
