@@ -50,6 +50,14 @@ class GoogleVerifyRequest(BaseModel):
     )
 
 
+class SubscriptionInfo(BaseModel):
+    subscription_id: int
+    plan_name: str
+    status: str
+    current_period_start: Optional[str] = None
+    current_period_end: Optional[str] = None
+
+
 class IapVerifyResponse(BaseModel):
     success: bool
     platform: str
@@ -61,3 +69,4 @@ class IapVerifyResponse(BaseModel):
     new_balance_usd: Optional[float]
     receipt_id: int
     already_processed: Optional[bool] = False
+    subscription: Optional[SubscriptionInfo] = None

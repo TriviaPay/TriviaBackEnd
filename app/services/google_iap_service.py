@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 import google.auth
@@ -83,7 +83,7 @@ def get_google_credentials_from_env() -> google.auth.credentials.Credentials:
         logger.error(f"Failed to load Google service account credentials: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to load Google service account credentials: {str(e)}",
+            detail="Failed to load Google service account credentials",
         )
 
 
@@ -106,8 +106,27 @@ def get_android_publisher_client(credentials) -> Any:
         logger.error(f"Failed to create Android Publisher client: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create Android Publisher client: {str(e)}",
+            detail="Failed to create Android Publisher client",
         )
+
+
+async def get_google_subscription_state(
+    package_name: str, purchase_token: str
+) -> Dict[str, Any]:
+    """Query Google Play subscriptionsv2 API for authoritative subscription state.
+
+    Returns the full subscription resource including ``subscriptionState``.
+    """
+    credentials = get_google_credentials_from_env()
+    service = get_android_publisher_client(credentials)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor,
+        lambda: service.purchases()
+        .subscriptionsv2()
+        .get(packageName=package_name, token=purchase_token)
+        .execute(),
+    )
 
 
 async def acknowledge_google_purchase(
@@ -115,7 +134,7 @@ async def acknowledge_google_purchase(
 ) -> None:
     credentials = get_google_credentials_from_env()
     service = get_android_publisher_client(credentials)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(
         _executor,
         lambda: service.purchases()
@@ -130,12 +149,37 @@ async def acknowledge_google_purchase(
     )
 
 
+async def acknowledge_google_subscription(
+    package_name: str, subscription_id: str, purchase_token: str
+) -> None:
+    """Acknowledge a Google Play subscription purchase.
+
+    Uses purchases.subscriptions.acknowledge (v3) which is the correct
+    endpoint for subscription acknowledgement (distinct from products.acknowledge).
+    """
+    credentials = get_google_credentials_from_env()
+    service = get_android_publisher_client(credentials)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
+        _executor,
+        lambda: service.purchases()
+        .subscriptions()
+        .acknowledge(
+            packageName=package_name,
+            subscriptionId=subscription_id,
+            token=purchase_token,
+            body={},
+        )
+        .execute(),
+    )
+
+
 async def consume_google_purchase(
     package_name: str, product_id: str, purchase_token: str
 ) -> None:
     credentials = get_google_credentials_from_env()
     service = get_android_publisher_client(credentials)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(
         _executor,
         lambda: service.purchases()
@@ -175,7 +219,7 @@ async def verify_google_purchase_token(
         service = get_android_publisher_client(credentials)
 
         # Wrap sync Google API call in async executor
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         purchase = await loop.run_in_executor(
             _executor,
             lambda: service.purchases()
@@ -225,7 +269,7 @@ async def verify_google_purchase_token(
         logger.error(f"Unexpected error verifying Google purchase: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to verify purchase with Google: {str(e)}",
+            detail="Failed to verify purchase with Google",
         )
 
 
@@ -272,20 +316,75 @@ async def process_google_iap(
             detail="Transaction has been revoked",
         )
 
-    # Verify purchase with Google
+    # Look up product type early to determine which Google API to use
     try:
-        google_response = await verify_google_purchase_token(
-            package_name=package_name,
-            product_id=product_id,
-            purchase_token=purchase_token,
+        product_info = await get_product_info(db, product_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get product for {product_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Product ID '{product_id}' not found or invalid",
         )
+
+    is_subscription = product_info["product_type"] == "subscription"
+
+    # Verify purchase with Google using the appropriate API
+    try:
+        if is_subscription:
+            google_response = await get_google_subscription_state(
+                package_name=package_name,
+                purchase_token=purchase_token,
+            )
+            # Validate subscription is active or in grace period
+            sub_state = google_response.get("subscriptionState", "")
+            if sub_state not in ("SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Subscription is not active: {sub_state}",
+                )
+            # Validate subscription product matches the client's product_id
+            line_items = google_response.get("lineItems", [])
+            if line_items:
+                actual_product = line_items[0].get("productId", "")
+                if actual_product and actual_product != product_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Subscription product mismatch: expected '{product_id}', got '{actual_product}'",
+                    )
+        else:
+            google_response = await verify_google_purchase_token(
+                package_name=package_name,
+                product_id=product_id,
+                purchase_token=purchase_token,
+            )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Unexpected error during Google purchase verification: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to verify purchase with Google: {str(e)}",
+            detail="Failed to verify purchase with Google",
+        )
+
+    # Enforce user binding — verify purchase belongs to the requesting user
+    # For subscriptionsv2, the ID is nested under externalAccountIdentifiers;
+    # for products.get, it's at the top level.
+    if is_subscription:
+        ext_ids = google_response.get("externalAccountIdentifiers", {})
+        obfuscated_id = ext_ids.get("obfuscatedExternalAccountId")
+    else:
+        obfuscated_id = google_response.get("obfuscatedExternalAccountId")
+    if not obfuscated_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="obfuscatedExternalAccountId missing from purchase",
+        )
+    if obfuscated_id != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Purchase does not belong to requesting user",
         )
 
     # Extract transaction details
@@ -293,11 +392,15 @@ async def process_google_iap(
     # Fallback to productId + purchaseToken combination if orderId not available
     transaction_id = google_response.get("orderId")
     if not transaction_id:
+        # For subscriptionsv2, try latestOrderId
+        transaction_id = google_response.get("latestOrderId")
+    if not transaction_id:
         # Fallback: use productId + purchaseToken as unique identifier
         transaction_id = f"{product_id}:{purchase_token[:20]}"
 
+    # For one-time products, validate product_id matches
     confirmed_product_id = google_response.get("productId", product_id)
-    if confirmed_product_id != product_id:
+    if not is_subscription and confirmed_product_id != product_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Product ID mismatch: expected '{product_id}', got '{confirmed_product_id}'",
@@ -361,28 +464,19 @@ async def process_google_iap(
                 f"Google IAP transaction {transaction_id} previously failed, retrying"
             )
 
-    # Look up product from database
-    try:
-        product_info = await get_product_info(db, product_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get product for {product_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Product ID '{product_id}' not found or invalid",
-        )
-
+    # product_info already fetched above (before Google API call)
     price_minor = product_info["price_minor"]
     product_type = product_info["product_type"]
-    if product_type == "subscription":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Subscription purchases are not supported in this endpoint",
-        )
 
     purchase_state = google_response.get("purchaseState")
-    acknowledgement_state = google_response.get("acknowledgementState")
+    raw_ack_state = google_response.get("acknowledgementState")
+    # Normalize acknowledgement state to integer for storage:
+    # products.get returns int (0=pending, 1=acknowledged);
+    # subscriptionsv2 returns enum string.
+    if isinstance(raw_ack_state, str):
+        acknowledgement_state = 1 if raw_ack_state == "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED" else 0
+    else:
+        acknowledgement_state = raw_ack_state
     purchase_time_ms = google_response.get("purchaseTimeMillis")
 
     try:
@@ -391,7 +485,7 @@ async def process_google_iap(
             receipt = existing_receipt
             receipt.status = "verified"
             receipt.credited_amount_minor = price_minor
-            receipt.updated_at = datetime.utcnow()
+            receipt.updated_at = datetime.now(timezone.utc)
             receipt.purchase_state = purchase_state
             receipt.acknowledgement_state = acknowledgement_state
             receipt.purchase_time_ms = int(purchase_time_ms) if purchase_time_ms else None
@@ -411,8 +505,8 @@ async def process_google_iap(
                 purchase_state=purchase_state,
                 acknowledgement_state=acknowledgement_state,
                 purchase_time_ms=int(purchase_time_ms) if purchase_time_ms else None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
             )
             db.add(receipt)
 
@@ -432,14 +526,20 @@ async def process_google_iap(
         )
 
         receipt.status = "credited"
-        receipt.updated_at = datetime.utcnow()
+        receipt.updated_at = datetime.now(timezone.utc)
 
         # Acknowledge or consume after crediting
         try:
-            if product_type == "consumable":
-                await consume_google_purchase(package_name, product_id, purchase_token)
-            else:
+            if is_subscription:
+                # Subscriptions must be acknowledged via purchases.subscriptions.acknowledge
                 if acknowledgement_state != 1:
+                    await acknowledge_google_subscription(
+                        package_name, product_id, purchase_token
+                    )
+            else:
+                if product_type == "consumable":
+                    await consume_google_purchase(package_name, product_id, purchase_token)
+                elif acknowledgement_state != 1:
                     await acknowledge_google_purchase(
                         package_name, product_id, purchase_token
                     )
@@ -501,5 +601,5 @@ async def process_google_iap(
         logger.error(f"Failed to credit wallet for Google IAP: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to credit wallet: {str(e)}",
+            detail="Failed to credit wallet",
         )

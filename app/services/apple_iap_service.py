@@ -213,12 +213,16 @@ async def process_apple_iap(
         )
 
     payload_app_account = payload.get("appAccountToken")
-    if app_account_token:
-        if not payload_app_account or payload_app_account != app_account_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="app_account_token does not match signed transaction",
-            )
+    if not payload_app_account:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="appAccountToken missing from signed transaction",
+        )
+    if payload_app_account != str(user.account_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="appAccountToken does not match requesting user",
+        )
 
     transaction_id = payload.get("transactionId")
     original_transaction_id = payload.get("originalTransactionId")
@@ -325,15 +329,15 @@ async def process_apple_iap(
                 ),
                 revocation_reason=str(revocation_reason) if revocation_reason else None,
                 app_account_token=payload_app_account,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
             )
             db.add(receipt)
             await db.flush()
 
         if revocation_date_ms:
             receipt.status = "revoked"
-            receipt.updated_at = datetime.utcnow()
+            receipt.updated_at = datetime.now(timezone.utc)
             await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -342,7 +346,7 @@ async def process_apple_iap(
 
         receipt.status = "verified"
         receipt.credited_amount_minor = price_minor
-        receipt.updated_at = datetime.utcnow()
+        receipt.updated_at = datetime.now(timezone.utc)
 
         new_balance = await adjust_wallet_balance(
             db=db,
@@ -357,7 +361,7 @@ async def process_apple_iap(
         )
 
         receipt.status = "credited"
-        receipt.updated_at = datetime.utcnow()
+        receipt.updated_at = datetime.now(timezone.utc)
         await db.commit()
     except IntegrityError:
         await db.rollback()

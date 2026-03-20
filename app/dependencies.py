@@ -54,6 +54,7 @@ async def get_current_user(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User profile not found. Please complete profile setup first.",
             )
+    request.state.user = user
     return user
 
 

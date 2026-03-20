@@ -3,7 +3,7 @@ Wallet Service - Handles wallet balance adjustments and queries
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import and_, select
@@ -181,14 +181,14 @@ async def adjust_wallet_balance(
         event_id=event_id,
         idempotency_key=idempotency_key,
         livemode=livemode,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     db.add(transaction)
 
     # Update user wallet balance
     user.wallet_balance_minor = new_balance
     user.wallet_currency = currency
-    user.last_wallet_update = datetime.utcnow()
+    user.last_wallet_update = datetime.now(timezone.utc)
 
     await db.flush()
 
@@ -231,17 +231,7 @@ async def get_wallet_balance(
         raise ValueError(
             f"Unsupported currency: {currency}. Supported: {', '.join(supported_currencies)}"
         )
-    """
-    Get current wallet balance for a user and currency.
 
-    Args:
-        db: Async database session
-        user_id: User account ID
-        currency: Currency code (default: 'usd')
-
-    Returns:
-        Balance in minor units (0 if no balance found)
-    """
     stmt = select(User).where(User.account_id == user_id)
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()

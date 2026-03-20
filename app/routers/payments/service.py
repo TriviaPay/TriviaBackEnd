@@ -1,5 +1,7 @@
 """Payments/Wallet/IAP service layer."""
 
+from __future__ import annotations
+
 import base64
 import json
 from datetime import datetime, timezone
@@ -10,8 +12,16 @@ from sqlalchemy.exc import IntegrityError
 
 import core.config as config
 from app.models.wallet import IapEvent, IapReceipt
+import logging
+
 from app.services.apple_iap_service import process_apple_iap, verify_signed_transaction_info
-from app.services.google_iap_service import process_google_iap
+from app.services.google_iap_service import get_google_subscription_state, process_google_iap
+from app.services.subscription_iap_service import (
+    activate_subscription_from_iap,
+    deactivate_subscription,
+    lookup_subscription_plan,
+    update_subscription_renewal_status,
+)
 from app.services.wallet_service import (
     adjust_wallet_balance,
     get_wallet_balance as wallet_service_get_wallet_balance,
@@ -22,9 +32,12 @@ from .schemas import (
     AppleVerifyRequest,
     GoogleVerifyRequest,
     IapVerifyResponse,
+    SubscriptionInfo,
     WalletBalanceResponse,
     WalletTransactionResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 
 async def get_wallet_info(db, *, user, include_transactions: bool):
@@ -65,6 +78,16 @@ async def verify_apple_purchase(db, *, user, request: AppleVerifyRequest) -> Iap
         environment=request.environment or "production",
         app_account_token=request.app_account_token,
     )
+
+    # Check if this product maps to a subscription plan
+    subscription_info = None
+    if result["success"] and not result.get("already_processed"):
+        subscription_info = await _try_activate_subscription(
+            db, platform="apple", product_id=request.product_id,
+            user_id=user.account_id, receipt_id=result["receipt_id"],
+            livemode=(request.environment != "sandbox"),
+        )
+
     return IapVerifyResponse(
         success=result["success"],
         platform=result["platform"],
@@ -82,6 +105,7 @@ async def verify_apple_purchase(db, *, user, request: AppleVerifyRequest) -> Iap
         ),
         receipt_id=result["receipt_id"],
         already_processed=result.get("already_processed", False),
+        subscription=subscription_info,
     )
 
 
@@ -101,6 +125,15 @@ async def verify_google_purchase(db, *, user, request: GoogleVerifyRequest) -> I
         purchase_token=request.purchase_token,
     )
 
+    # Check if this product maps to a subscription plan
+    subscription_info = None
+    if result["success"] and not result.get("already_processed"):
+        subscription_info = await _try_activate_subscription(
+            db, platform="google", product_id=request.product_id,
+            user_id=user.account_id, receipt_id=result["receipt_id"],
+            livemode=True,
+        )
+
     return IapVerifyResponse(
         success=result["success"],
         platform=result["platform"],
@@ -118,7 +151,27 @@ async def verify_google_purchase(db, *, user, request: GoogleVerifyRequest) -> I
         ),
         receipt_id=result["receipt_id"],
         already_processed=result.get("already_processed", False),
+        subscription=subscription_info,
     )
+
+
+async def _try_activate_subscription(
+    db, *, platform: str, product_id: str, user_id: int, receipt_id: int, livemode: bool
+) -> SubscriptionInfo | None:
+    """If the product_id maps to a subscription plan, activate it."""
+    plan = await lookup_subscription_plan(db, platform=platform, product_id=product_id)
+    if not plan:
+        return None
+
+    try:
+        sub_result = await activate_subscription_from_iap(
+            db, user_id=user_id, plan=plan, receipt_id=receipt_id, livemode=livemode,
+        )
+        await db.commit()
+        return SubscriptionInfo(**sub_result)
+    except Exception as exc:
+        logger.error("Failed to activate subscription for user=%s plan=%s: %s", user_id, plan.id, exc)
+        return None
 
 
 async def process_apple_notification(db, *, signed_payload: str):
@@ -142,7 +195,7 @@ async def process_apple_notification(db, *, signed_payload: str):
         transaction_id=transaction_id,
         status="received",
         raw_payload=signed_payload,
-        received_at=datetime.utcnow(),
+        received_at=datetime.now(timezone.utc),
     )
 
     try:
@@ -151,6 +204,107 @@ async def process_apple_notification(db, *, signed_payload: str):
     except IntegrityError:
         await db.rollback()
         return {"status": "already_processed", "event_id": event_id}
+
+    # Handle subscription renewal notifications
+    if notification_type == "DID_RENEW" and transaction_id:
+        product_id = tx_payload.get("productId")
+        original_tx_id = tx_payload.get("originalTransactionId")
+        if product_id and original_tx_id:
+            plan = await lookup_subscription_plan(db, platform="apple", product_id=product_id)
+            if plan:
+                # Find user from existing receipt using originalTransactionId
+                receipt_stmt = select(IapReceipt).where(
+                    and_(
+                        IapReceipt.platform == "apple",
+                        IapReceipt.original_transaction_id == original_tx_id,
+                    )
+                ).order_by(IapReceipt.created_at.desc()).limit(1)
+                receipt_result = await db.execute(receipt_stmt)
+                receipt = receipt_result.scalar_one_or_none()
+                if receipt:
+                    try:
+                        await activate_subscription_from_iap(
+                            db, user_id=receipt.user_id, plan=plan,
+                            receipt_id=receipt.id, livemode=(receipt.environment == "production"),
+                        )
+                    except Exception as exc:
+                        logger.error("Failed to renew subscription from Apple webhook: %s", exc)
+
+    # Handle subscription expiry/revoke
+    if notification_type in ("EXPIRED", "REVOKE") and transaction_id:
+        product_id = tx_payload.get("productId")
+        original_tx_id = tx_payload.get("originalTransactionId")
+        if product_id and original_tx_id:
+            plan = await lookup_subscription_plan(db, platform="apple", product_id=product_id)
+            if plan:
+                receipt_stmt = select(IapReceipt).where(
+                    and_(
+                        IapReceipt.platform == "apple",
+                        IapReceipt.original_transaction_id == original_tx_id,
+                    )
+                ).order_by(IapReceipt.created_at.desc()).limit(1)
+                receipt_result = await db.execute(receipt_stmt)
+                receipt = receipt_result.scalar_one_or_none()
+                if receipt:
+                    new_status = "expired" if notification_type == "EXPIRED" else "revoked"
+                    try:
+                        await deactivate_subscription(
+                            db, user_id=receipt.user_id, plan=plan, new_status=new_status,
+                        )
+                    except Exception as exc:
+                        logger.error("Failed to deactivate subscription from Apple webhook: %s", exc)
+
+    # Handle grace period expiry
+    if notification_type == "GRACE_PERIOD_EXPIRED" and transaction_id:
+        product_id = tx_payload.get("productId")
+        original_tx_id = tx_payload.get("originalTransactionId")
+        if product_id and original_tx_id:
+            plan = await lookup_subscription_plan(db, platform="apple", product_id=product_id)
+            if plan:
+                receipt_stmt = select(IapReceipt).where(
+                    and_(
+                        IapReceipt.platform == "apple",
+                        IapReceipt.original_transaction_id == original_tx_id,
+                    )
+                ).order_by(IapReceipt.created_at.desc()).limit(1)
+                receipt_result = await db.execute(receipt_stmt)
+                receipt = receipt_result.scalar_one_or_none()
+                if receipt:
+                    try:
+                        await deactivate_subscription(
+                            db, user_id=receipt.user_id, plan=plan, new_status="expired",
+                        )
+                    except Exception as exc:
+                        logger.error("Failed to expire subscription after grace period: %s", exc)
+
+    # Handle renewal failure and renewal status changes
+    if notification_type in ("DID_FAIL_TO_RENEW", "DID_CHANGE_RENEWAL_STATUS") and transaction_id:
+        product_id = tx_payload.get("productId")
+        original_tx_id = tx_payload.get("originalTransactionId")
+        if product_id and original_tx_id:
+            plan = await lookup_subscription_plan(db, platform="apple", product_id=product_id)
+            if plan:
+                receipt_stmt = select(IapReceipt).where(
+                    and_(
+                        IapReceipt.platform == "apple",
+                        IapReceipt.original_transaction_id == original_tx_id,
+                    )
+                ).order_by(IapReceipt.created_at.desc()).limit(1)
+                receipt_result = await db.execute(receipt_stmt)
+                receipt = receipt_result.scalar_one_or_none()
+                if receipt:
+                    if notification_type == "DID_FAIL_TO_RENEW":
+                        cancel_at_end = True
+                    else:
+                        # DID_CHANGE_RENEWAL_STATUS
+                        cancel_at_end = subtype == "AUTO_RENEW_DISABLED"
+                    try:
+                        await update_subscription_renewal_status(
+                            db, user_id=receipt.user_id, plan=plan,
+                            cancel_at_period_end=cancel_at_end,
+                        )
+                    except Exception as exc:
+                        logger.error("Failed to update renewal status from Apple webhook: %s", exc)
 
     if notification_type in ("REFUND", "REVOKE"):
         receipt_stmt = select(IapReceipt).where(
@@ -178,10 +332,10 @@ async def process_apple_notification(db, *, signed_payload: str):
                 receipt.status = "revoked"
                 receipt.revocation_date = datetime.now(timezone.utc)
                 receipt.revocation_reason = notification_type
-                receipt.updated_at = datetime.utcnow()
+                receipt.updated_at = datetime.now(timezone.utc)
 
     event.status = "processed"
-    event.processed_at = datetime.utcnow()
+    event.processed_at = datetime.now(timezone.utc)
     await db.commit()
     return {"status": "processed", "event_id": event_id}
 
@@ -200,13 +354,14 @@ async def process_google_notification(db, *, payload: dict):
             decoded = {}
 
     one_time = decoded.get("oneTimeProductNotification", {})
-    notification_type = one_time.get("notificationType")
+    sub_notification = decoded.get("subscriptionNotification", {})
+    notification_type = one_time.get("notificationType") or sub_notification.get("notificationType")
     try:
         notification_type = int(notification_type) if notification_type is not None else None
     except (TypeError, ValueError):
         notification_type = None
-    purchase_token = one_time.get("purchaseToken")
-    product_id = one_time.get("sku")
+    purchase_token = one_time.get("purchaseToken") or sub_notification.get("purchaseToken")
+    product_id = one_time.get("sku") or sub_notification.get("subscriptionId")
 
     if not event_id:
         event_id = f"google:{purchase_token or 'unknown'}:{notification_type or 'unknown'}"
@@ -219,7 +374,7 @@ async def process_google_notification(db, *, payload: dict):
         purchase_token=purchase_token,
         status="received",
         raw_payload=raw_payload,
-        received_at=datetime.utcnow(),
+        received_at=datetime.now(timezone.utc),
     )
 
     try:
@@ -228,6 +383,92 @@ async def process_google_notification(db, *, payload: dict):
     except IntegrityError:
         await db.rollback()
         return {"status": "already_processed", "event_id": event_id}
+
+    # Handle subscription notifications — re-query Google for authoritative state
+    google_sub_signal_types = {2, 4, 5, 7, 12, 13}  # renewal, recovery, expiry, revoke signals
+    if sub_notification and notification_type in google_sub_signal_types and product_id and purchase_token:
+        if not config.GOOGLE_IAP_PACKAGE_NAME:
+            logger.error("GOOGLE_IAP_PACKAGE_NAME not configured — cannot query subscription state")
+        else:
+            try:
+                sub_state = await get_google_subscription_state(
+                    package_name=config.GOOGLE_IAP_PACKAGE_NAME,
+                    purchase_token=purchase_token,
+                )
+                subscription_state = sub_state.get("subscriptionState", "")
+
+                # Active or grace period — grant/renew entitlement
+                if subscription_state in (
+                    "SUBSCRIPTION_STATE_ACTIVE",
+                    "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+                ):
+                    plan = await lookup_subscription_plan(db, platform="google", product_id=product_id)
+                    if plan:
+                        receipt_stmt = select(IapReceipt).where(
+                            and_(
+                                IapReceipt.platform == "google",
+                                IapReceipt.purchase_token == purchase_token,
+                            )
+                        )
+                        receipt_result = await db.execute(receipt_stmt)
+                        receipt = receipt_result.scalar_one_or_none()
+                        if receipt:
+                            await activate_subscription_from_iap(
+                                db, user_id=receipt.user_id, plan=plan,
+                                receipt_id=receipt.id, livemode=True,
+                            )
+
+                # Expired or revoked — remove entitlement
+                elif subscription_state in (
+                    "SUBSCRIPTION_STATE_EXPIRED",
+                    "SUBSCRIPTION_STATE_REVOKED",
+                ):
+                    plan = await lookup_subscription_plan(db, platform="google", product_id=product_id)
+                    if plan:
+                        receipt_stmt = select(IapReceipt).where(
+                            and_(
+                                IapReceipt.platform == "google",
+                                IapReceipt.purchase_token == purchase_token,
+                            )
+                        )
+                        receipt_result = await db.execute(receipt_stmt)
+                        receipt = receipt_result.scalar_one_or_none()
+                        if receipt:
+                            new_status = "expired" if subscription_state == "SUBSCRIPTION_STATE_EXPIRED" else "revoked"
+                            await deactivate_subscription(
+                                db, user_id=receipt.user_id, plan=plan, new_status=new_status,
+                            )
+
+                # On hold or paused — suspend entitlement
+                elif subscription_state in (
+                    "SUBSCRIPTION_STATE_ON_HOLD",
+                    "SUBSCRIPTION_STATE_PAUSED",
+                ):
+                    plan = await lookup_subscription_plan(db, platform="google", product_id=product_id)
+                    if plan:
+                        receipt_stmt = select(IapReceipt).where(
+                            and_(
+                                IapReceipt.platform == "google",
+                                IapReceipt.purchase_token == purchase_token,
+                            )
+                        )
+                        receipt_result = await db.execute(receipt_stmt)
+                        receipt = receipt_result.scalar_one_or_none()
+                        if receipt:
+                            status_map = {
+                                "SUBSCRIPTION_STATE_ON_HOLD": "on_hold",
+                                "SUBSCRIPTION_STATE_PAUSED": "paused",
+                            }
+                            await deactivate_subscription(
+                                db, user_id=receipt.user_id, plan=plan,
+                                new_status=status_map[subscription_state],
+                            )
+
+                else:
+                    logger.info("Unhandled Google subscription state: %s", subscription_state)
+
+            except Exception as exc:
+                logger.error("Failed to handle Google subscription notification: %s", exc)
 
     refund_types = set(config.GOOGLE_IAP_REFUND_NOTIFICATION_TYPES)
     if notification_type is not None and notification_type in refund_types and purchase_token:
@@ -256,10 +497,10 @@ async def process_google_notification(db, *, payload: dict):
                 receipt.status = "revoked"
                 receipt.revocation_date = datetime.now(timezone.utc)
                 receipt.revocation_reason = str(notification_type)
-                receipt.updated_at = datetime.utcnow()
+                receipt.updated_at = datetime.now(timezone.utc)
 
     event.status = "processed"
-    event.processed_at = datetime.utcnow()
+    event.processed_at = datetime.now(timezone.utc)
     await db.commit()
     return {"status": "processed", "event_id": event_id, "product_id": product_id}
 

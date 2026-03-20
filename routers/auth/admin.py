@@ -526,3 +526,15 @@ async def get_avatar_stats(
 ):
     """Admin endpoint to get statistics about avatars usage"""
     return admin_get_avatar_stats(db)
+
+
+@router.post("/reconciliation/run", response_model=Dict[str, Any])
+async def run_reconciliation(
+    current_user: dict = Depends(get_admin_user),
+):
+    """Trigger a wallet reconciliation check. Compares user balances against transaction ledger."""
+    from app.db import AsyncSessionLocal
+    from app.services.reconciliation_service import run_wallet_reconciliation
+
+    async with AsyncSessionLocal() as session:
+        return await run_wallet_reconciliation(session)

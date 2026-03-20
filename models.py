@@ -407,6 +407,12 @@ class SubscriptionPlan(Base):
     tax_behavior = Column(
         String, nullable=True
     )  # 'inclusive', 'exclusive', 'unspecified'
+    apple_product_id = Column(
+        String, nullable=True, unique=True
+    )  # App Store product identifier
+    google_product_id = Column(
+        String, nullable=True, unique=True
+    )  # Google Play product identifier
     livemode = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -443,6 +449,7 @@ class UserSubscription(Base):
     plan = relationship("SubscriptionPlan", backref="subscribers")
 
     __table_args__ = (
+        UniqueConstraint("user_id", "plan_id", name="uq_user_subscriptions_user_plan"),
         Index(
             "ix_user_subscriptions_user_status_end",
             "user_id",

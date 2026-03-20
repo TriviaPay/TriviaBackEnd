@@ -286,12 +286,44 @@ def schedule_draws() -> None:
         misfire_grace_time=3600,
     )
 
+    # Schedule daily wallet reconciliation at 03:00 UTC
+    scheduler.add_job(
+        run_wallet_reconciliation_job,
+        CronTrigger(hour=3, minute=0, timezone="UTC"),
+        id="daily_wallet_reconciliation",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
 
 # Legacy run_daily_draw removed - uses perform_draw which requires TriviaQuestionsWinners (deleted)
 # Use mode-specific draw functions instead (run_free_mode_draw, run_bronze_mode_draw, etc.)
 
 # Legacy reset_daily_questions removed - uses TriviaQuestionsDaily and Trivia tables (deleted)
 # Use mode-specific question allocation instead (allocate_free_mode_questions, allocate_bronze_mode_questions, etc.)
+
+
+async def run_wallet_reconciliation_job() -> None:
+    """Run daily wallet reconciliation to detect balance drift."""
+    from app.db import AsyncSessionLocal
+    from app.services.reconciliation_service import run_wallet_reconciliation
+
+    try:
+        async with AsyncSessionLocal() as session:
+            summary = await run_wallet_reconciliation(session)
+            if summary["mismatches"]:
+                logger.error(
+                    "Wallet reconciliation: %d mismatches found out of %d users",
+                    len(summary["mismatches"]),
+                    summary["checked"],
+                )
+            else:
+                logger.info(
+                    "Wallet reconciliation passed: %d users checked",
+                    summary["checked"],
+                )
+    except Exception as e:
+        logger.error(f"Wallet reconciliation job failed: {e}")
 
 
 async def run_monthly_subscription_reset() -> None:

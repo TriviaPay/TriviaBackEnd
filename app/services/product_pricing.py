@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.products import Avatar, Badge, Frame, GemPackageConfig
+from models import SubscriptionPlan
 
 logger = logging.getLogger(__name__)
 
@@ -141,9 +142,34 @@ async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
                 break
 
     if not product or product.price_minor is None:
+        # Try subscription plans (by apple or google product ID)
+        sub_stmt = select(SubscriptionPlan).where(
+            (SubscriptionPlan.apple_product_id == product_id)
+            | (SubscriptionPlan.google_product_id == product_id)
+        )
+        sub_result = await db.execute(sub_stmt)
+        sub_plan = sub_result.scalar_one_or_none()
+        if sub_plan and sub_plan.unit_amount_minor is not None:
+            if sub_plan.unit_amount_minor <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Product '{product_id}' has invalid price",
+                )
+            return {
+                "product_id": product_id,
+                "price_minor": sub_plan.unit_amount_minor,
+                "product_type": "subscription",
+            }
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Product ID '{product_id}' not found in product tables or price_minor is not set",
+        )
+
+    if product.price_minor <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Product '{product_id}' has invalid price",
         )
 
     product_type = getattr(product, "product_type", None) or "consumable"

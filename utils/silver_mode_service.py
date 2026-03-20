@@ -238,6 +238,21 @@ def distribute_rewards_to_winners_silver_mode(
         )
         db.add(winner_record)
 
+        # Enqueue wallet credit via background worker
+        reward_minor = int(round(reward_amount * 100))
+        if reward_minor > 0:
+            from core.queue import enqueue_task
+
+            enqueue_task(
+                name="wallet.credit_winner",
+                payload={
+                    "account_id": winner["account_id"],
+                    "amount_minor": reward_minor,
+                    "reason": f"silver_draw_{draw_date}",
+                    "idempotency_key": f"draw_reward:silver:{draw_date}:{winner['account_id']}",
+                },
+            )
+
         # Update or create leaderboard entry
         leaderboard_entry = (
             db.query(TriviaSilverModeLeaderboard)

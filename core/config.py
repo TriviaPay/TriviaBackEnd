@@ -60,6 +60,15 @@ GOOGLE_IAP_REFUND_NOTIFICATION_TYPES = [
     if x.strip().isdigit()
 ]
 
+# Google Pub/Sub webhook authentication
+GOOGLE_PUBSUB_VERIFY_ENABLED = (
+    os.getenv("GOOGLE_PUBSUB_VERIFY_ENABLED", "true").lower() == "true"
+)
+GOOGLE_PUBSUB_AUDIENCE = os.getenv("GOOGLE_PUBSUB_AUDIENCE", "")
+GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL = os.getenv(
+    "GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL", ""
+)
+
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 

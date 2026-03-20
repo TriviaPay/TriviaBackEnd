@@ -6,6 +6,29 @@ from typing import Any, Dict, Optional
 def handle_task(name: str, payload: Dict[str, Any]) -> None:
     if name == "noop":
         return
+    if name == "wallet.credit_winner":
+        import asyncio
+
+        from app.db import AsyncSessionLocal
+        from app.services.wallet_service import adjust_wallet_balance
+
+        async def _credit() -> None:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    await adjust_wallet_balance(
+                        db=session,
+                        user_id=payload["account_id"],
+                        currency="usd",
+                        delta_minor=payload["amount_minor"],
+                        kind="deposit",
+                        external_ref_type="draw_reward",
+                        external_ref_id=payload["reason"],
+                        event_id=payload["idempotency_key"],
+                        livemode=True,
+                    )
+
+        asyncio.run(_credit())
+        return
     if name == "push.trivia_live_chat":
         from routers.trivia.service import send_push_for_trivia_live_chat_sync
 
