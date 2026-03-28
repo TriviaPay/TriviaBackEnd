@@ -82,7 +82,7 @@ async def create_checkout_session(
 
     customer_id = await get_or_create_stripe_customer(db, user)
 
-    is_live = not STRIPE_SECRET_KEY.startswith("sk_test_")
+    is_live = not (STRIPE_SECRET_KEY.startswith("sk_test_") or STRIPE_SECRET_KEY.startswith("rk_test_"))
 
     # Build Stripe line item based on product type
     if product_info["product_type"] == "subscription":
