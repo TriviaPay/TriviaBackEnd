@@ -107,6 +107,9 @@ class User(Base):
     total_spent = Column(Float, default=0.0)  # Total amount spent in the app
     last_wallet_update = Column(DateTime, nullable=True)  # Last time wallet was updated
 
+    # Stripe
+    stripe_customer_id = Column(String, unique=True, nullable=True)
+
     # Cosmetic selections
     selected_avatar_id = Column(String, nullable=True)  # Currently selected avatar ID
     selected_frame_id = Column(String, nullable=True)  # Currently selected frame ID
@@ -419,6 +422,8 @@ class SubscriptionPlan(Base):
     google_product_id = Column(
         String, nullable=True, unique=True
     )  # Google Play product identifier
+    stripe_product_id = Column(String, nullable=True, unique=True)  # Web Stripe product ID
+    stripe_price_id = Column(String, nullable=True, unique=True)  # Stripe Price object ID
     livemode = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -444,6 +449,7 @@ class UserSubscription(Base):
     pause_collection = Column(
         String, nullable=True
     )  # 'keep_as_draft', 'mark_uncollectible', 'void'
+    stripe_subscription_id = Column(String, nullable=True, unique=True)  # Stripe subscription linkage
     livemode = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(

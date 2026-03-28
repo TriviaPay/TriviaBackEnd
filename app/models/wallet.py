@@ -82,6 +82,43 @@ class IapReceipt(Base):
     )
 
 
+class StripeCheckout(Base):
+    __tablename__ = "stripe_checkouts"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+    checkout_session_id = Column(String, unique=True, nullable=False)
+    payment_intent_id = Column(String, unique=True, nullable=True)
+    stripe_subscription_id = Column(String, nullable=True, index=True)
+    stripe_invoice_id = Column(String, nullable=True)
+    product_id = Column(String, nullable=False)
+    product_type = Column(String, nullable=False)  # "gem_package" or "subscription"
+    price_minor = Column(BigInteger, nullable=False)  # USD cents charged
+    gems_credited = Column(Integer, nullable=True)  # Gem quantity granted
+    gems_reversed = Column(Integer, default=0, nullable=False)  # Cumulative gems reversed by refunds
+    currency = Column(String, default="usd", nullable=False)
+    payment_status = Column(String, default="pending", nullable=False)  # pending, paid, failed, expired
+    fulfillment_status = Column(String, default="unfulfilled", nullable=False)  # unfulfilled, fulfilled, refunded
+    stripe_customer_id = Column(String, nullable=True)
+    livemode = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class StripeWebhookEvent(Base):
+    __tablename__ = "stripe_webhook_events"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    event_id = Column(String, unique=True, nullable=False)
+    event_type = Column(String, nullable=False)
+    status = Column(String, default="received", nullable=False)  # received, processed, failed
+    stripe_object_id = Column(String, nullable=True)
+    livemode = Column(Boolean, default=False, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    received_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    processed_at = Column(DateTime, nullable=True)
+
+
 class IapEvent(Base):
     __tablename__ = "iap_events"
 

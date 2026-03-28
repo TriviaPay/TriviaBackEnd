@@ -58,6 +58,19 @@ async def get_current_user(
     return user
 
 
+async def require_non_guest(
+    request: Request, db: AsyncSession = Depends(get_async_db)
+) -> User:
+    """Return authenticated user; reject guests with 403."""
+    user = await get_current_user(request, db)
+    if getattr(user, "is_guest", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Guests cannot make purchases",
+        )
+    return user
+
+
 async def get_admin_user(
     request: Request, db: AsyncSession = Depends(get_async_db)
 ) -> User:

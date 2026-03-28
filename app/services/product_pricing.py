@@ -142,10 +142,11 @@ async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
                 break
 
     if not product or product.price_minor is None:
-        # Try subscription plans (by apple or google product ID)
+        # Try subscription plans (by apple, google, or stripe product ID)
         sub_stmt = select(SubscriptionPlan).where(
             (SubscriptionPlan.apple_product_id == product_id)
             | (SubscriptionPlan.google_product_id == product_id)
+            | (SubscriptionPlan.stripe_product_id == product_id)
         )
         sub_result = await db.execute(sub_stmt)
         sub_plan = sub_result.scalar_one_or_none()
@@ -159,6 +160,10 @@ async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
                 "product_id": product_id,
                 "price_minor": sub_plan.unit_amount_minor,
                 "product_type": "subscription",
+                "product_name": sub_plan.name,
+                "plan_id": sub_plan.id,
+                "stripe_price_id": getattr(sub_plan, "stripe_price_id", None),
+                "gems_amount": None,
             }
 
         raise HTTPException(
@@ -178,4 +183,8 @@ async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
         "product_id": product_id,
         "price_minor": product.price_minor,
         "product_type": product_type,
+        "product_name": getattr(product, "description", None) or product_id,
+        "gems_amount": getattr(product, "gems_amount", None),
+        "plan_id": None,
+        "stripe_price_id": None,
     }

@@ -49,6 +49,12 @@ class User(Base):
     daily_eligibility_flag = Column(Boolean, default=False)
     badge_id = Column(String, nullable=True)
 
+    # Guest mode fields
+    is_guest = Column(Boolean, default=False, nullable=False)
+    guest_device_uuid = Column(String, unique=True, nullable=True)
+    last_active_at = Column(DateTime, nullable=True)
+    ad_bonus_claimed = Column(Boolean, default=False, nullable=False)
+
     # Wallet fields
     wallet_balance = Column(
         BigInteger, nullable=True
@@ -57,6 +63,9 @@ class User(Base):
     wallet_currency = Column(String, default="usd")
     total_spent = Column(BigInteger, nullable=True)
     last_wallet_update = Column(DateTime, nullable=True)
+
+    # Stripe
+    stripe_customer_id = Column(String, unique=True, nullable=True)
 
     selected_avatar_id = Column(String, nullable=True)
     selected_frame_id = Column(String, nullable=True)

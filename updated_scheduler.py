@@ -304,6 +304,15 @@ def schedule_draws() -> None:
         misfire_grace_time=3600,
     )
 
+    # Schedule Stripe webhook retry every 10 minutes
+    scheduler.add_job(
+        run_stripe_webhook_retry,
+        CronTrigger(minute="*/10", timezone="UTC"),
+        id="stripe_webhook_retry",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
+
 
 # Legacy run_daily_draw removed - uses perform_draw which requires TriviaQuestionsWinners (deleted)
 # Use mode-specific draw functions instead (run_free_mode_draw, run_bronze_mode_draw, etc.)
@@ -347,6 +356,20 @@ def run_guest_cleanup_job() -> None:
         logger.error(f"Guest cleanup job failed: {e}", exc_info=True)
     finally:
         db.close()
+
+
+async def run_stripe_webhook_retry() -> None:
+    """Retry failed/stuck Stripe webhook events."""
+    from app.db import AsyncSessionLocal
+    from app.services.stripe_service import retry_failed_stripe_events
+
+    try:
+        async with AsyncSessionLocal() as session:
+            retried = await retry_failed_stripe_events(session)
+            if retried:
+                logger.info("Stripe webhook retry: %d events reprocessed", retried)
+    except Exception as e:
+        logger.error(f"Stripe webhook retry job failed: {e}", exc_info=True)
 
 
 async def run_monthly_subscription_reset() -> None:
