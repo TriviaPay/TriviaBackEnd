@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from core.db import get_db
 
 # TriviaQuestionsDaily, Trivia, TriviaQuestionsEntries, TriviaUserDaily removed - legacy tables
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user, get_current_user_or_guest
 
 router = APIRouter(tags=["Rewards"])
 
@@ -17,7 +17,7 @@ from .service import process_daily_login as service_process_daily_login
 
 @router.get("/recent-winners")
 async def get_recent_winners(
-    db: Session = Depends(get_db), current_user = Depends(get_current_user)
+    db: Session = Depends(get_db), current_user=Depends(get_current_user_or_guest)
 ):
     """
     Get recent winners from bronze and silver modes.

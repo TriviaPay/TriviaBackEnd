@@ -98,6 +98,7 @@ def get_eligible_participants_free_mode(
         .filter(
             attempts_subq.c.correct_count == questions_count,
             attempts_subq.c.third_question_completed_at.isnot(None),
+            User.is_guest.is_(False),
         )
         .all()
     )

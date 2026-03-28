@@ -74,6 +74,12 @@ class User(Base):
     subscription_flag = Column(Boolean, default=False)
     sign_up_date = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # Guest mode fields
+    is_guest = Column(Boolean, default=False, nullable=False, index=True)
+    guest_device_uuid = Column(String, unique=True, nullable=True, index=True)
+    last_active_at = Column(DateTime, nullable=True)
+    ad_bonus_claimed = Column(Boolean, default=False, nullable=False)
+
     # Added fields for trivia game
     gems = Column(Integer, default=0)  # Track user's gems
     level = Column(

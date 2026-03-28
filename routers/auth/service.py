@@ -497,6 +497,124 @@ def bind_password(request: Request, data, db: Session):
             detail="Failed to sync user with authentication system. Please try again.",
         )
 
+    # --- Guest-to-registered-user conversion ---
+    device_uuid_header = request.headers.get("X-Device-UUID")
+    guest_user = None
+    if device_uuid_header:
+        try:
+            normalized_device_uuid = str(uuid.UUID(device_uuid_header))
+        except (ValueError, AttributeError):
+            normalized_device_uuid = None
+
+        if normalized_device_uuid:
+            guest_user = (
+                db.query(User)
+                .filter(
+                    User.guest_device_uuid == normalized_device_uuid,
+                    User.is_guest.is_(True),
+                    User.guest_device_uuid.isnot(None),
+                )
+                .first()
+            )
+
+    if guest_user:
+        # Check email conflict: another registered user already has this email
+        email_conflict = auth_repository.get_user_by_email_ci(db, email)
+        if email_conflict and email_conflict.account_id != guest_user.account_id:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "email_taken",
+                    "message": "This email is already registered to another account.",
+                },
+            )
+
+        # Check username conflict: another registered user already has this username
+        username_conflict = auth_repository.get_user_by_username_ci(db, username)
+        if username_conflict and username_conflict.account_id != guest_user.account_id:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "username_taken",
+                    "message": f"Username '{username}' is already taken",
+                },
+            )
+
+        # Convert guest row to registered user
+        guest_user.email = email
+        guest_user.username = username
+        guest_user.country = country
+        guest_user.date_of_birth = data.date_of_birth
+        guest_user.descope_user_id = user_id
+        guest_user.is_guest = False
+        guest_user.guest_device_uuid = None
+        guest_user.ad_bonus_claimed = False
+        guest_user.referral_code = get_unique_referral_code(db)
+        guest_user.sign_up_date = datetime.utcnow()
+        guest_user.notification_on = True
+        guest_user.username_updated = False
+        guest_user.subscription_flag = False
+
+        if not guest_user.profile_pic_url:
+            profile_pic_url = get_default_profile_pic_url(username)
+            if profile_pic_url:
+                guest_user.profile_pic_url = profile_pic_url
+
+        if STORE_PASSWORD_IN_NEONDB:
+            guest_user.password = pwd_context.hash(data.password)
+
+        # Process referral code
+        if data.referral_code:
+            try:
+                referrer = auth_repository.get_user_by_referral_code_for_update(
+                    db, data.referral_code
+                )
+                if not referrer:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid referral code '{data.referral_code}'. Please check and try again.",
+                    )
+                if referrer.account_id == guest_user.account_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="You cannot use your own referral code.",
+                    )
+                referrer.referral_count = (referrer.referral_count or 0) + 1
+                guest_user.referred_by = data.referral_code
+                logging.info(
+                    f"[REFERRAL] Applied referral code: {data.referral_code} from user {referrer.username} to converted guest {email}"
+                )
+            except HTTPException:
+                db.rollback()
+                raise
+            except Exception as e:
+                logging.error(f"Error processing referral code during guest conversion: {str(e)}")
+                db.rollback()
+                raise HTTPException(
+                    status_code=500,
+                    detail="Error processing referral code. Please try again.",
+                )
+
+        _track_device_uuid(
+            db,
+            guest_user,
+            data.device_uuid,
+            getattr(data, "app_version", None),
+            getattr(data, "os", None),
+            getattr(data, "device_name", None),
+        )
+        ensure_admin_conversation_and_message(db, guest_user)
+        db.commit()
+
+        logging.info(
+            f"[BIND_PASSWORD] Converted guest to registered user - "
+            f"AccountId: {guest_user.account_id}, Email: '{email}', "
+            f"GemsPreserved: {guest_user.gems}, DeviceUUID: '{normalized_device_uuid}'"
+        )
+
+        return {"success": True, "message": "Password and profile bound successfully"}
+
+    # --- Standard flow (no guest conversion) ---
     existing_user = auth_repository.get_user_by_email_ci(db, email)
     if existing_user:
         existing_user.username = username

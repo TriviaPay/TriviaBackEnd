@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from core.db import get_db
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user_or_guest
 
 from .service import get_next_draw_with_prize_pool
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/draw", tags=["Draw"])
 
 @router.get("/next")
 def get_draw_time(
-    current_user = Depends(get_current_user), db: Session = Depends(get_db)
+    current_user = Depends(get_current_user_or_guest), db: Session = Depends(get_db)
 ):
     """
     Endpoint to get the next draw time and current prize pool.

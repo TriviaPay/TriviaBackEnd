@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from core.db import get_db
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user, get_current_user_or_guest, require_non_guest
 
 from .schemas import (
     GlobalChatCleanupResponse,
@@ -30,7 +30,7 @@ async def get_messages(
         None, description="Return messages before this message ID"
     ),
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user_or_guest),
 ):
     return await service_get_global_chat_messages(
         db, current_user=current_user, limit=limit, before=before
@@ -42,7 +42,7 @@ async def send_message(
     request: GlobalChatSendMessageRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user=Depends(require_non_guest),
 ):
     result = await service_send_global_chat_message(
         db, current_user=current_user, request=request

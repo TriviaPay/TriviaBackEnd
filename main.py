@@ -333,8 +333,64 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             raise
 
 
+# --- Last Active Middleware ---
+# Updates last_active_at for all authenticated users (throttled).
+# Uses its own DB session in a background thread to avoid adding latency.
+class LastActiveMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        try:
+            user_id = getattr(request.state, "user_id", None)
+            if user_id is not None:
+                import asyncio
+
+                asyncio.get_event_loop().run_in_executor(
+                    None, _update_last_active, user_id
+                )
+        except Exception:
+            pass  # Never impact request
+        return response
+
+
+def _update_last_active(user_id: int) -> None:
+    """Run the last_active_at UPDATE in a background thread."""
+    try:
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import text
+
+        from core.config import GUEST_ACTIVITY_UPDATE_INTERVAL
+        from core.db import SessionLocal
+
+        cutoff = datetime.utcnow() - timedelta(seconds=GUEST_ACTIVITY_UPDATE_INTERVAL)
+        session = SessionLocal()
+        try:
+            session.execute(
+                text(
+                    "UPDATE users SET last_active_at = now() "
+                    "WHERE account_id = :id "
+                    "AND (last_active_at IS NULL OR last_active_at < :cutoff)"
+                ),
+                {"id": user_id, "cutoff": cutoff},
+            )
+            session.commit()
+        except Exception:
+            logger.debug(
+                "last_active_at update failed for user %s", user_id, exc_info=True
+            )
+            try:
+                session.rollback()
+            except Exception:
+                pass
+        finally:
+            session.close()
+    except Exception:
+        pass
+
+
 # Add request logging middleware (before CORS so it logs all requests)
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(LastActiveMiddleware)
 
 # CORS configuration
 app.add_middleware(

@@ -295,6 +295,15 @@ def schedule_draws() -> None:
         misfire_grace_time=3600,
     )
 
+    # Schedule daily guest cleanup at 04:00 UTC
+    scheduler.add_job(
+        run_guest_cleanup_job,
+        CronTrigger(hour=4, minute=0, timezone="UTC"),
+        id="daily_guest_cleanup",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
 
 # Legacy run_daily_draw removed - uses perform_draw which requires TriviaQuestionsWinners (deleted)
 # Use mode-specific draw functions instead (run_free_mode_draw, run_bronze_mode_draw, etc.)
@@ -324,6 +333,20 @@ async def run_wallet_reconciliation_job() -> None:
                 )
     except Exception as e:
         logger.error(f"Wallet reconciliation job failed: {e}")
+
+
+def run_guest_cleanup_job() -> None:
+    """Hard-delete guest users inactive for longer than GUEST_SESSION_EXPIRY_DAYS."""
+    from utils.guest_helpers import cleanup_inactive_guests
+
+    db: Session = SessionLocal()
+    try:
+        deleted = cleanup_inactive_guests(db)
+        logger.info(f"Guest cleanup job completed: {deleted} guests deleted")
+    except Exception as e:
+        logger.error(f"Guest cleanup job failed: {e}", exc_info=True)
+    finally:
+        db.close()
 
 
 async def run_monthly_subscription_reset() -> None:

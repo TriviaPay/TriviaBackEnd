@@ -293,11 +293,15 @@ def count_free_mode_pool_size(db: Session) -> int:
 
 
 def list_free_mode_leaderboard_entries(db: Session, *, draw_date):
-    from models import TriviaFreeModeLeaderboard
+    from models import TriviaFreeModeLeaderboard, User
 
     return (
         db.query(TriviaFreeModeLeaderboard)
-        .filter(TriviaFreeModeLeaderboard.draw_date == draw_date)
+        .join(User, User.account_id == TriviaFreeModeLeaderboard.account_id)
+        .filter(
+            TriviaFreeModeLeaderboard.draw_date == draw_date,
+            User.is_guest.is_(False),
+        )
         .order_by(TriviaFreeModeLeaderboard.position, TriviaFreeModeLeaderboard.completed_at)
         .all()
     )

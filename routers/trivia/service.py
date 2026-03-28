@@ -1196,6 +1196,41 @@ def free_mode_double_gems(db, *, user, draw_date: Optional[str]):
     }
 
 
+def guest_ad_bonus(db, *, user):
+    from fastapi import HTTPException, status
+
+    from core.config import GUEST_AD_BONUS_ENABLED, GUEST_DEFAULT_GEMS
+
+    if not user.is_guest:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is for guest users only.",
+        )
+    if not GUEST_AD_BONUS_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Guest ad bonus is not enabled.",
+        )
+    if user.ad_bonus_claimed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ad bonus already claimed.",
+        )
+
+    original_gems = user.gems or 0
+    bonus = GUEST_DEFAULT_GEMS
+    user.gems = original_gems + bonus
+    user.ad_bonus_claimed = True
+    db.commit()
+
+    return {
+        "success": True,
+        "original_gems": original_gems,
+        "bonus_gems": bonus,
+        "total_gems": user.gems,
+    }
+
+
 def free_mode_status(db, *, user):
     from fastapi import HTTPException, status
 
