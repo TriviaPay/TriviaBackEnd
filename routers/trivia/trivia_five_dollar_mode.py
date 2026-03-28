@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from core.db import get_db
-from routers.dependencies import get_current_user
+from routers.dependencies import get_current_user, get_current_user_or_guest
 
 from .schemas import SubmitAnswerRequest
 from .service import (
@@ -45,7 +45,7 @@ async def get_bronze_mode_status(
 @router.get("/leaderboard")
 async def get_bronze_mode_leaderboard(
     draw_date: Optional[str] = Query(None),
-    user = Depends(get_current_user),
+    user = Depends(get_current_user_or_guest),
     db: Session = Depends(get_db),
 ):
     return service_bronze_mode_leaderboard(db, draw_date=draw_date)
