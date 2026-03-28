@@ -9,6 +9,12 @@ def get_app_version_by_os(db: Session, *, os: str):
     return db.query(AppVersion).filter(AppVersion.os == os).first()
 
 
+def get_all_app_versions(db: Session):
+    from models import AppVersion
+
+    return db.query(AppVersion).all()
+
+
 def upsert_latest_app_version(db: Session, *, os: str, latest_version: str):
     from models import AppVersion
 

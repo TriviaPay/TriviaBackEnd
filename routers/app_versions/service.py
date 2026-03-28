@@ -13,6 +13,10 @@ def get_latest_app_version(db: Session, *, os: str):
     return app_version
 
 
+def get_all_app_versions(db: Session):
+    return repository.get_all_app_versions(db)
+
+
 def upsert_latest_app_version(db: Session, *, os: str, latest_version: str):
     return repository.upsert_latest_app_version(db, os=os, latest_version=latest_version)
 
