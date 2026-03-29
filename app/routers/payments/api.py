@@ -14,12 +14,12 @@ try:
     from . import stripe_router
 
     router.include_router(stripe_router.router)
-except ImportError:
-    logger.warning("stripe package not installed — Stripe endpoints disabled")
+except Exception:
+    logger.exception("Stripe router import failed — Stripe endpoints disabled")
 
 try:
     from . import paypal_router
 
     router.include_router(paypal_router.router)
-except ImportError:
-    logger.warning("PayPal router import failed — PayPal endpoints disabled")
+except Exception:
+    logger.exception("PayPal router import failed — PayPal endpoints disabled")
