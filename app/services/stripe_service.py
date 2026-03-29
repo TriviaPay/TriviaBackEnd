@@ -65,7 +65,7 @@ async def get_or_create_stripe_customer(db: AsyncSession, user: User) -> str:
 # ---------------------------------------------------------------------------
 
 
-_SUPPORTED_STRIPE_PRODUCT_TYPES = {"gem_package", "consumable", "subscription"}
+_SUPPORTED_STRIPE_PRODUCT_TYPES = {"gem_package", "consumable", "non_consumable", "subscription"}
 
 
 async def create_checkout_session(
@@ -79,6 +79,23 @@ async def create_checkout_session(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Product type '{product_info['product_type']}' is not available for web purchase",
         )
+
+    # Badges are not purchasable (admin-only)
+    if product_id.startswith("BD"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Badges are not available for purchase",
+        )
+
+    # Block duplicate non-consumable purchases
+    if product_info["product_type"] == "non_consumable":
+        from app.services.asset_entitlement_service import check_already_owned
+
+        if await check_already_owned(db, user_id=user.account_id, product_id=product_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="You already own this item",
+            )
 
     customer_id = await get_or_create_stripe_customer(db, user)
 
@@ -220,7 +237,7 @@ async def _get_or_reconstruct_checkout(
 async def handle_checkout_completed(
     db: AsyncSession, stripe_session: Dict[str, Any]
 ) -> None:
-    """Handle checkout.session.completed — gem credit or subscription activation."""
+    """Handle checkout.session.completed — gem credit, asset grant, or subscription activation."""
     session_id = stripe_session["id"]
     checkout = await _get_or_reconstruct_checkout(db, session_id, stripe_session)
     if not checkout:
@@ -260,6 +277,19 @@ async def handle_checkout_completed(
         logger.info(
             "Credited %d gems to user %s for checkout %s",
             gem_config.gems_amount,
+            checkout.user_id,
+            session_id,
+        )
+
+    elif checkout.product_type == "non_consumable":
+        from app.services.asset_entitlement_service import grant_asset
+
+        await grant_asset(db, user_id=checkout.user_id, product_id=checkout.product_id)
+        checkout.asset_granted = True
+        checkout.fulfillment_status = "fulfilled"
+        logger.info(
+            "Granted asset %s to user %s for checkout %s",
+            checkout.product_id,
             checkout.user_id,
             session_id,
         )
@@ -399,7 +429,7 @@ async def handle_subscription_deleted(
 async def handle_charge_refunded(
     db: AsyncSession, charge: Dict[str, Any]
 ) -> None:
-    """Handle charge.refunded — cumulative gem reversal."""
+    """Handle charge.refunded — gem reversal or asset revocation."""
     payment_intent_id = charge.get("payment_intent")
     if not payment_intent_id:
         return
@@ -417,47 +447,59 @@ async def handle_charge_refunded(
         )
         return
 
-    if not checkout.gems_credited or checkout.gems_credited <= 0:
-        # Nothing to reverse (subscription or zero-gem purchase)
-        return
-
     total_refunded = charge.get("amount_refunded", 0)
     if total_refunded <= 0:
         return
 
-    # Cumulative reconciliation
-    expected_total_reversed = math.floor(
-        total_refunded / checkout.price_minor * checkout.gems_credited
-    )
-    this_reversal = expected_total_reversed - checkout.gems_reversed
+    if checkout.product_type in ("gem_package", "consumable") and checkout.gems_credited and checkout.gems_credited > 0:
+        # Cumulative gem reconciliation
+        expected_total_reversed = math.floor(
+            total_refunded / checkout.price_minor * checkout.gems_credited
+        )
+        this_reversal = expected_total_reversed - checkout.gems_reversed
 
-    if this_reversal <= 0:
+        if this_reversal <= 0:
+            logger.info(
+                "No additional gems to reverse for checkout %s (already reversed %d)",
+                checkout.checkout_session_id,
+                checkout.gems_reversed,
+            )
+            return
+
+        await debit_gems(
+            db,
+            user_id=checkout.user_id,
+            amount=this_reversal,
+            reason="stripe_refund",
+            ref_type="stripe_refund",
+            ref_id=checkout.checkout_session_id,
+        )
+        checkout.gems_reversed += this_reversal
+
+        if total_refunded >= checkout.price_minor:
+            checkout.fulfillment_status = "refunded"
+
         logger.info(
-            "No additional gems to reverse for checkout %s (already reversed %d)",
+            "Refund processed: checkout=%s reversed=%d total_reversed=%d",
             checkout.checkout_session_id,
+            this_reversal,
             checkout.gems_reversed,
         )
-        return
 
-    await debit_gems(
-        db,
-        user_id=checkout.user_id,
-        amount=this_reversal,
-        reason="stripe_refund",
-        ref_type="stripe_refund",
-        ref_id=checkout.checkout_session_id,
-    )
-    checkout.gems_reversed += this_reversal
+    elif checkout.product_type == "non_consumable" and checkout.asset_granted:
+        # All-or-nothing: revoke only on full refund
+        if total_refunded >= checkout.price_minor:
+            from app.services.asset_entitlement_service import revoke_asset
 
-    if total_refunded >= checkout.price_minor:
-        checkout.fulfillment_status = "refunded"
-
-    logger.info(
-        "Refund processed: checkout=%s reversed=%d total_reversed=%d",
-        checkout.checkout_session_id,
-        this_reversal,
-        checkout.gems_reversed,
-    )
+            await revoke_asset(db, user_id=checkout.user_id, product_id=checkout.product_id)
+            checkout.asset_granted = False
+            checkout.fulfillment_status = "refunded"
+            logger.info(
+                "Revoked asset %s from user %s on full refund for checkout %s",
+                checkout.product_id,
+                checkout.user_id,
+                checkout.checkout_session_id,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -482,8 +524,10 @@ async def get_session_status(
         "payment_status": checkout.payment_status,
         "fulfillment_status": checkout.fulfillment_status,
         "product_id": checkout.product_id,
+        "product_type": checkout.product_type,
         "price_minor": checkout.price_minor,
         "gems_credited": checkout.gems_credited,
+        "asset_granted": checkout.asset_granted,
         "completed_at": (
             checkout.completed_at.isoformat() if checkout.completed_at else None
         ),

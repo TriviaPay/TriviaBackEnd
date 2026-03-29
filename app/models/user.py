@@ -67,6 +67,9 @@ class User(Base):
     # Stripe
     stripe_customer_id = Column(String, unique=True, nullable=True)
 
+    # PayPal
+    paypal_payer_id = Column(String, unique=True, nullable=True)
+
     selected_avatar_id = Column(String, nullable=True)
     selected_frame_id = Column(String, nullable=True)
 

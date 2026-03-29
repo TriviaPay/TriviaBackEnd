@@ -147,6 +147,7 @@ async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
             (SubscriptionPlan.apple_product_id == product_id)
             | (SubscriptionPlan.google_product_id == product_id)
             | (SubscriptionPlan.stripe_product_id == product_id)
+            | (SubscriptionPlan.paypal_product_id == product_id)
         )
         sub_result = await db.execute(sub_stmt)
         sub_plan = sub_result.scalar_one_or_none()
@@ -163,6 +164,7 @@ async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
                 "product_name": sub_plan.name,
                 "plan_id": sub_plan.id,
                 "stripe_price_id": getattr(sub_plan, "stripe_price_id", None),
+                "paypal_plan_id": getattr(sub_plan, "paypal_plan_id", None),
                 "gems_amount": None,
             }
 

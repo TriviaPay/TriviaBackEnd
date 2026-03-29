@@ -110,6 +110,9 @@ class User(Base):
     # Stripe
     stripe_customer_id = Column(String, unique=True, nullable=True)
 
+    # PayPal
+    paypal_payer_id = Column(String, unique=True, nullable=True)
+
     # Cosmetic selections
     selected_avatar_id = Column(String, nullable=True)  # Currently selected avatar ID
     selected_frame_id = Column(String, nullable=True)  # Currently selected frame ID
@@ -424,6 +427,8 @@ class SubscriptionPlan(Base):
     )  # Google Play product identifier
     stripe_product_id = Column(String, nullable=True, unique=True)  # Web Stripe product ID
     stripe_price_id = Column(String, nullable=True, unique=True)  # Stripe Price object ID
+    paypal_product_id = Column(String, nullable=True, unique=True)  # Friendly PayPal product ID for lookup
+    paypal_plan_id = Column(String, nullable=True, unique=True)  # PayPal billing plan ID (P-xxx)
     livemode = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -450,6 +455,7 @@ class UserSubscription(Base):
         String, nullable=True
     )  # 'keep_as_draft', 'mark_uncollectible', 'void'
     stripe_subscription_id = Column(String, nullable=True, unique=True)  # Stripe subscription linkage
+    paypal_subscription_id = Column(String, nullable=True, unique=True)  # PayPal subscription linkage
     livemode = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(

@@ -92,10 +92,11 @@ class StripeCheckout(Base):
     stripe_subscription_id = Column(String, nullable=True, index=True)
     stripe_invoice_id = Column(String, nullable=True)
     product_id = Column(String, nullable=False)
-    product_type = Column(String, nullable=False)  # "gem_package" or "subscription"
+    product_type = Column(String, nullable=False)  # gem_package, consumable, non_consumable, or subscription
     price_minor = Column(BigInteger, nullable=False)  # USD cents charged
     gems_credited = Column(Integer, nullable=True)  # Gem quantity granted
     gems_reversed = Column(Integer, default=0, nullable=False)  # Cumulative gems reversed by refunds
+    asset_granted = Column(Boolean, default=False, nullable=False)  # Non-consumable (avatar/frame) granted
     currency = Column(String, default="usd", nullable=False)
     payment_status = Column(String, default="pending", nullable=False)  # pending, paid, failed, expired
     fulfillment_status = Column(String, default="unfulfilled", nullable=False)  # unfulfilled, fulfilled, refunded
@@ -113,6 +114,58 @@ class StripeWebhookEvent(Base):
     event_type = Column(String, nullable=False)
     status = Column(String, default="received", nullable=False)  # received, processed, failed
     stripe_object_id = Column(String, nullable=True)
+    livemode = Column(Boolean, default=False, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    received_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    processed_at = Column(DateTime, nullable=True)
+
+
+class PayPalCheckout(Base):
+    __tablename__ = "paypal_checkouts"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False, index=True)
+
+    # PayPal identifiers — one of these is set depending on flow
+    paypal_order_id = Column(String, unique=True, nullable=True)
+    paypal_capture_id = Column(String, unique=True, nullable=True)
+    paypal_subscription_id = Column(String, unique=True, nullable=True)
+
+    # Product info (from get_product_info, server-side)
+    product_id = Column(String, nullable=False)
+    product_type = Column(String, nullable=False)  # gem_package, consumable, non_consumable, subscription
+    price_minor = Column(BigInteger, nullable=False)  # USD cents
+    currency = Column(String, default="usd", nullable=False)
+
+    # Fulfillment tracking
+    gems_credited = Column(Integer, nullable=True)
+    gems_reversed = Column(Integer, default=0, nullable=False)
+    asset_granted = Column(Boolean, default=False, nullable=False)
+
+    # Status
+    # payment_status semantics by flow:
+    #   Orders:        created → approved → pending → captured | denied | failed
+    #   Subscriptions: created → approved → active | failed
+    payment_status = Column(String, default="created", nullable=False)
+    fulfillment_status = Column(String, default="unfulfilled", nullable=False)
+
+    # Metadata
+    paypal_payer_id = Column(String, nullable=True)
+    idempotency_key = Column(String, unique=True, nullable=True)
+    livemode = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    captured_at = Column(DateTime, nullable=True)
+
+
+class PayPalWebhookEvent(Base):
+    __tablename__ = "paypal_webhook_events"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    event_id = Column(String, unique=True, nullable=False)
+    event_type = Column(String, nullable=False)
+    status = Column(String, default="received", nullable=False)  # received, processed, failed
+    resource_id = Column(String, nullable=True)
+    raw_payload = Column(Text, nullable=True)
     livemode = Column(Boolean, default=False, nullable=False)
     attempts = Column(Integer, default=0, nullable=False)
     received_at = Column(DateTime, default=datetime.utcnow, nullable=False)

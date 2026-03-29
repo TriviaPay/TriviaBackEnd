@@ -313,6 +313,15 @@ def schedule_draws() -> None:
         misfire_grace_time=300,
     )
 
+    # Schedule PayPal webhook retry every 10 minutes
+    scheduler.add_job(
+        run_paypal_webhook_retry,
+        CronTrigger(minute="*/10", timezone="UTC"),
+        id="paypal_webhook_retry",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
+
 
 # Legacy run_daily_draw removed - uses perform_draw which requires TriviaQuestionsWinners (deleted)
 # Use mode-specific draw functions instead (run_free_mode_draw, run_bronze_mode_draw, etc.)
@@ -370,6 +379,20 @@ async def run_stripe_webhook_retry() -> None:
                 logger.info("Stripe webhook retry: %d events reprocessed", retried)
     except Exception as e:
         logger.error(f"Stripe webhook retry job failed: {e}", exc_info=True)
+
+
+async def run_paypal_webhook_retry() -> None:
+    """Retry failed/stuck PayPal webhook events."""
+    from app.db import AsyncSessionLocal
+    from app.services.paypal_service import retry_failed_paypal_events
+
+    try:
+        async with AsyncSessionLocal() as session:
+            retried = await retry_failed_paypal_events(session)
+            if retried:
+                logger.info("PayPal webhook retry: %d events reprocessed", retried)
+    except Exception as e:
+        logger.error(f"PayPal webhook retry job failed: {e}", exc_info=True)
 
 
 async def run_monthly_subscription_reset() -> None:

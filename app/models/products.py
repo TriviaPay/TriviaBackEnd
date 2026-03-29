@@ -4,7 +4,7 @@ Async Product Models - Avatars, Frames, Gem Packages, Badges
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, Integer, String
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String, UniqueConstraint
 
 from app.db import Base
 
@@ -88,3 +88,29 @@ class Badge(Base):
         if self.price_minor is not None:
             return self.price_minor / 100.0
         return None
+
+
+class UserAvatar(Base):
+    __tablename__ = "user_avatars"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    avatar_id = Column(String, ForeignKey("avatars.id"), nullable=False)
+    purchase_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "avatar_id", name="uq_user_avatar"),
+    )
+
+
+class UserFrame(Base):
+    __tablename__ = "user_frames"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.account_id"), nullable=False)
+    frame_id = Column(String, ForeignKey("frames.id"), nullable=False)
+    purchase_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "frame_id", name="uq_user_frame"),
+    )
