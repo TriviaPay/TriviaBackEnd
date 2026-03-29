@@ -22,6 +22,7 @@ class BuyGemsRequest(BaseModel):
 
 class GemPackageResponse(BaseModel):
     id: int
+    product_id: Optional[str] = None
     price_usd: float
     gems_amount: int
     is_one_time: bool
@@ -51,6 +52,7 @@ class CosmeticBase(BaseModel):
 
 class AvatarResponse(CosmeticBase):
     id: str
+    product_id: Optional[str] = None
     created_at: datetime
     price_usd: Optional[float] = None
     url: Optional[str] = None
@@ -61,6 +63,7 @@ class AvatarResponse(CosmeticBase):
 
 class FrameResponse(CosmeticBase):
     id: str
+    product_id: Optional[str] = None
     created_at: datetime
     price_usd: Optional[float] = None
     url: Optional[str] = None

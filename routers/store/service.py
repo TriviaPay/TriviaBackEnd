@@ -101,6 +101,7 @@ def get_gem_packages(db):
             result.append(
                 GemPackageResponse(
                     id=pkg.id,
+                    product_id=getattr(pkg, "product_id", None),
                     price_usd=price_usd_display,
                     gems_amount=pkg.gems_amount,
                     is_one_time=pkg.is_one_time,
@@ -138,6 +139,7 @@ def list_avatars(db, *, current_user, skip: int, limit: int, include_urls: bool)
             out.append(
                 {
                     "id": av.id,
+                    "product_id": getattr(av, "product_id", None),
                     "name": av.name,
                     "description": av.description,
                     "price_gems": av.price_gems,
@@ -325,6 +327,7 @@ def list_frames(db, *, current_user, skip: int, limit: int, include_urls: bool):
             out.append(
                 {
                     "id": fr.id,
+                    "product_id": getattr(fr, "product_id", None),
                     "name": fr.name,
                     "description": fr.description,
                     "price_gems": fr.price_gems,

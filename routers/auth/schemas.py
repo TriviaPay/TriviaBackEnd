@@ -150,6 +150,7 @@ class GemPackageRequest(BaseModel):
 
 class GemPackageResponse(BaseModel):
     id: int
+    product_id: Optional[str] = None
     price_usd: float
     gems_amount: int
     product_type: Optional[str] = None
@@ -212,6 +213,7 @@ class AvatarCreate(CosmeticBase):
 
 class AvatarResponse(CosmeticBase):
     id: str
+    product_id: Optional[str] = None
     created_at: datetime
     url: Optional[str] = None
     mime_type: Optional[str] = None
@@ -226,6 +228,7 @@ class FrameCreate(CosmeticBase):
 
 class FrameResponse(CosmeticBase):
     id: str
+    product_id: Optional[str] = None
     created_at: datetime
     url: Optional[str] = None
     mime_type: Optional[str] = None
