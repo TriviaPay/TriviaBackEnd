@@ -9,10 +9,32 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.products import Avatar, Badge, Frame, GemPackageConfig
+from app.models.products import Avatar, Frame, GemPackageConfig
 from models import SubscriptionPlan
 
 logger = logging.getLogger(__name__)
+
+# Badge model import — table may not exist in production
+try:
+    from app.models.products import Badge
+
+    _BADGE_AVAILABLE = True
+except Exception:
+    _BADGE_AVAILABLE = False
+
+
+async def _safe_badge_lookup(db: AsyncSession, product_id: str):
+    """Query the badges table, returning None if table doesn't exist."""
+    if not _BADGE_AVAILABLE:
+        return None
+    try:
+        stmt = select(Badge).where(Badge.product_id == product_id)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+    except Exception:
+        # Badge table doesn't exist — rollback to clear failed transaction
+        await db.rollback()
+        return None
 
 
 async def get_price_minor_for_product_id(db: AsyncSession, product_id: str) -> int:
@@ -34,7 +56,6 @@ async def get_price_minor_for_product_id(db: AsyncSession, product_id: str) -> i
     Note:
         Do NOT trust the client for price; always use the DB.
     """
-    # Try to find product in avatars (AV prefix)
     if product_id.startswith("AV"):
         stmt = select(Avatar).where(Avatar.product_id == product_id)
         result = await db.execute(stmt)
@@ -42,7 +63,6 @@ async def get_price_minor_for_product_id(db: AsyncSession, product_id: str) -> i
         if product and product.price_minor is not None:
             return product.price_minor
 
-    # Try to find product in frames (FR prefix)
     elif product_id.startswith("FR"):
         stmt = select(Frame).where(Frame.product_id == product_id)
         result = await db.execute(stmt)
@@ -50,7 +70,6 @@ async def get_price_minor_for_product_id(db: AsyncSession, product_id: str) -> i
         if product and product.price_minor is not None:
             return product.price_minor
 
-    # Try to find product in gem_package_config (GP prefix)
     elif product_id.startswith("GP"):
         stmt = select(GemPackageConfig).where(GemPackageConfig.product_id == product_id)
         result = await db.execute(stmt)
@@ -58,19 +77,13 @@ async def get_price_minor_for_product_id(db: AsyncSession, product_id: str) -> i
         if product and product.price_minor is not None:
             return product.price_minor
 
-    # Try to find product in badges (BD prefix)
     elif product_id.startswith("BD"):
-        try:
-            stmt = select(Badge).where(Badge.product_id == product_id)
-            result = await db.execute(stmt)
-            product = result.scalar_one_or_none()
-            if product and product.price_minor is not None:
-                return product.price_minor
-        except Exception:
-            pass
+        product = await _safe_badge_lookup(db, product_id)
+        if product and product.price_minor is not None:
+            return product.price_minor
 
-    # If no prefix matches, try all tables (fallback)
     else:
+        # Fallback: try known tables
         for model in (Avatar, Frame, GemPackageConfig):
             stmt = select(model).where(model.product_id == product_id)
             result = await db.execute(stmt)
@@ -78,19 +91,13 @@ async def get_price_minor_for_product_id(db: AsyncSession, product_id: str) -> i
             if product and product.price_minor is not None:
                 return product.price_minor
         # Try badges last (table may not exist)
-        try:
-            stmt = select(Badge).where(Badge.product_id == product_id)
-            result = await db.execute(stmt)
-            product = result.scalar_one_or_none()
-            if product and product.price_minor is not None:
-                return product.price_minor
-        except Exception:
-            pass
+        product = await _safe_badge_lookup(db, product_id)
+        if product and product.price_minor is not None:
+            return product.price_minor
 
-    # Product not found or price_minor is None
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Product ID '{product_id}' not found in product tables or price_minor is not set",
+        detail=f"Product ID '{product_id}' not found or has no price set",
     )
 
 
@@ -120,23 +127,18 @@ async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
         result = await db.execute(stmt)
         product = result.scalar_one_or_none()
     elif product_id.startswith("BD"):
-        try:
-            stmt = select(Badge).where(Badge.product_id == product_id)
+        product = await _safe_badge_lookup(db, product_id)
+    else:
+        # Fallback: try known tables
+        for model in (Avatar, Frame, GemPackageConfig):
+            stmt = select(model).where(model.product_id == product_id)
             result = await db.execute(stmt)
             product = result.scalar_one_or_none()
-        except Exception:
-            logger.warning("Badge table query failed for product_id %s", product_id)
-    else:
-        # Fallback: try all tables (skip Badge if table doesn't exist)
-        for model in (Avatar, Frame, GemPackageConfig, Badge):
-            try:
-                stmt = select(model).where(model.product_id == product_id)
-                result = await db.execute(stmt)
-                product = result.scalar_one_or_none()
-                if product:
-                    break
-            except Exception:
-                continue
+            if product:
+                break
+        # Try badges last
+        if not product:
+            product = await _safe_badge_lookup(db, product_id)
 
     if not product or product.price_minor is None:
         # Try subscription plans (by apple, google, or stripe product ID)
@@ -167,7 +169,7 @@ async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
 
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Product ID '{product_id}' not found in product tables or price_minor is not set",
+            detail=f"Product ID '{product_id}' not found or has no price set",
         )
 
     if product.price_minor <= 0:
