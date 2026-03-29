@@ -60,41 +60,32 @@ async def get_price_minor_for_product_id(db: AsyncSession, product_id: str) -> i
 
     # Try to find product in badges (BD prefix)
     elif product_id.startswith("BD"):
-        stmt = select(Badge).where(Badge.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
+        try:
+            stmt = select(Badge).where(Badge.product_id == product_id)
+            result = await db.execute(stmt)
+            product = result.scalar_one_or_none()
+            if product and product.price_minor is not None:
+                return product.price_minor
+        except Exception:
+            pass
 
     # If no prefix matches, try all tables (fallback)
     else:
-        # Try avatars
-        stmt = select(Avatar).where(Avatar.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-
-        # Try frames
-        stmt = select(Frame).where(Frame.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-
-        # Try gem_package_config
-        stmt = select(GemPackageConfig).where(GemPackageConfig.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
-
-        # Try badges
-        stmt = select(Badge).where(Badge.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-        if product and product.price_minor is not None:
-            return product.price_minor
+        for model in (Avatar, Frame, GemPackageConfig):
+            stmt = select(model).where(model.product_id == product_id)
+            result = await db.execute(stmt)
+            product = result.scalar_one_or_none()
+            if product and product.price_minor is not None:
+                return product.price_minor
+        # Try badges last (table may not exist)
+        try:
+            stmt = select(Badge).where(Badge.product_id == product_id)
+            result = await db.execute(stmt)
+            product = result.scalar_one_or_none()
+            if product and product.price_minor is not None:
+                return product.price_minor
+        except Exception:
+            pass
 
     # Product not found or price_minor is None
     raise HTTPException(
@@ -129,17 +120,23 @@ async def get_product_info(db: AsyncSession, product_id: str) -> Dict[str, Any]:
         result = await db.execute(stmt)
         product = result.scalar_one_or_none()
     elif product_id.startswith("BD"):
-        stmt = select(Badge).where(Badge.product_id == product_id)
-        result = await db.execute(stmt)
-        product = result.scalar_one_or_none()
-    else:
-        # Fallback: try all tables
-        for model in (Avatar, Frame, GemPackageConfig, Badge):
-            stmt = select(model).where(model.product_id == product_id)
+        try:
+            stmt = select(Badge).where(Badge.product_id == product_id)
             result = await db.execute(stmt)
             product = result.scalar_one_or_none()
-            if product:
-                break
+        except Exception:
+            logger.warning("Badge table query failed for product_id %s", product_id)
+    else:
+        # Fallback: try all tables (skip Badge if table doesn't exist)
+        for model in (Avatar, Frame, GemPackageConfig, Badge):
+            try:
+                stmt = select(model).where(model.product_id == product_id)
+                result = await db.execute(stmt)
+                product = result.scalar_one_or_none()
+                if product:
+                    break
+            except Exception:
+                continue
 
     if not product or product.price_minor is None:
         # Try subscription plans (by apple, google, or stripe product ID)
