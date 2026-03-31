@@ -258,6 +258,7 @@ class CreateSubscriptionPlanRequest(BaseModel):
 
 class SubscriptionPlanResponse(BaseModel):
     id: int
+    product_id: Optional[str] = None
     name: str
     description: Optional[str] = None
     price_usd: float

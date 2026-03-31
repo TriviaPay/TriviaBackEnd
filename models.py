@@ -402,6 +402,7 @@ class SubscriptionPlan(Base):
     __tablename__ = "subscription_plans"
 
     id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(String(10), unique=True, nullable=True, index=True)
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     price_usd = Column(
