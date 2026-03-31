@@ -32,7 +32,7 @@ def upgrade():
         UPDATE subscription_plans SET
             product_id = 'SUB001',
             stripe_price_id = 'price_1TGXdqEWLqolsVsQpVFCG3Vn',
-            paypal_plan_id = 'P-4GJ70912D10698625NHFIKBQ',
+            paypal_plan_id = 'P-47J10301DR216070UNHF5KHI',
             livemode = true
         WHERE id = 1
         """
@@ -42,7 +42,7 @@ def upgrade():
         UPDATE subscription_plans SET
             product_id = 'SUB002',
             stripe_price_id = 'price_1TGXeCEWLqolsVsQPZfK37Bi',
-            paypal_plan_id = 'P-5LR603266L479924BNHFIJGI',
+            paypal_plan_id = 'P-9VR38510JS972511ANHF5J4A',
             livemode = true
         WHERE id = 2
         """
@@ -58,7 +58,7 @@ def upgrade():
         VALUES
             ('$15 Monthly Subscription', '15MonthlyPro', 15.00, 'month', 1500, 'usd',
              'month', 1, 'SUB003', 'price_1TGXeUEWLqolsVsQvAvap9cc',
-             'P-77H12523G6876622JNHFIIGI', true, now(), now())
+             'P-5HS753405P7921541NHF5JQA', true, now(), now())
         """
     )
     op.execute(
@@ -70,7 +70,7 @@ def upgrade():
         VALUES
             ('$20 Monthly Subscription', '20MonthlyPro', 20.00, 'month', 2000, 'usd',
              'month', 1, 'SUB004', 'price_1TGXemEWLqolsVsQCpn96Stt',
-             'P-48T22895304707929NHFIFMY', true, now(), now())
+             'P-89P47043K8309415WNHF5I5Y', true, now(), now())
         """
     )
 
