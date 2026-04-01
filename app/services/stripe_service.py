@@ -43,9 +43,21 @@ stripe.api_key = STRIPE_SECRET_KEY
 
 
 async def get_or_create_stripe_customer(db: AsyncSession, user: User) -> str:
-    """Return existing Stripe customer ID or create one."""
+    """Return existing Stripe customer ID or create one.
+
+    If the stored customer ID no longer exists (e.g. Stripe account changed),
+    a new customer is created and the stale ID is replaced.
+    """
     if user.stripe_customer_id:
-        return user.stripe_customer_id
+        try:
+            stripe.Customer.retrieve(user.stripe_customer_id)
+            return user.stripe_customer_id
+        except stripe.InvalidRequestError:
+            logger.warning(
+                "Stale Stripe customer %s for user %s — recreating",
+                user.stripe_customer_id,
+                user.account_id,
+            )
 
     customer = stripe.Customer.create(
         email=user.email,
