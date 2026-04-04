@@ -440,6 +440,10 @@ def get_free_mode_questions(
                 if user_attempt and user_attempt.answered_at
                 else None
             ),
+            "ad_retry_used": user_attempt.ad_retry_used if user_attempt else False,
+            "can_retry_with_ad": (
+                user_attempt.status == "answered_wrong" and not user_attempt.ad_retry_used
+            ) if user_attempt else False,
         }
         questions.append(question_data)
 
@@ -457,6 +461,7 @@ def submit_answer_for_mode(
     question_id: int,
     answer: str,
     target_date: Optional[date] = None,
+    is_ad_retry: bool = False,
 ) -> Dict[str, Any]:
     """
     Submit an answer for a question in a specific mode.
@@ -468,6 +473,7 @@ def submit_answer_for_mode(
         question_id: Question ID
         answer: User's answer
         target_date: Optional target date
+        is_ad_retry: Whether this is a retry after watching an ad
 
     Returns:
         Dictionary with result status
@@ -476,13 +482,14 @@ def submit_answer_for_mode(
         target_date = get_active_draw_date()
 
     if mode_id == "free_mode":
-        return submit_free_mode_answer(db, user, question_id, answer, target_date)
+        return submit_free_mode_answer(db, user, question_id, answer, target_date, is_ad_retry=is_ad_retry)
 
     return {"status": "error", "message": f"Unknown mode: {mode_id}"}
 
 
 def submit_free_mode_answer(
-    db: Session, user: User, question_id: int, answer: str, target_date: date
+    db: Session, user: User, question_id: int, answer: str, target_date: date,
+    is_ad_retry: bool = False,
 ) -> Dict[str, Any]:
     """
     Submit answer for free mode question.
@@ -493,6 +500,7 @@ def submit_free_mode_answer(
         question_id: Question ID
         answer: User's answer
         target_date: Target date
+        is_ad_retry: Whether this is a retry after watching an ad
 
     Returns:
         Dictionary with result
@@ -551,13 +559,38 @@ def submit_free_mode_answer(
         )
         db.add(user_attempt)
 
-    # Check if already answered
-    if user_attempt.status in ["answered_correct", "answered_wrong"]:
+    # Reject ad retry on first submission (no prior wrong answer)
+    if is_ad_retry and user_attempt.status not in ["answered_wrong"]:
         return {
             "status": "error",
-            "message": f"Question already answered ({user_attempt.status})",
-            "is_correct": user_attempt.is_correct,
+            "message": "Cannot use ad retry without a prior wrong answer",
+            "is_correct": False,
         }
+
+    # Check if already answered
+    if user_attempt.status == "answered_correct":
+        return {
+            "status": "error",
+            "message": "Question already answered correctly",
+            "is_correct": True,
+        }
+
+    if user_attempt.status == "answered_wrong":
+        if not is_ad_retry:
+            return {
+                "status": "error",
+                "message": "Question already answered incorrectly",
+                "is_correct": False,
+                "can_retry_with_ad": not user_attempt.ad_retry_used,
+            }
+        if user_attempt.ad_retry_used:
+            return {
+                "status": "error",
+                "message": "Ad retry already used for this question",
+                "is_correct": False,
+                "can_retry_with_ad": False,
+            }
+        # Ad retry allowed — fall through to answer check
 
     # Check answer (compare normalized letters)
     correct_letter = get_correct_answer_letter(question)
@@ -570,9 +603,30 @@ def submit_free_mode_answer(
     user_attempt.answered_at = datetime.utcnow()
     user_attempt.status = "answered_correct" if is_correct else "answered_wrong"
 
-    # If this is the 3rd question and it's correct, set completion time
-    if is_correct and daily_q.question_order == 3:
+    if is_ad_retry:
+        user_attempt.ad_retry_used = True
+
+    # If this is the 3rd question and it's correct (first attempt), set completion time
+    if is_correct and daily_q.question_order == 3 and not is_ad_retry:
         user_attempt.third_question_completed_at = datetime.utcnow()
+
+    # On ad retry that makes answer correct, check if all 3 are now correct
+    # and update third_question_completed_at to reflect actual all-correct time
+    if is_correct and is_ad_retry:
+        all_attempts = (
+            db.query(TriviaUserFreeModeDaily)
+            .filter(
+                TriviaUserFreeModeDaily.account_id == user.account_id,
+                TriviaUserFreeModeDaily.date == target_date,
+            )
+            .all()
+        )
+        q123 = [a for a in all_attempts if a.question_order in (1, 2, 3)]
+        all_correct = len(q123) == 3 and all(a.status == "answered_correct" for a in q123)
+        if all_correct:
+            q3 = next((a for a in q123 if a.question_order == 3), None)
+            if q3:
+                q3.third_question_completed_at = datetime.utcnow()
 
     db.commit()
 
@@ -581,12 +635,21 @@ def submit_free_mode_answer(
 
     level_info = track_answer_and_update_level(user, db)
 
-    return {
+    result = {
         "status": "success",
         "is_correct": is_correct,
         "message": "Correct!" if is_correct else "Incorrect. Try again tomorrow!",
         "level_info": level_info,
     }
+
+    if is_ad_retry:
+        result["ad_retry_used"] = True
+        if not is_correct:
+            result["can_retry_with_ad"] = False
+    elif not is_correct:
+        result["can_retry_with_ad"] = True
+
+    return result
 
 
 def validate_entry_amount(

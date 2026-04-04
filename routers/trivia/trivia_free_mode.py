@@ -42,7 +42,7 @@ async def submit_free_mode_answer(
     user=Depends(get_current_user_or_guest),
     db: Session = Depends(get_db),
 ):
-    return service_submit_free_mode_answer(db, user, request.question_id, request.answer)
+    return service_submit_free_mode_answer(db, user, request.question_id, request.answer, is_ad_retry=request.is_ad_retry)
 
 
 @router.get("/leaderboard")

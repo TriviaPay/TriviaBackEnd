@@ -1111,6 +1111,7 @@ class TriviaUserFreeModeDaily(Base):
         String, nullable=False, default="locked"
     )  # locked, viewed, answered_wrong, answered_correct
     third_question_completed_at = Column(DateTime, nullable=True)  # For ranking winners
+    ad_retry_used = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Relationships
     user = relationship("User", backref="free_mode_daily_attempts")
@@ -1240,6 +1241,7 @@ class TriviaUserBronzeModeDaily(Base):
     status = Column(
         String, nullable=False, default="locked"
     )  # locked, viewed, answered
+    ad_retry_used = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Relationships
     user = relationship("User", backref="bronze_mode_daily_attempts")
@@ -1362,6 +1364,7 @@ class TriviaUserSilverModeDaily(Base):
     status = Column(
         String, nullable=False, default="locked"
     )  # locked, viewed, answered
+    ad_retry_used = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Relationships
     user = relationship("User", backref="silver_mode_daily_attempts")

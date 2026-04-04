@@ -10,6 +10,7 @@ from core.config import TRIVIA_LIVE_CHAT_MAX_MESSAGE_LENGTH
 class SubmitAnswerRequest(BaseModel):
     question_id: int
     answer: str
+    is_ad_retry: bool = False
 
 
 class TriviaLiveChatSendMessageRequest(BaseModel):

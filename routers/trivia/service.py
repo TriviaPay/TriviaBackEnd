@@ -1075,6 +1075,8 @@ def free_mode_current_question(db, *, user):
     for q in questions:
         if q["status"] in ["locked", "viewed"]:
             return {"question": q}
+        if q["status"] == "answered_wrong" and q.get("can_retry_with_ad"):
+            return {"question": q, "needs_ad_retry": True}
     return {"message": "All questions completed", "questions": questions}
 
 
@@ -1258,6 +1260,8 @@ def free_mode_status(db, *, user):
                 "user_answer": attempt.user_answer,
                 "is_correct": attempt.is_correct,
                 "answered_at": attempt.answered_at.isoformat() if attempt.answered_at else None,
+                "ad_retry_used": attempt.ad_retry_used,
+                "can_retry_with_ad": attempt.status == "answered_wrong" and not attempt.ad_retry_used,
             }
         )
 
@@ -1598,8 +1602,19 @@ async def _mode_submit_answer(
         account_id=user.account_id,
         target_date=target_date,
     )
+
+    # Reject ad retry on first submission (no prior wrong answer)
+    if request.is_ad_retry and (not existing_attempt or not existing_attempt.submitted_at):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot use ad retry without a prior wrong answer")
+
     if existing_attempt and existing_attempt.submitted_at:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You have already submitted an answer for today")
+        if existing_attempt.is_correct:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You already answered correctly")
+        if not request.is_ad_retry:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already answered incorrectly. Watch an ad to retry.")
+        if existing_attempt.ad_retry_used:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ad retry already used for today")
+        # Ad retry allowed — fall through
 
     question = trivia_repository.get_mode_question(
         db,
@@ -1633,7 +1648,13 @@ async def _mode_submit_answer(
     submitted_letter = (request.answer or "").strip().lower()
     is_correct = submitted_letter == correct_letter
 
-    if existing_attempt:
+    if existing_attempt and existing_attempt.submitted_at:
+        # Ad retry path — update existing attempt
+        existing_attempt.user_answer = request.answer
+        existing_attempt.is_correct = is_correct
+        existing_attempt.submitted_at = datetime.utcnow()
+        existing_attempt.ad_retry_used = True
+    elif existing_attempt:
         existing_attempt.user_answer = request.answer
         existing_attempt.is_correct = is_correct
         existing_attempt.submitted_at = datetime.utcnow()
@@ -1654,13 +1675,22 @@ async def _mode_submit_answer(
     from utils.user_level_service import track_answer_and_update_level
 
     level_info = track_answer_and_update_level(user, db)
-    return {
+    result = {
         "status": "success",
         "is_correct": is_correct,
         "submitted_at": datetime.utcnow().isoformat(),
         "message": "Answer submitted successfully",
         "level_info": level_info,
     }
+
+    if request.is_ad_retry:
+        result["ad_retry_used"] = True
+        if not is_correct:
+            result["can_retry_with_ad"] = False
+    elif not is_correct:
+        result["can_retry_with_ad"] = True
+
+    return result
 
 
 async def bronze_mode_submit_answer(db, *, user, request):
@@ -1732,6 +1762,10 @@ def bronze_mode_status(db, *, user):
         "fill_in_answer": user_attempt.user_answer if user_attempt and user_attempt.user_answer else None,
         "is_winner": is_winner,
         "current_date": target_date.isoformat(),
+        "ad_retry_used": user_attempt.ad_retry_used if user_attempt else False,
+        "can_retry_with_ad": bool(
+            user_attempt and user_attempt.submitted_at and not user_attempt.is_correct and not user_attempt.ad_retry_used
+        ),
     }
 
 
@@ -1764,6 +1798,10 @@ def silver_mode_status(db, *, user):
         "fill_in_answer": user_attempt.user_answer if user_attempt and user_attempt.user_answer else None,
         "is_winner": is_winner,
         "current_date": target_date.isoformat(),
+        "ad_retry_used": user_attempt.ad_retry_used if user_attempt else False,
+        "can_retry_with_ad": bool(
+            user_attempt and user_attempt.submitted_at and not user_attempt.is_correct and not user_attempt.ad_retry_used
+        ),
     }
 
 
@@ -2349,7 +2387,7 @@ def get_free_mode_questions(db, user):
     return {"questions": questions}
 
 
-def submit_free_mode_answer(db, user, question_id: int, answer: str):
+def submit_free_mode_answer(db, user, question_id: int, answer: str, is_ad_retry: bool = False):
     from utils.trivia_mode_service import submit_answer_for_mode
 
-    return submit_answer_for_mode(db, "free_mode", user, question_id, answer)
+    return submit_answer_for_mode(db, "free_mode", user, question_id, answer, is_ad_retry=is_ad_retry)
