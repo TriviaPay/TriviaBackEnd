@@ -125,6 +125,8 @@ class GlobalChatMessagesResponse(BaseModel):
     messages: List[GlobalChatMessageResponse]
     online_count: int
     unread_messages_count: int = 0
+    unread_global_count: int = 0
+    unread_private_count: int = 0
     friend_requests_count: int = 0
 
 

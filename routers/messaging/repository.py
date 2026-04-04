@@ -501,6 +501,28 @@ def count_global_chat_viewers_since(db: Session, *, cutoff_dt) -> int:
     return db.query(GlobalChatViewer).filter(GlobalChatViewer.last_seen >= cutoff_dt).count()
 
 
+def count_unread_global_chat_messages(db: Session, *, user_id: int) -> int:
+    """Count global chat messages created after the user's last_seen timestamp."""
+    from sqlalchemy import func
+
+    from models import GlobalChatMessage, GlobalChatViewer
+
+    viewer = db.query(GlobalChatViewer).filter(GlobalChatViewer.user_id == user_id).first()
+    if not viewer:
+        # Never viewed — all messages are unread
+        return db.query(func.count(GlobalChatMessage.id)).scalar() or 0
+
+    return (
+        db.query(func.count(GlobalChatMessage.id))
+        .filter(
+            GlobalChatMessage.created_at > viewer.last_seen,
+            GlobalChatMessage.user_id != user_id,
+        )
+        .scalar()
+        or 0
+    )
+
+
 def delete_global_chat_messages_before(db: Session, *, cutoff_dt) -> int:
     from models import GlobalChatMessage
 

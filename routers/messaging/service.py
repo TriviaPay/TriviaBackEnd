@@ -628,7 +628,10 @@ async def get_global_chat_messages(db, *, current_user, limit: int, before):
             }
         )
 
-    unread_messages_count = messaging_repository.count_total_unread_private_messages(
+    unread_private_count = messaging_repository.count_total_unread_private_messages(
+        db, user_id=current_user.account_id
+    )
+    unread_global_count = messaging_repository.count_unread_global_chat_messages(
         db, user_id=current_user.account_id
     )
     friend_requests_count = messaging_repository.count_pending_private_chat_requests(
@@ -638,7 +641,9 @@ async def get_global_chat_messages(db, *, current_user, limit: int, before):
     return {
         "messages": result_messages,
         "online_count": online_count,
-        "unread_messages_count": unread_messages_count,
+        "unread_messages_count": unread_private_count,
+        "unread_global_count": unread_global_count,
+        "unread_private_count": unread_private_count,
         "friend_requests_count": friend_requests_count,
     }
 
