@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from typing import Optional
 import json
 from datetime import datetime, timezone
 
@@ -503,6 +504,95 @@ async def process_google_notification(db, *, payload: dict):
     event.processed_at = datetime.now(timezone.utc)
     await db.commit()
     return {"status": "processed", "event_id": event_id, "product_id": product_id}
+
+
+async def get_transaction_history(db, *, user_id: int, page: int, page_size: int, kind: Optional[str]):
+    transactions, total = await payments_repository.list_wallet_transactions_paginated(
+        db, user_id=user_id, page=page, page_size=page_size, kind=kind
+    )
+    return {
+        "transactions": [
+            WalletTransactionResponse(
+                id=t.id,
+                amount_minor=t.amount_minor,
+                amount_usd=t.amount_minor / 100.0,
+                currency=t.currency,
+                kind=t.kind,
+                created_at=t.created_at.isoformat() if t.created_at else None,
+            )
+            for t in transactions
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+async def request_withdrawal(db, *, user, amount_usd: float, method: str, details: Optional[str]):
+    amount_minor = int(amount_usd * 100)
+    currency = user.wallet_currency or "usd"
+    balance = await wallet_service_get_wallet_balance(db, user.account_id, currency)
+
+    if amount_minor > balance:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Insufficient balance. Current balance: ${balance / 100:.2f}",
+        )
+
+    if amount_minor < 500:  # minimum $5 withdrawal
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Minimum withdrawal amount is $5.00",
+        )
+
+    # Debit wallet
+    await adjust_wallet_balance(
+        db=db,
+        user_id=user.account_id,
+        currency=currency,
+        delta_minor=-amount_minor,
+        kind="withdraw",
+        external_ref_type="withdrawal_request",
+        external_ref_id=f"wd_{user.account_id}_{int(datetime.now(timezone.utc).timestamp())}",
+        livemode=True,
+    )
+
+    # Create withdrawal record
+    withdrawal = await payments_repository.create_withdrawal(
+        db, account_id=user.account_id, amount=amount_usd, method=method
+    )
+    await db.commit()
+
+    return {
+        "id": withdrawal.id,
+        "amount": withdrawal.amount,
+        "withdrawal_method": withdrawal.withdrawal_method,
+        "withdrawal_status": withdrawal.withdrawal_status,
+        "requested_at": withdrawal.requested_at.isoformat() if withdrawal.requested_at else None,
+        "processed_at": None,
+    }
+
+
+async def get_withdrawal_history(db, *, account_id: int, page: int, page_size: int):
+    withdrawals, total = await payments_repository.list_withdrawals_paginated(
+        db, account_id=account_id, page=page, page_size=page_size
+    )
+    return {
+        "withdrawals": [
+            {
+                "id": w.id,
+                "amount": w.amount,
+                "withdrawal_method": w.withdrawal_method,
+                "withdrawal_status": w.withdrawal_status,
+                "requested_at": w.requested_at.isoformat() if w.requested_at else None,
+                "processed_at": w.processed_at.isoformat() if w.processed_at else None,
+            }
+            for w in withdrawals
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 # --- Internal APIs for other domains ---

@@ -20,6 +20,35 @@ class WalletBalanceResponse(BaseModel):
     currency: str
     recent_transactions: Optional[List[WalletTransactionResponse]] = None
 
+class PaginatedTransactionsResponse(BaseModel):
+    transactions: List[WalletTransactionResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class WithdrawalRequest(BaseModel):
+    amount_usd: float = Field(..., gt=0, description="Withdrawal amount in USD")
+    method: str = Field(..., description="Withdrawal method: 'paypal' or 'bank'")
+    details: Optional[str] = Field(None, description="PayPal email or bank details")
+
+
+class WithdrawalResponse(BaseModel):
+    id: int
+    amount: float
+    withdrawal_method: str
+    withdrawal_status: str
+    requested_at: Optional[str] = None
+    processed_at: Optional[str] = None
+
+
+class PaginatedWithdrawalsResponse(BaseModel):
+    withdrawals: List[WithdrawalResponse]
+    total: int
+    page: int
+    page_size: int
+
+
 class AppleVerifyRequest(BaseModel):
     signed_transaction_info: str = Field(
         ..., description="StoreKit 2 signedTransactionInfo (JWS)"

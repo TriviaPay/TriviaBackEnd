@@ -528,6 +528,49 @@ async def get_avatar_stats(
     return admin_get_avatar_stats(db)
 
 
+@router.get("/users/{account_id}/transactions")
+async def get_user_transactions(
+    account_id: int = Path(..., description="User account ID"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    kind: Optional[str] = Query(None, description="Filter by transaction kind"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    View paginated transaction history for a specific user (admin-only).
+    """
+    verify_admin(db, current_user)
+    from app.db import AsyncSessionLocal
+    from app.routers.payments.service import get_transaction_history
+
+    async with AsyncSessionLocal() as async_db:
+        return await get_transaction_history(
+            async_db, user_id=account_id, page=page, page_size=page_size, kind=kind
+        )
+
+
+@router.get("/users/{account_id}/withdrawals")
+async def get_user_withdrawals(
+    account_id: int = Path(..., description="User account ID"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    View paginated withdrawal history for a specific user (admin-only).
+    """
+    verify_admin(db, current_user)
+    from app.db import AsyncSessionLocal
+    from app.routers.payments.service import get_withdrawal_history
+
+    async with AsyncSessionLocal() as async_db:
+        return await get_withdrawal_history(
+            async_db, account_id=account_id, page=page, page_size=page_size
+        )
+
+
 @router.post("/reconciliation/run", response_model=Dict[str, Any])
 async def run_reconciliation(
     current_user: dict = Depends(get_admin_user),
