@@ -184,13 +184,27 @@ def check_mode_access(db: Session, user: User, mode_id: str) -> Dict[str, Any]:
     )
 
     if inactive_subscription:
+        # Auto-expire subscriptions whose period has ended but status was never updated
+        effective_status = inactive_subscription.status
+        if (
+            effective_status == "active"
+            and inactive_subscription.current_period_end
+            and inactive_subscription.current_period_end < datetime.utcnow()
+        ):
+            effective_status = "expired"
+            inactive_subscription.status = "expired"
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+
         return {
             "has_access": False,
-            "subscription_status": inactive_subscription.status,
+            "subscription_status": effective_status,
             "subscription_details": {
                 "subscription_id": inactive_subscription.id,
                 "plan_id": inactive_subscription.plan_id,
-                "status": inactive_subscription.status,
+                "status": effective_status,
                 "current_period_end": (
                     inactive_subscription.current_period_end.isoformat()
                     if inactive_subscription.current_period_end
@@ -199,7 +213,9 @@ def check_mode_access(db: Session, user: User, mode_id: str) -> Dict[str, Any]:
                 "amount": required_amount,
             },
             "message": (
-                f"Subscription exists but status is {inactive_subscription.status}"
+                f"Subscription expired on {inactive_subscription.current_period_end.isoformat()}"
+                if effective_status == "expired" and inactive_subscription.current_period_end
+                else f"Subscription exists but status is {effective_status}"
             ),
         }
 

@@ -528,18 +528,35 @@ async def get_avatar_stats(
     return admin_get_avatar_stats(db)
 
 
-@router.get("/users/{account_id}/transactions")
+@router.get(
+    "/users/{account_id}/transactions",
+    summary="Get user's transaction history (admin)",
+    description=(
+        "Returns a paginated list of all wallet transactions for the "
+        "specified user, ordered newest-first. "
+        "Use the `kind` filter to narrow results.\n\n"
+        "**Admin-only endpoint.**"
+    ),
+    responses={
+        200: {"description": "Transaction list retrieved"},
+        403: {"description": "Not an admin"},
+    },
+)
 async def get_user_transactions(
-    account_id: int = Path(..., description="User account ID"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    kind: Optional[str] = Query(None, description="Filter by transaction kind"),
+    account_id: int = Path(..., description="Target user's account ID", example=1142961859),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    kind: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by transaction kind: deposit, withdraw, iap_credit, "
+            "iap_refund, trivia_reward, adjustment, fee"
+        ),
+        example="trivia_reward",
+    ),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    View paginated transaction history for a specific user (admin-only).
-    """
     verify_admin(db, current_user)
     from app.db import AsyncSessionLocal
     from app.routers.payments.service import get_transaction_history
@@ -550,17 +567,26 @@ async def get_user_transactions(
         )
 
 
-@router.get("/users/{account_id}/withdrawals")
+@router.get(
+    "/users/{account_id}/withdrawals",
+    summary="Get user's withdrawal history (admin)",
+    description=(
+        "Returns a paginated list of all withdrawal requests for the "
+        "specified user, ordered newest-first.\n\n"
+        "**Admin-only endpoint.**"
+    ),
+    responses={
+        200: {"description": "Withdrawal list retrieved"},
+        403: {"description": "Not an admin"},
+    },
+)
 async def get_user_withdrawals(
-    account_id: int = Path(..., description="User account ID"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    account_id: int = Path(..., description="Target user's account ID", example=1142961859),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    View paginated withdrawal history for a specific user (admin-only).
-    """
     verify_admin(db, current_user)
     from app.db import AsyncSessionLocal
     from app.routers.payments.service import get_withdrawal_history

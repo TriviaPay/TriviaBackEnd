@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Guard: canonical repo + main branch
+      - name: "Guard: canonical repo + main branch"
         env:
           OCI_CANONICAL_REPO: ${{ vars.OCI_CANONICAL_REPO }}
           DEPLOY_ENV: ${{ github.event.inputs.environment || 'prod' }}
@@ -337,26 +337,26 @@ jobs:
           HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
           HEALTHCHECK_ALLOWED_PORTS: ${{ vars.OCI_HEALTHCHECK_ALLOWED_PORTS }}
         run: |
-          python - <<'PY'
-import os
-from urllib.parse import urlparse
+          python3 -c "
+          import os
+          from urllib.parse import urlparse
 
-url = os.environ.get("HEALTHCHECK_URL", "")
-backend = os.environ.get("TF_BACKEND_PORT", "")
-extra_ports = os.environ.get("HEALTHCHECK_ALLOWED_PORTS", "")
-allowed = {backend, "80", "443"}
-for port in extra_ports.split(","):
-    port = port.strip()
-    if port:
-        allowed.add(port)
-if url:
-    parsed = urlparse(url)
-    if parsed.port:
-        if str(parsed.port) not in allowed:
-            raise SystemExit(
-                f"HEALTHCHECK_URL port {parsed.port} is not in allowed ports: {sorted(allowed)}"
-            )
-PY
+          url = os.environ.get('HEALTHCHECK_URL', '')
+          backend = os.environ.get('TF_BACKEND_PORT', '')
+          extra_ports = os.environ.get('HEALTHCHECK_ALLOWED_PORTS', '')
+          allowed = {backend, '80', '443'}
+          for port in extra_ports.split(','):
+              port = port.strip()
+              if port:
+                  allowed.add(port)
+          if url:
+              parsed = urlparse(url)
+              if parsed.port:
+                  if str(parsed.port) not in allowed:
+                      raise SystemExit(
+                          f'HEALTHCHECK_URL port {parsed.port} is not in allowed ports: {sorted(allowed)}'
+                      )
+          "
           if [[ "${HEALTHCHECK_URL}" == *"?"* ]]; then
             SMOKE_URL="${HEALTHCHECK_URL}&nocache=${GITHUB_SHA}"
           else
