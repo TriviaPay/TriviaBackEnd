@@ -116,6 +116,7 @@ class GlobalChatMessageResponse(BaseModel):
     badge: Optional[dict] = None
     message: str
     created_at: str
+    is_read: Optional[bool] = None
     reply_to: Optional[dict] = None
     level: int = 1
     level_progress: str = "0/100"

@@ -495,6 +495,12 @@ def upsert_global_chat_viewer_last_seen(db: Session, *, user_id: int, now_dt):
             existing_viewer.last_seen = now_dt
 
 
+def get_global_chat_viewer(db: Session, *, user_id: int):
+    from models import GlobalChatViewer
+
+    return db.query(GlobalChatViewer).filter(GlobalChatViewer.user_id == user_id).first()
+
+
 def count_global_chat_viewers_since(db: Session, *, cutoff_dt) -> int:
     from models import GlobalChatViewer
 

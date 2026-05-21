@@ -1992,16 +1992,101 @@ async def upload_questions_csv(
     try:
         questions = parse_csv_questions(file_content, mode_id)
         result = save_questions_to_mode(db, questions, mode_id)
+        refresh_result = _refresh_active_mode_questions_after_upload(
+            db, mode_id=mode_id, saved_count=result["saved_count"]
+        )
         return {
             "success": True,
             "saved_count": result["saved_count"],
             "duplicate_count": result["duplicate_count"],
             "error_count": result["error_count"],
             "errors": result["errors"][:10],
+            "active_draw_date": refresh_result["target_date"],
+            "active_pool_reset": refresh_result["active_pool_reset"],
+            "cleared_allocations": refresh_result["cleared_allocations"],
+            "refresh_skipped_reason": refresh_result["refresh_skipped_reason"],
         }
     except ValueError:
         logging.warning("Invalid CSV upload", exc_info=True)
         raise HTTPException(status_code=400, detail="Invalid CSV file")
+
+
+def _refresh_active_mode_questions_after_upload(
+    db: Session, *, mode_id: str, saved_count: int
+) -> Dict[str, Any]:
+    """
+    Refresh the active draw's daily allocation after a question upload when safe.
+
+    New uploads should be visible immediately during admin testing, but we must not
+    replace an in-progress day's pool after users have already started answering.
+    """
+    if saved_count <= 0:
+        return {
+            "target_date": get_active_draw_date().isoformat(),
+            "active_pool_reset": False,
+            "cleared_allocations": 0,
+            "refresh_skipped_reason": "no_new_questions",
+        }
+
+    from utils.trivia_mode_service import get_date_range_for_query
+
+    from models import (
+        TriviaQuestionsBronzeModeDaily,
+        TriviaQuestionsFreeModeDaily,
+        TriviaQuestionsSilverModeDaily,
+        TriviaUserBronzeModeDaily,
+        TriviaUserFreeModeDaily,
+        TriviaUserSilverModeDaily,
+    )
+
+    model_map = {
+        "free_mode": (TriviaQuestionsFreeModeDaily, TriviaUserFreeModeDaily),
+        "bronze": (TriviaQuestionsBronzeModeDaily, TriviaUserBronzeModeDaily),
+        "silver": (TriviaQuestionsSilverModeDaily, TriviaUserSilverModeDaily),
+    }
+    daily_model, attempt_model = model_map.get(mode_id, (None, None))
+    target_date = get_active_draw_date()
+
+    if daily_model is None or attempt_model is None:
+        return {
+            "target_date": target_date.isoformat(),
+            "active_pool_reset": False,
+            "cleared_allocations": 0,
+            "refresh_skipped_reason": "unsupported_mode",
+        }
+
+    attempts_exist = (
+        auth_repository.query(db, attempt_model)
+        .filter(attempt_model.date == target_date)
+        .first()
+        is not None
+    )
+    if attempts_exist:
+        return {
+            "target_date": target_date.isoformat(),
+            "active_pool_reset": False,
+            "cleared_allocations": 0,
+            "refresh_skipped_reason": "attempts_exist",
+        }
+
+    start_datetime, end_datetime = get_date_range_for_query(target_date)
+    cleared_allocations = (
+        auth_repository.query(db, daily_model)
+        .filter(
+            daily_model.date >= start_datetime,
+            daily_model.date <= end_datetime,
+        )
+        .delete(synchronize_session=False)
+    )
+    if cleared_allocations:
+        db.commit()
+
+    return {
+        "target_date": target_date.isoformat(),
+        "active_pool_reset": cleared_allocations > 0,
+        "cleared_allocations": cleared_allocations,
+        "refresh_skipped_reason": None if cleared_allocations > 0 else "no_active_allocations",
+    }
 
 
 async def trigger_free_mode_draw(db: Session, draw_date: Optional[str]):

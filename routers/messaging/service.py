@@ -515,6 +515,10 @@ async def get_global_chat_messages(db, *, current_user, limit: int, before):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Global chat is disabled")
 
     messages = messaging_repository.list_global_chat_messages(db, limit=limit, before=before)
+    existing_viewer = messaging_repository.get_global_chat_viewer(
+        db, user_id=current_user.account_id
+    )
+    previous_last_seen = existing_viewer.last_seen if existing_viewer else None
 
     # Update viewer tracking (user is viewing global chat)
     now = datetime.utcnow()
@@ -622,6 +626,14 @@ async def get_global_chat_messages(db, *, current_user, limit: int, before):
                 "badge": profile_data["badge"],
                 "message": msg.message,
                 "created_at": msg.created_at.isoformat(),
+                "is_read": (
+                    True
+                    if msg.user_id == current_user.account_id
+                    else (
+                        previous_last_seen is not None
+                        and msg.created_at <= previous_last_seen
+                    )
+                ),
                 "reply_to": reply_info,
                 "level": profile_data.get("level", 1),
                 "level_progress": profile_data.get("level_progress", "0/100"),
@@ -1927,10 +1939,10 @@ async def get_private_messages(db, *, current_user, conversation_id: int, limit:
                     ),
                 )
 
-    last_read_id = (
-        conversation.last_read_message_id_user1
+    peer_last_read_id = (
+        conversation.last_read_message_id_user2
         if conversation.user1_id == current_user.account_id
-        else conversation.last_read_message_id_user2
+        else conversation.last_read_message_id_user1
     )
 
     messages = messaging_repository.list_private_chat_messages_with_sender(
@@ -1976,9 +1988,14 @@ async def get_private_messages(db, *, current_user, conversation_id: int, limit:
             },
         )
         is_read = (
-            last_read_id is not None and msg.id <= last_read_id
-            if msg.sender_id != current_user.account_id
+            peer_last_read_id is not None and msg.id <= peer_last_read_id
+            if msg.sender_id == current_user.account_id
             else None
+        )
+        message_status = (
+            "seen"
+            if msg.sender_id == current_user.account_id and is_read
+            else msg.status
         )
 
         reply_info = None
@@ -2022,7 +2039,7 @@ async def get_private_messages(db, *, current_user, conversation_id: int, limit:
                 "sender_frame_url": sender_profile_data["frame_url"],
                 "sender_badge": sender_profile_data["badge"],
                 "message": msg.message,
-                "status": msg.status,
+                "status": message_status,
                 "created_at": msg.created_at.isoformat(),
                 "delivered_at": (
                     msg.delivered_at.isoformat() if msg.delivered_at else None
@@ -2073,11 +2090,38 @@ async def mark_conversation_read(
             message_id = latest_message.id
         else:
             return {"conversation_id": conversation_id, "last_read_message_id": None}
+    else:
+        target_message = messaging_repository.get_private_chat_message_in_conversation(
+            db, message_id=message_id, conversation_id=conversation_id
+        )
+        if not target_message:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Message not found in this conversation",
+            )
 
     if conversation.user1_id == current_user.account_id:
         conversation.last_read_message_id_user1 = message_id
     else:
         conversation.last_read_message_id_user2 = message_id
+
+    from models import PrivateChatMessage
+
+    seen_at = datetime.utcnow()
+    messages_to_mark_seen = (
+        messaging_repository.query(db, PrivateChatMessage)
+        .filter(
+            PrivateChatMessage.conversation_id == conversation_id,
+            PrivateChatMessage.sender_id != current_user.account_id,
+            PrivateChatMessage.id <= message_id,
+        )
+        .all()
+    )
+    for message in messages_to_mark_seen:
+        if not message.delivered_at:
+            message.delivered_at = seen_at
+        if message.status != "seen":
+            message.status = "seen"
 
     db.commit()
 

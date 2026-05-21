@@ -1072,11 +1072,18 @@ def free_mode_current_question(db, *, user):
             detail="No questions available for today",
         )
 
+    retry_question = None
     for q in questions:
         if q["status"] in ["locked", "viewed"]:
             return {"question": q}
-        if q["status"] == "answered_wrong" and q.get("can_retry_with_ad"):
-            return {"question": q, "needs_ad_retry": True}
+        if (
+            retry_question is None
+            and q["status"] == "answered_wrong"
+            and q.get("can_retry_with_ad")
+        ):
+            retry_question = q
+    if retry_question is not None:
+        return {"question": retry_question, "needs_ad_retry": True}
     return {"message": "All questions completed", "questions": questions}
 
 

@@ -623,6 +623,101 @@ def test_free_mode_current_question_all_completed(client, test_db, current_user)
     assert len(payload["questions"]) == 3
 
 
+def test_free_mode_current_question_advances_past_wrong_answer(
+    client, test_db, current_user
+):
+    _add_mode_config(
+        test_db,
+        mode_id="free_mode",
+        mode_name="Free Mode",
+        questions_count=3,
+        amount=0.0,
+        reward_distribution=json.dumps({"requires_subscription": False}),
+    )
+    questions = [_create_free_mode_question(test_db, i + 1) for i in range(3)]
+    target_date = get_active_draw_date()
+    _add_free_mode_daily_questions(test_db, questions, target_date)
+
+    test_db.add(
+        TriviaUserFreeModeDaily(
+            account_id=current_user.account_id,
+            date=target_date,
+            question_order=1,
+            question_id=questions[0].id,
+            status="answered_wrong",
+            is_correct=False,
+            answered_at=datetime.utcnow(),
+            ad_retry_used=False,
+        )
+    )
+    test_db.commit()
+
+    response = client.get("/trivia/free-mode/current-question")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["question"]["question_id"] == questions[1].id
+    assert payload.get("needs_ad_retry") is None
+
+
+def test_free_mode_current_question_returns_retry_after_pending_questions_done(
+    client, test_db, current_user
+):
+    _add_mode_config(
+        test_db,
+        mode_id="free_mode",
+        mode_name="Free Mode",
+        questions_count=3,
+        amount=0.0,
+        reward_distribution=json.dumps({"requires_subscription": False}),
+    )
+    questions = [_create_free_mode_question(test_db, i + 1) for i in range(3)]
+    target_date = get_active_draw_date()
+    _add_free_mode_daily_questions(test_db, questions, target_date)
+
+    now = datetime.utcnow()
+    test_db.add_all(
+        [
+            TriviaUserFreeModeDaily(
+                account_id=current_user.account_id,
+                date=target_date,
+                question_order=1,
+                question_id=questions[0].id,
+                status="answered_wrong",
+                is_correct=False,
+                answered_at=now,
+                ad_retry_used=False,
+            ),
+            TriviaUserFreeModeDaily(
+                account_id=current_user.account_id,
+                date=target_date,
+                question_order=2,
+                question_id=questions[1].id,
+                status="answered_correct",
+                is_correct=True,
+                answered_at=now,
+            ),
+            TriviaUserFreeModeDaily(
+                account_id=current_user.account_id,
+                date=target_date,
+                question_order=3,
+                question_id=questions[2].id,
+                status="answered_correct",
+                is_correct=True,
+                answered_at=now,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    response = client.get("/trivia/free-mode/current-question")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["question"]["question_id"] == questions[0].id
+    assert payload["needs_ad_retry"] is True
+
+
 def test_bronze_mode_submit_answer_success(client, test_db, current_user, monkeypatch):
     monkeypatch.setenv("DRAW_TIME_HOUR", "23")
     monkeypatch.setenv("DRAW_TIME_MINUTE", "59")
