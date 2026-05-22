@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import base64
-from typing import Optional
-import json
 from datetime import datetime, timezone
+import json
+from typing import Dict, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, select
@@ -35,6 +35,9 @@ from .schemas import (
     IapVerifyResponse,
     SubscriptionInfo,
     WalletBalanceResponse,
+    WalletEarningsEntryResponse,
+    WalletEarningsResponse,
+    WalletSubscriptionEarningsTotalResponse,
     WalletTransactionResponse,
 )
 
@@ -67,6 +70,81 @@ async def get_wallet_info(db, *, user, include_transactions: bool):
         balance_usd=balance_minor / 100.0,
         currency=currency,
         recent_transactions=recent_transactions,
+    )
+
+
+async def get_user_earnings(db, *, user):
+    rows = await payments_repository.list_user_draw_earnings(
+        db, user_id=user.account_id
+    )
+
+    totals_by_subscription: Dict[str, dict] = {
+        "bronze": {
+            "subscription_type": "bronze",
+            "subscription_name": "Bronze Mode",
+            "subscription_amount_usd": 5.0,
+            "total_winnings_amount_usd": 0.0,
+        },
+        "silver": {
+            "subscription_type": "silver",
+            "subscription_name": "Silver Mode",
+            "subscription_amount_usd": 10.0,
+            "total_winnings_amount_usd": 0.0,
+        },
+    }
+    total_winnings_amount_usd = 0.0
+    earnings = []
+
+    for row in rows:
+        amount_usd = round(float(row.amount_usd or 0.0), 2)
+        subscription_type = row.subscription_type
+
+        if subscription_type not in totals_by_subscription:
+            totals_by_subscription[subscription_type] = {
+                "subscription_type": subscription_type,
+                "subscription_name": row.subscription_name,
+                "subscription_amount_usd": round(
+                    float(row.subscription_amount_usd or 0.0), 2
+                ),
+                "total_winnings_amount_usd": 0.0,
+            }
+
+        totals_by_subscription[subscription_type]["total_winnings_amount_usd"] = round(
+            totals_by_subscription[subscription_type]["total_winnings_amount_usd"]
+            + amount_usd,
+            2,
+        )
+        total_winnings_amount_usd = round(
+            total_winnings_amount_usd + amount_usd,
+            2,
+        )
+        earnings.append(
+            WalletEarningsEntryResponse(
+                date=row.draw_date.isoformat(),
+                amount_usd=amount_usd,
+                subscription_type=subscription_type,
+                subscription_name=row.subscription_name,
+                subscription_amount_usd=round(
+                    float(row.subscription_amount_usd or 0.0), 2
+                ),
+            )
+        )
+
+    subscription_totals = [
+        WalletSubscriptionEarningsTotalResponse(**totals_by_subscription["bronze"]),
+        WalletSubscriptionEarningsTotalResponse(**totals_by_subscription["silver"]),
+    ]
+
+    for subscription_type, total in totals_by_subscription.items():
+        if subscription_type in {"bronze", "silver"}:
+            continue
+        subscription_totals.append(WalletSubscriptionEarningsTotalResponse(**total))
+
+    return WalletEarningsResponse(
+        currency="usd",
+        total_winnings_amount_usd=total_winnings_amount_usd,
+        subscription_totals=subscription_totals,
+        earnings=earnings,
     )
 
 

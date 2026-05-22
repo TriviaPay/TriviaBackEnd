@@ -13,10 +13,12 @@ from .schemas import (
     PaginatedTransactionsResponse,
     PaginatedWithdrawalsResponse,
     WalletBalanceResponse,
+    WalletEarningsResponse,
     WithdrawalRequest,
     WithdrawalResponse,
 )
 from .service import (
+    get_user_earnings as service_get_user_earnings,
     get_transaction_history as service_get_transaction_history,
     get_wallet_info as service_get_wallet_info,
     get_withdrawal_history as service_get_withdrawal_history,
@@ -55,6 +57,26 @@ async def get_wallet_info(
     return await service_get_wallet_info(
         db, user=user, include_transactions=include_transactions
     )
+
+
+@router.get(
+    "/earnings",
+    response_model=WalletEarningsResponse,
+    summary="Get winnings breakdown",
+    description=(
+        "Returns the authenticated user's draw winnings from subscription trivia "
+        "modes, ordered latest-first, plus overall winnings and per-subscription totals."
+    ),
+    responses={
+        200: {"description": "Winnings breakdown retrieved successfully"},
+        401: {"description": "Not authenticated"},
+    },
+)
+async def get_earnings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    return await service_get_user_earnings(db, user=user)
 
 
 @router.get(

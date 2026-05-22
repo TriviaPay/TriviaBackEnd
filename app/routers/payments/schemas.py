@@ -75,6 +75,98 @@ class WalletBalanceResponse(BaseModel):
         }
 
 
+class WalletEarningsEntryResponse(BaseModel):
+    """One winnings entry from a subscription trivia draw."""
+
+    date: str = Field(..., description="Draw date in ISO 8601 format", example="2026-04-04")
+    amount_usd: float = Field(..., description="Winnings for that draw in USD", example=2.50)
+    subscription_type: str = Field(
+        ...,
+        description="Subscription bucket for the winnings entry",
+        example="bronze",
+    )
+    subscription_name: str = Field(
+        ...,
+        description="Human-readable subscription/mode name",
+        example="Bronze Mode",
+    )
+    subscription_amount_usd: float = Field(
+        ...,
+        description="Subscription price associated with this mode",
+        example=5.00,
+    )
+
+
+class WalletSubscriptionEarningsTotalResponse(BaseModel):
+    """Aggregate winnings total for a subscription trivia mode."""
+
+    subscription_type: str = Field(..., example="bronze")
+    subscription_name: str = Field(..., example="Bronze Mode")
+    subscription_amount_usd: float = Field(..., example=5.00)
+    total_winnings_amount_usd: float = Field(
+        ...,
+        description="Total winnings for this subscription bucket",
+        example=12.75,
+    )
+
+
+class WalletEarningsResponse(BaseModel):
+    """Latest-first draw winnings with overall and per-subscription totals."""
+
+    currency: str = Field(..., description="ISO 4217 currency code", example="usd")
+    total_winnings_amount_usd: float = Field(
+        ...,
+        description="Total winnings across all subscription trivia modes",
+        example=18.25,
+    )
+    subscription_totals: List[WalletSubscriptionEarningsTotalResponse] = Field(
+        ...,
+        description="Per-subscription winnings totals",
+    )
+    earnings: List[WalletEarningsEntryResponse] = Field(
+        ...,
+        description="Latest-first list of winnings entries",
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "currency": "usd",
+                "total_winnings_amount_usd": 18.25,
+                "subscription_totals": [
+                    {
+                        "subscription_type": "bronze",
+                        "subscription_name": "Bronze Mode",
+                        "subscription_amount_usd": 5.00,
+                        "total_winnings_amount_usd": 6.25,
+                    },
+                    {
+                        "subscription_type": "silver",
+                        "subscription_name": "Silver Mode",
+                        "subscription_amount_usd": 10.00,
+                        "total_winnings_amount_usd": 12.00,
+                    },
+                ],
+                "earnings": [
+                    {
+                        "date": "2026-04-04",
+                        "amount_usd": 2.50,
+                        "subscription_type": "bronze",
+                        "subscription_name": "Bronze Mode",
+                        "subscription_amount_usd": 5.00,
+                    },
+                    {
+                        "date": "2026-04-03",
+                        "amount_usd": 12.00,
+                        "subscription_type": "silver",
+                        "subscription_name": "Silver Mode",
+                        "subscription_amount_usd": 10.00,
+                    },
+                ],
+            }
+        }
+
+
 class PaginatedTransactionsResponse(BaseModel):
     """Paginated list of wallet transactions."""
 

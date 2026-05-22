@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, literal, select, union_all
 
 
 async def list_recent_wallet_transactions(db, *, user_id: int, limit: int = 10):
@@ -16,6 +16,51 @@ async def list_recent_wallet_transactions(db, *, user_id: int, limit: int = 10):
     )
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+async def list_user_draw_earnings(db, *, user_id: int):
+    from models import TriviaBronzeModeLeaderboard, TriviaSilverModeLeaderboard
+
+    bronze_stmt = select(
+        TriviaBronzeModeLeaderboard.draw_date.label("draw_date"),
+        TriviaBronzeModeLeaderboard.money_awarded.label("amount_usd"),
+        TriviaBronzeModeLeaderboard.submitted_at.label("submitted_at"),
+        literal("bronze").label("subscription_type"),
+        literal("Bronze Mode").label("subscription_name"),
+        literal(5.0).label("subscription_amount_usd"),
+    ).where(
+        TriviaBronzeModeLeaderboard.account_id == user_id,
+        TriviaBronzeModeLeaderboard.money_awarded > 0,
+    )
+
+    silver_stmt = select(
+        TriviaSilverModeLeaderboard.draw_date.label("draw_date"),
+        TriviaSilverModeLeaderboard.money_awarded.label("amount_usd"),
+        TriviaSilverModeLeaderboard.submitted_at.label("submitted_at"),
+        literal("silver").label("subscription_type"),
+        literal("Silver Mode").label("subscription_name"),
+        literal(10.0).label("subscription_amount_usd"),
+    ).where(
+        TriviaSilverModeLeaderboard.account_id == user_id,
+        TriviaSilverModeLeaderboard.money_awarded > 0,
+    )
+
+    earnings = union_all(bronze_stmt, silver_stmt).subquery()
+    stmt = select(
+        earnings.c.draw_date,
+        earnings.c.amount_usd,
+        earnings.c.submitted_at,
+        earnings.c.subscription_type,
+        earnings.c.subscription_name,
+        earnings.c.subscription_amount_usd,
+    ).order_by(
+        desc(earnings.c.draw_date),
+        desc(earnings.c.submitted_at),
+        desc(earnings.c.amount_usd),
+    )
+
+    result = await db.execute(stmt)
+    return result.all()
 
 
 async def list_wallet_transactions_paginated(
