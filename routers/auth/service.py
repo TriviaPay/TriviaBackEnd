@@ -202,6 +202,37 @@ def get_default_profile_pic_url(username: str) -> Optional[str]:
     return f"{base_url}/{first_letter}.png"
 
 
+def _extract_descope_user_payload(user_details: Any) -> Dict[str, Any]:
+    if isinstance(user_details, dict):
+        nested_user = user_details.get("user")
+        if isinstance(nested_user, dict):
+            return nested_user
+        return user_details
+
+    details_dict = getattr(user_details, "__dict__", None)
+    if isinstance(details_dict, dict):
+        nested_user = details_dict.get("user")
+        if isinstance(nested_user, dict):
+            return nested_user
+        return details_dict
+
+    return {}
+
+
+def _extract_descope_user_id(user_details: Any) -> Optional[str]:
+    payload = _extract_descope_user_payload(user_details)
+    return payload.get("userId") or payload.get("user_id")
+
+
+def _descope_user_has_password(user_details: Any) -> bool:
+    payload = _extract_descope_user_payload(user_details)
+    return bool(
+        payload.get("activePassword")
+        or payload.get("active_password")
+        or payload.get("password")
+    )
+
+
 def _validate_password_strength(password: str):
     if len(password) < 8:
         raise HTTPException(
@@ -384,9 +415,14 @@ def bind_password(request: Request, data, db: Session):
             f"Using provided email {email} instead of placeholder session email {session_email}"
         )
 
+    resolved_descope_user_id = user_id
+
     try:
         try:
             user_details = mgmt_client.mgmt.user.load(user_id)
+            resolved_descope_user_id = (
+                _extract_descope_user_id(user_details) or resolved_descope_user_id
+            )
             logging.info(f"User exists in Descope, updating details: {user_id}")
 
             update_data = {
@@ -423,7 +459,6 @@ def bind_password(request: Request, data, db: Session):
                 try:
                     user_details = mgmt_client.mgmt.user.create(
                         login_id=email,
-                        user_id=user_id,
                         email=email,
                         display_name=username,
                         custom_attributes={
@@ -431,6 +466,16 @@ def bind_password(request: Request, data, db: Session):
                             "date_of_birth": str(data.date_of_birth),
                         },
                     )
+                    resolved_descope_user_id = _extract_descope_user_id(user_details)
+                    if not resolved_descope_user_id:
+                        logging.error(
+                            "Created Descope user response is missing a userId for login_id=%s",
+                            email,
+                        )
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Authentication system returned an invalid user record. Please try again.",
+                        )
                     logging.info(f"Created new user in Descope: {user_details}")
                 except Exception as create_error:
                     logging.error(f"Failed to create Descope user: {create_error}")
@@ -446,9 +491,11 @@ def bind_password(request: Request, data, db: Session):
                         )
                         logging.info(f"Password set for new user: {email}")
                         try:
-                            user_details = mgmt_client.mgmt.user.load(user_id)
-                            has_active_password = user_details.get(
-                                "activePassword", False
+                            user_details = mgmt_client.mgmt.user.load(
+                                resolved_descope_user_id
+                            )
+                            has_active_password = _descope_user_has_password(
+                                user_details
                             )
                             logging.info(
                                 f"[PASSWORD_BINDING] ✅ Password set and activated - "
@@ -463,7 +510,7 @@ def bind_password(request: Request, data, db: Session):
                             logging.error(
                                 f"[PASSWORD_BINDING] ❌ Failed to set password in Descope for NEW user - "
                                 f"LoginId: '{email}', "
-                                f"UserId: '{user_id}'",
+                                f"UserId: '{resolved_descope_user_id}'",
                                 exc_info=True,
                             )
                             raise HTTPException(
@@ -474,7 +521,7 @@ def bind_password(request: Request, data, db: Session):
                         logging.error(
                             f"[PASSWORD_BINDING] ❌ Failed to set password for NEW user - "
                             f"LoginId: '{email}', "
-                            f"UserId: '{user_id}'",
+                            f"UserId: '{resolved_descope_user_id}'",
                             exc_info=True,
                         )
                         raise HTTPException(
@@ -482,7 +529,9 @@ def bind_password(request: Request, data, db: Session):
                             detail="Failed to set password in authentication system",
                         ) from password_error
 
-                    logging.info(f"Successfully created user in Descope: {user_id}")
+                    logging.info(
+                        f"Successfully created user in Descope: {resolved_descope_user_id}"
+                    )
             else:
                 logging.error(f"Descope user operation failed: {load_error}")
                 raise HTTPException(
@@ -545,7 +594,7 @@ def bind_password(request: Request, data, db: Session):
         guest_user.username = username
         guest_user.country = country
         guest_user.date_of_birth = data.date_of_birth
-        guest_user.descope_user_id = user_id
+        guest_user.descope_user_id = resolved_descope_user_id
         guest_user.is_guest = False
         guest_user.guest_device_uuid = None
         guest_user.ad_bonus_claimed = False
@@ -620,7 +669,7 @@ def bind_password(request: Request, data, db: Session):
         existing_user.username = username
         existing_user.country = country
         existing_user.date_of_birth = data.date_of_birth
-        existing_user.descope_user_id = user_id
+        existing_user.descope_user_id = resolved_descope_user_id
 
         if not existing_user.profile_pic_url:
             profile_pic_url = get_default_profile_pic_url(username)
@@ -681,7 +730,7 @@ def bind_password(request: Request, data, db: Session):
         logging.info(
             f"[LOCAL_DB] Updated existing user in local database - "
             f"Email: '{email}', "
-            f"DescopeUserId: '{user_id}', "
+            f"DescopeUserId: '{resolved_descope_user_id}', "
             f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}, "
             f"ReferralCode: {data.referral_code if data.referral_code else 'None'}"
         )
@@ -731,7 +780,7 @@ def bind_password(request: Request, data, db: Session):
             )
 
         new_user = User(
-            descope_user_id=user_id,
+            descope_user_id=resolved_descope_user_id,
             device_uuid=data.device_uuid,
             email=email,
             username=username,
@@ -767,7 +816,7 @@ def bind_password(request: Request, data, db: Session):
         logging.info(
             f"[LOCAL_DB] Created new user in local database - "
             f"Email: '{email}', "
-            f"DescopeUserId: '{user_id}', "
+            f"DescopeUserId: '{resolved_descope_user_id}', "
             f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}, "
             f"ReferralCode: {data.referral_code if data.referral_code else 'None'}"
         )
@@ -775,7 +824,7 @@ def bind_password(request: Request, data, db: Session):
     logging.info(
         f"[BIND_PASSWORD] ✅ Successfully completed password binding - "
         f"LoginId: '{email}', "
-        f"UserId: '{user_id}', "
+        f"UserId: '{resolved_descope_user_id}', "
         f"Username: '{username}', "
         f"DescopePasswordSet: {STORE_PASSWORD_IN_DESCOPE}, "
         f"LocalPasswordStored: {STORE_PASSWORD_IN_NEONDB}, "
@@ -882,16 +931,21 @@ def dev_sign_in(email: str, password: str, db: Session):
     except Exception as e:
         error_msg = str(e)
         logging.error(f"[DEV_SIGN_IN] ❌ Failed to sign in user {email}: {error_msg}")
+        normalized_error = error_msg.lower()
 
         if (
-            "invalid" in error_msg.lower()
-            or "incorrect" in error_msg.lower()
-            or "wrong" in error_msg.lower()
+            "invalid" in normalized_error
+            or "incorrect" in normalized_error
+            or "wrong" in normalized_error
+            or "password signin failed" in normalized_error
+            or "errorcode\":\"e062903" in normalized_error
+            or "status_code': 401" in normalized_error
+            or '"status_code": 401' in normalized_error
         ):
             raise HTTPException(status_code=401, detail="Invalid email or password")
-        if "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
+        if "not found" in normalized_error or "does not exist" in normalized_error:
             raise HTTPException(status_code=404, detail="User not found")
-        if "locked" in error_msg.lower() or "blocked" in error_msg.lower():
+        if "locked" in normalized_error or "blocked" in normalized_error:
             raise HTTPException(status_code=403, detail="Account is locked or blocked")
         raise HTTPException(status_code=502, detail=f"Failed to sign in: {error_msg}")
 
