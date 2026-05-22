@@ -326,6 +326,130 @@ def _track_device_uuid(
     )
 
 
+def _raise_bind_password_conflict(error: str, message: str):
+    raise HTTPException(status_code=409, detail={"error": error, "message": message})
+
+
+def _normalize_device_uuid_header(request: Request) -> Optional[str]:
+    device_uuid_header = request.headers.get("X-Device-UUID")
+    if not device_uuid_header:
+        return None
+    try:
+        return str(uuid.UUID(device_uuid_header))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _get_guest_user_for_bind_password(
+    db: Session, normalized_device_uuid: Optional[str]
+) -> Optional[User]:
+    if not normalized_device_uuid:
+        return None
+
+    return (
+        db.query(User)
+        .filter(
+            User.guest_device_uuid == normalized_device_uuid,
+            User.is_guest.is_(True),
+            User.guest_device_uuid.isnot(None),
+        )
+        .first()
+    )
+
+
+def _resolve_bind_password_local_users(
+    request: Request,
+    db: Session,
+    *,
+    email: str,
+    username: str,
+    descope_user_id: str,
+) -> Tuple[Optional[str], Optional[User], Optional[User]]:
+    normalized_device_uuid = _normalize_device_uuid_header(request)
+    guest_user = _get_guest_user_for_bind_password(db, normalized_device_uuid)
+
+    user_by_descope_id = auth_repository.get_user_by_descope_id(db, descope_user_id)
+    user_by_email = auth_repository.get_user_by_email_ci(db, email)
+    user_by_username = auth_repository.get_user_by_username_ci(db, username)
+
+    if guest_user:
+        if user_by_descope_id and user_by_descope_id.account_id != guest_user.account_id:
+            logging.info(
+                "[BIND_PASSWORD] Conflict: descope user %s is already bound to account %s, guest account=%s",
+                descope_user_id,
+                user_by_descope_id.account_id,
+                guest_user.account_id,
+            )
+            _raise_bind_password_conflict(
+                "account_already_bound",
+                "This authenticated account is already registered.",
+            )
+
+        if user_by_email and user_by_email.account_id != guest_user.account_id:
+            logging.info(
+                "[BIND_PASSWORD] Conflict: email %s belongs to account %s, guest account=%s",
+                email,
+                user_by_email.account_id,
+                guest_user.account_id,
+            )
+            _raise_bind_password_conflict(
+                "email_taken",
+                "This email is already registered to another account.",
+            )
+
+        if user_by_username and user_by_username.account_id != guest_user.account_id:
+            logging.info(
+                "[BIND_PASSWORD] Conflict: username %s belongs to account %s, guest account=%s",
+                username,
+                user_by_username.account_id,
+                guest_user.account_id,
+            )
+            _raise_bind_password_conflict(
+                "username_taken", f"Username '{username}' is already taken"
+            )
+
+        return normalized_device_uuid, guest_user, None
+
+    existing_user = user_by_descope_id or user_by_email
+    if existing_user:
+        if user_by_email and user_by_email.account_id != existing_user.account_id:
+            logging.info(
+                "[BIND_PASSWORD] Conflict: email %s belongs to account %s, target account=%s",
+                email,
+                user_by_email.account_id,
+                existing_user.account_id,
+            )
+            _raise_bind_password_conflict(
+                "email_taken",
+                "This email is already registered to another account.",
+            )
+
+        if user_by_username and user_by_username.account_id != existing_user.account_id:
+            logging.info(
+                "[BIND_PASSWORD] Conflict: username %s belongs to account %s, target account=%s",
+                username,
+                user_by_username.account_id,
+                existing_user.account_id,
+            )
+            _raise_bind_password_conflict(
+                "username_taken", f"Username '{username}' is already taken"
+            )
+
+        return normalized_device_uuid, None, existing_user
+
+    if user_by_username:
+        logging.info(
+            "[BIND_PASSWORD] Conflict: username %s belongs to account %s during new-user bind",
+            username,
+            user_by_username.account_id,
+        )
+        _raise_bind_password_conflict(
+            "username_taken", f"Username '{username}' is already taken"
+        )
+
+    return normalized_device_uuid, None, None
+
+
 def check_username_available(username: str, request: Request, db: Session):
     ip = request.client.host if request.client else "unknown"
     username_norm = username.strip()
@@ -416,6 +540,15 @@ def bind_password(request: Request, data, db: Session):
         )
 
     resolved_descope_user_id = user_id
+    normalized_device_uuid, guest_user, existing_user = (
+        _resolve_bind_password_local_users(
+            request,
+            db,
+            email=email,
+            username=username,
+            descope_user_id=user_id,
+        )
+    )
 
     try:
         try:
@@ -547,48 +680,7 @@ def bind_password(request: Request, data, db: Session):
         )
 
     # --- Guest-to-registered-user conversion ---
-    device_uuid_header = request.headers.get("X-Device-UUID")
-    guest_user = None
-    if device_uuid_header:
-        try:
-            normalized_device_uuid = str(uuid.UUID(device_uuid_header))
-        except (ValueError, AttributeError):
-            normalized_device_uuid = None
-
-        if normalized_device_uuid:
-            guest_user = (
-                db.query(User)
-                .filter(
-                    User.guest_device_uuid == normalized_device_uuid,
-                    User.is_guest.is_(True),
-                    User.guest_device_uuid.isnot(None),
-                )
-                .first()
-            )
-
     if guest_user:
-        # Check email conflict: another registered user already has this email
-        email_conflict = auth_repository.get_user_by_email_ci(db, email)
-        if email_conflict and email_conflict.account_id != guest_user.account_id:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "email_taken",
-                    "message": "This email is already registered to another account.",
-                },
-            )
-
-        # Check username conflict: another registered user already has this username
-        username_conflict = auth_repository.get_user_by_username_ci(db, username)
-        if username_conflict and username_conflict.account_id != guest_user.account_id:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "username_taken",
-                    "message": f"Username '{username}' is already taken",
-                },
-            )
-
         # Convert guest row to registered user
         guest_user.email = email
         guest_user.username = username
@@ -664,7 +756,6 @@ def bind_password(request: Request, data, db: Session):
         return {"success": True, "message": "Password and profile bound successfully"}
 
     # --- Standard flow (no guest conversion) ---
-    existing_user = auth_repository.get_user_by_email_ci(db, email)
     if existing_user:
         existing_user.username = username
         existing_user.country = country
@@ -735,16 +826,6 @@ def bind_password(request: Request, data, db: Session):
             f"ReferralCode: {data.referral_code if data.referral_code else 'None'}"
         )
     else:
-        existing_username = auth_repository.get_user_by_username_ci(db, username)
-        if existing_username:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "username_taken",
-                    "message": f"Username '{username}' is already taken",
-                },
-            )
-
         referred_by_code = None
         if data.referral_code:
             try:
@@ -2698,20 +2779,59 @@ def create_subscription_for_user(db: Session, request, current_user: User):
         .filter(
             UserSubscription.user_id == user_id,
             UserSubscription.plan_id == plan.id,
-            UserSubscription.status == "active",
         )
         .first()
     )
 
-    if existing:
-        return {
-            "success": False,
-            "message": f'User already has an active subscription for plan "{plan.name}" (ID: {existing.id})',
-            "subscription_id": existing.id,
-        }
-
     now = datetime.utcnow()
     period_end = now + timedelta(days=30)
+
+    if existing:
+        is_currently_active = existing.status == "active" and (
+            existing.current_period_end is None or existing.current_period_end > now
+        )
+        if is_currently_active:
+            return {
+                "success": False,
+                "message": f'User already has an active subscription for plan "{plan.name}" (ID: {existing.id})',
+                "subscription_id": existing.id,
+            }
+
+        existing.status = "active"
+        existing.current_period_start = now
+        existing.current_period_end = period_end
+        existing.cancel_at_period_end = False
+        existing.cancel_at = None
+        existing.canceled_at = None
+        existing.pause_collection = None
+        existing.livemode = False
+
+        db.commit()
+        db.refresh(existing)
+
+        return {
+            "success": True,
+            "message": f"Active subscription reactivated for user {user_id}",
+            "subscription": {
+                "id": existing.id,
+                "user_id": existing.user_id,
+                "username": user.username,
+                "plan_id": existing.plan_id,
+                "plan_name": plan.name,
+                "plan_price_usd": plan.price_usd,
+                "status": existing.status,
+                "current_period_start": (
+                    existing.current_period_start.isoformat()
+                    if existing.current_period_start
+                    else None
+                ),
+                "current_period_end": (
+                    existing.current_period_end.isoformat()
+                    if existing.current_period_end
+                    else None
+                ),
+            },
+        }
 
     subscription = UserSubscription(
         user_id=user_id,
@@ -2723,7 +2843,25 @@ def create_subscription_for_user(db: Session, request, current_user: User):
     )
 
     db.add(subscription)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = (
+            auth_repository.query(db, UserSubscription)
+            .filter(
+                UserSubscription.user_id == user_id,
+                UserSubscription.plan_id == plan.id,
+            )
+            .first()
+        )
+        if not existing:
+            raise
+        return {
+            "success": False,
+            "message": f'User already has a subscription record for plan "{plan.name}" (ID: {existing.id}). Retry the request to reactivate it.',
+            "subscription_id": existing.id,
+        }
     db.refresh(subscription)
 
     return {
