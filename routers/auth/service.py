@@ -233,6 +233,64 @@ def _descope_user_has_password(user_details: Any) -> bool:
     )
 
 
+def _extract_descope_login_ids(user_details: Any) -> list[str]:
+    payload = _extract_descope_user_payload(user_details)
+    login_ids = payload.get("loginIds") or payload.get("login_ids") or []
+    if isinstance(login_ids, str):
+        return [login_ids]
+    if isinstance(login_ids, list):
+        return [login_id for login_id in login_ids if isinstance(login_id, str)]
+    return []
+
+
+def _verify_descope_password_binding(user_id: str, email: str) -> None:
+    try:
+        user_details = mgmt_client.mgmt.user.load(user_id)
+    except Exception:
+        logging.error(
+            "[PASSWORD_BINDING] ❌ Failed to reload Descope user after setting password - "
+            f"LoginId: '{email}', UserId: '{user_id}'",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to verify password in authentication system",
+        )
+
+    has_active_password = _descope_user_has_password(user_details)
+    normalized_login_ids = [
+        login_id.strip().lower()
+        for login_id in _extract_descope_login_ids(user_details)
+        if login_id.strip()
+    ]
+    email_bound = not normalized_login_ids or email.lower() in normalized_login_ids
+
+    logging.info(
+        "[PASSWORD_BINDING] Verification result - LoginId: '%s', UserId: '%s', ActivePasswordSet: %s, EmailBound: %s, LoginIds: %s",
+        email,
+        user_id,
+        has_active_password,
+        email_bound,
+        normalized_login_ids or ["<unknown>"],
+    )
+
+    if has_active_password and email_bound:
+        return
+
+    logging.error(
+        "[PASSWORD_BINDING] ❌ Password verification failed - LoginId: '%s', UserId: '%s', ActivePasswordSet: %s, EmailBound: %s, LoginIds: %s",
+        email,
+        user_id,
+        has_active_password,
+        email_bound,
+        normalized_login_ids or ["<unknown>"],
+    )
+    raise HTTPException(
+        status_code=500,
+        detail="Password binding could not be verified in authentication system",
+    )
+
+
 def _validate_password_strength(password: str):
     if len(password) < 8:
         raise HTTPException(
@@ -575,6 +633,12 @@ def bind_password(request: Request, data, db: Session):
                         login_id=email, password=data.password
                     )
                     logging.info(f"Password updated for existing user: {email}")
+                    _verify_descope_password_binding(
+                        user_id=resolved_descope_user_id,
+                        email=email,
+                    )
+                except HTTPException:
+                    raise
                 except Exception:
                     logging.error(
                         f"[PASSWORD_BINDING] ❌ Failed to set password in Descope for EXISTING user - "
@@ -586,6 +650,8 @@ def bind_password(request: Request, data, db: Session):
                         status_code=500,
                         detail="Failed to set password in authentication system",
                     )
+        except HTTPException:
+            raise
         except Exception as load_error:
             if "not found" in str(load_error).lower():
                 logging.info(f"User not found in Descope, creating new user: {user_id}")
@@ -623,33 +689,12 @@ def bind_password(request: Request, data, db: Session):
                             login_id=email, password=data.password
                         )
                         logging.info(f"Password set for new user: {email}")
-                        try:
-                            user_details = mgmt_client.mgmt.user.load(
-                                resolved_descope_user_id
-                            )
-                            has_active_password = _descope_user_has_password(
-                                user_details
-                            )
-                            logging.info(
-                                f"[PASSWORD_BINDING] ✅ Password set and activated - "
-                                f"LoginId: '{email}', "
-                                f"ActivePasswordSet: {has_active_password}"
-                            )
-                            if not has_active_password:
-                                logging.error(
-                                    "[PASSWORD_BINDING] ⚠️ Password was set but not activated for new user! User may not be able to sign in."
-                                )
-                        except Exception:
-                            logging.error(
-                                f"[PASSWORD_BINDING] ❌ Failed to set password in Descope for NEW user - "
-                                f"LoginId: '{email}', "
-                                f"UserId: '{resolved_descope_user_id}'",
-                                exc_info=True,
-                            )
-                            raise HTTPException(
-                                status_code=500,
-                                detail="Failed to set password in authentication system",
-                            )
+                        _verify_descope_password_binding(
+                            user_id=resolved_descope_user_id,
+                            email=email,
+                        )
+                    except HTTPException:
+                        raise
                     except Exception as password_error:
                         logging.error(
                             f"[PASSWORD_BINDING] ❌ Failed to set password for NEW user - "
@@ -672,6 +717,8 @@ def bind_password(request: Request, data, db: Session):
                     detail="Failed to sync user with authentication system. Please try again.",
                 )
 
+    except HTTPException:
+        raise
     except Exception as descope_error:
         logging.error(f"Descope management operation failed: {descope_error}")
         raise HTTPException(

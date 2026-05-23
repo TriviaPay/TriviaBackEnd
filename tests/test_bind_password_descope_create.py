@@ -12,21 +12,42 @@ from sqlalchemy.pool import StaticPool
 
 
 class _FakeMgmtUser:
-    def __init__(self, existing_user_ids=None):
+    def __init__(self, existing_users=None, set_password_activates=True):
         self.create_calls = []
         self.load_calls = []
         self.password_calls = []
         self.update_calls = []
-        self.existing_user_ids = set(existing_user_ids or [])
+        self.set_password_activates = set_password_activates
+        self._last_loaded_user_id = None
+        self.users = {}
+        for user_id, payload in (existing_users or {}).items():
+            user_payload = {"userId": user_id, "password": False}
+            user_payload.update(payload)
+            self.users[user_id] = user_payload
+
+    def _find_user_id_by_login_id(self, login_id):
+        login_id_lower = login_id.lower()
+        for user_id, payload in self.users.items():
+            login_ids = payload.get("loginIds") or []
+            normalized_login_ids = [
+                candidate.lower()
+                for candidate in login_ids
+                if isinstance(candidate, str)
+            ]
+            if login_id_lower in normalized_login_ids:
+                return user_id
+            email = payload.get("email")
+            if isinstance(email, str) and email.lower() == login_id_lower:
+                return user_id
+        return None
 
     def load(self, user_id):
         self.load_calls.append(user_id)
-        if user_id in self.existing_user_ids:
-            return {"user": {"userId": user_id, "password": True}}
+        self._last_loaded_user_id = user_id
+        if user_id in self.users:
+            return {"user": dict(self.users[user_id])}
         if user_id == "session-user-id":
             raise Exception("User not found")
-        if user_id == "created-descope-id":
-            return {"user": {"userId": "created-descope-id", "password": True}}
         raise AssertionError(f"Unexpected load() call for user_id={user_id}")
 
     def create(
@@ -48,6 +69,14 @@ class _FakeMgmtUser:
         additional_login_ids=None,
         sso_app_ids=None,
     ):
+        user_payload = {
+            "userId": "created-descope-id",
+            "loginIds": [login_id],
+            "email": email,
+            "password": False,
+            "activePassword": False,
+        }
+        self.users["created-descope-id"] = user_payload
         self.create_calls.append(
             {
                 "login_id": login_id,
@@ -56,25 +85,38 @@ class _FakeMgmtUser:
                 "custom_attributes": custom_attributes,
             }
         )
-        return {
-            "user": {
-                "userId": "created-descope-id",
-                "loginIds": [login_id],
-                "email": email,
-                "password": False,
-            }
-        }
+        return {"user": dict(user_payload)}
 
     def update(self, login_id, **kwargs):
         self.update_calls.append((login_id, kwargs))
+        user_id = self._find_user_id_by_login_id(login_id) or self._last_loaded_user_id
+        if not user_id or user_id not in self.users:
+            return
+        payload = self.users[user_id]
+        new_email = kwargs.get("email") or login_id
+        payload["email"] = new_email
+        payload["loginIds"] = [new_email]
+        if "display_name" in kwargs:
+            payload["displayName"] = kwargs["display_name"]
 
     def set_password(self, login_id, password):
         self.password_calls.append((login_id, password))
+        if not self.set_password_activates:
+            return
+        user_id = self._find_user_id_by_login_id(login_id) or self._last_loaded_user_id
+        if not user_id or user_id not in self.users:
+            return
+        payload = self.users[user_id]
+        payload["loginIds"] = payload.get("loginIds") or [login_id]
+        payload["password"] = True
+        payload["activePassword"] = True
 
 
 class _FakeMgmtClient:
-    def __init__(self, existing_user_ids=None):
-        self.mgmt = SimpleNamespace(user=_FakeMgmtUser(existing_user_ids))
+    def __init__(self, existing_users=None, set_password_activates=True):
+        self.mgmt = SimpleNamespace(
+            user=_FakeMgmtUser(existing_users, set_password_activates)
+        )
 
 
 def _make_db_session():
@@ -167,7 +209,16 @@ def test_bind_password_creates_descope_user_and_persists_returned_user_id(monkey
 
 def test_bind_password_matches_existing_local_user_by_descope_id(monkeypatch):
     engine, db = _make_db_session()
-    fake_client = _FakeMgmtClient(existing_user_ids={"session-user-id"})
+    fake_client = _FakeMgmtClient(
+        existing_users={
+            "session-user-id": {
+                "loginIds": ["user_session-user-id@descope.local"],
+                "email": "user_session-user-id@descope.local",
+                "password": False,
+                "activePassword": False,
+            }
+        }
+    )
 
     _configure_bind_password_test(
         monkeypatch,
@@ -205,7 +256,7 @@ def test_bind_password_matches_existing_local_user_by_descope_id(monkeypatch):
         assert updated_user is not None
         assert updated_user.email == "miragamingllc@gmail.com"
         assert updated_user.username == "miragamingllc"
-        assert fake_client.mgmt.user.load_calls == ["session-user-id"]
+        assert fake_client.mgmt.user.load_calls == ["session-user-id", "session-user-id"]
         assert fake_client.mgmt.user.create_calls == []
         assert fake_client.mgmt.user.update_calls == [
             (
@@ -273,7 +324,16 @@ def test_bind_password_rejects_existing_user_username_conflict_before_descope(
     monkeypatch,
 ):
     engine, db = _make_db_session()
-    fake_client = _FakeMgmtClient(existing_user_ids={"session-user-id"})
+    fake_client = _FakeMgmtClient(
+        existing_users={
+            "session-user-id": {
+                "loginIds": ["current@example.com"],
+                "email": "current@example.com",
+                "password": True,
+                "activePassword": True,
+            }
+        }
+    )
 
     _configure_bind_password_test(
         monkeypatch,
@@ -312,6 +372,65 @@ def test_bind_password_rejects_existing_user_username_conflict_before_descope(
         assert fake_client.mgmt.user.create_calls == []
         assert fake_client.mgmt.user.update_calls == []
         assert fake_client.mgmt.user.password_calls == []
+    finally:
+        db.close()
+        User.__table__.drop(bind=engine)
+        engine.dispose()
+
+
+def test_bind_password_fails_when_descope_password_cannot_be_verified(monkeypatch):
+    engine, db = _make_db_session()
+    fake_client = _FakeMgmtClient(
+        existing_users={
+            "session-user-id": {
+                "loginIds": ["current@example.com"],
+                "email": "current@example.com",
+                "password": False,
+                "activePassword": False,
+            }
+        },
+        set_password_activates=False,
+    )
+
+    _configure_bind_password_test(
+        monkeypatch,
+        fake_client,
+        {
+            "userId": "session-user-id",
+            "loginIds": ["current@example.com"],
+        },
+    )
+
+    db.add(
+        User(
+            descope_user_id="session-user-id",
+            email="current@example.com",
+            username="currentname",
+        )
+    )
+    db.commit()
+
+    payload = BindPasswordData(
+        email="current@example.com",
+        password="Password1",
+        username="currentname",
+        country="United States",
+        date_of_birth=date(2000, 1, 1),
+    )
+
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            auth_service.bind_password(_make_request(), payload, db)
+
+        assert exc_info.value.status_code == 500
+        assert (
+            exc_info.value.detail
+            == "Password binding could not be verified in authentication system"
+        )
+        assert fake_client.mgmt.user.load_calls == ["session-user-id", "session-user-id"]
+        assert fake_client.mgmt.user.password_calls == [
+            ("current@example.com", "Password1")
+        ]
     finally:
         db.close()
         User.__table__.drop(bind=engine)
