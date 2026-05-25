@@ -291,6 +291,33 @@ def _verify_descope_password_binding(user_id: str, email: str) -> None:
     )
 
 
+def _set_descope_active_password(email: str, password: str) -> None:
+    user_mgmt = mgmt_client.mgmt.user
+
+    set_active_password = getattr(user_mgmt, "set_active_password", None)
+    if callable(set_active_password):
+        try:
+            set_active_password(login_id=email, password=password)
+            return
+        except AttributeError:
+            pass
+
+    # Fallback for older SDKs that expose only set_password.
+    set_password = getattr(user_mgmt, "set_password", None)
+    if callable(set_password):
+        logging.warning(
+            "[PASSWORD_BINDING] Descope SDK does not expose set_active_password; falling back to set_password for LoginId '%s'",
+            email,
+        )
+        set_password(login_id=email, password=password)
+        return
+
+    raise HTTPException(
+        status_code=500,
+        detail="Authentication SDK does not support setting an active password",
+    )
+
+
 def _validate_password_strength(password: str):
     if len(password) < 8:
         raise HTTPException(
@@ -629,10 +656,8 @@ def bind_password(request: Request, data, db: Session):
 
             if STORE_PASSWORD_IN_DESCOPE:
                 try:
-                    mgmt_client.mgmt.user.set_password(
-                        login_id=email, password=data.password
-                    )
-                    logging.info(f"Password updated for existing user: {email}")
+                    _set_descope_active_password(email=email, password=data.password)
+                    logging.info(f"Active password updated for existing user: {email}")
                     _verify_descope_password_binding(
                         user_id=resolved_descope_user_id,
                         email=email,
@@ -685,10 +710,8 @@ def bind_password(request: Request, data, db: Session):
 
                 if STORE_PASSWORD_IN_DESCOPE:
                     try:
-                        mgmt_client.mgmt.user.set_password(
-                            login_id=email, password=data.password
-                        )
-                        logging.info(f"Password set for new user: {email}")
+                        _set_descope_active_password(email=email, password=data.password)
+                        logging.info(f"Active password set for new user: {email}")
                         _verify_descope_password_binding(
                             user_id=resolved_descope_user_id,
                             email=email,

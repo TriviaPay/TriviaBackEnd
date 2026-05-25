@@ -12,12 +12,19 @@ from sqlalchemy.pool import StaticPool
 
 
 class _FakeMgmtUser:
-    def __init__(self, existing_users=None, set_password_activates=True):
+    def __init__(
+        self,
+        existing_users=None,
+        set_password_activates=True,
+        has_set_active_password=True,
+    ):
         self.create_calls = []
         self.load_calls = []
         self.password_calls = []
+        self.active_password_calls = []
         self.update_calls = []
         self.set_password_activates = set_password_activates
+        self.has_set_active_password = has_set_active_password
         self._last_loaded_user_id = None
         self.users = {}
         for user_id, payload in (existing_users or {}).items():
@@ -99,8 +106,8 @@ class _FakeMgmtUser:
         if "display_name" in kwargs:
             payload["displayName"] = kwargs["display_name"]
 
-    def set_password(self, login_id, password):
-        self.password_calls.append((login_id, password))
+    def _activate_password(self, login_id, password, *, call_list):
+        call_list.append((login_id, password))
         if not self.set_password_activates:
             return
         user_id = self._find_user_id_by_login_id(login_id) or self._last_loaded_user_id
@@ -111,11 +118,32 @@ class _FakeMgmtUser:
         payload["password"] = True
         payload["activePassword"] = True
 
+    def set_active_password(self, login_id, password):
+        if not self.has_set_active_password:
+            raise AttributeError("set_active_password")
+        self._activate_password(
+            login_id,
+            password,
+            call_list=self.active_password_calls,
+        )
+
+    def set_password(self, login_id, password):
+        self._activate_password(login_id, password, call_list=self.password_calls)
+
 
 class _FakeMgmtClient:
-    def __init__(self, existing_users=None, set_password_activates=True):
+    def __init__(
+        self,
+        existing_users=None,
+        set_password_activates=True,
+        has_set_active_password=True,
+    ):
         self.mgmt = SimpleNamespace(
-            user=_FakeMgmtUser(existing_users, set_password_activates)
+            user=_FakeMgmtUser(
+                existing_users,
+                set_password_activates,
+                has_set_active_password,
+            )
         )
 
 
@@ -187,9 +215,10 @@ def test_bind_password_creates_descope_user_and_persists_returned_user_id(monkey
             "session-user-id",
             "created-descope-id",
         ]
-        assert fake_client.mgmt.user.password_calls == [
+        assert fake_client.mgmt.user.active_password_calls == [
             ("testingcode81@gmail.com", "Password1")
         ]
+        assert fake_client.mgmt.user.password_calls == []
         assert fake_client.mgmt.user.create_calls == [
             {
                 "login_id": "testingcode81@gmail.com",
@@ -271,9 +300,10 @@ def test_bind_password_matches_existing_local_user_by_descope_id(monkeypatch):
                 },
             )
         ]
-        assert fake_client.mgmt.user.password_calls == [
+        assert fake_client.mgmt.user.active_password_calls == [
             ("miragamingllc@gmail.com", "Password1")
         ]
+        assert fake_client.mgmt.user.password_calls == []
     finally:
         db.close()
         User.__table__.drop(bind=engine)
@@ -313,6 +343,7 @@ def test_bind_password_rejects_new_user_username_conflict_before_descope(monkeyp
         assert fake_client.mgmt.user.load_calls == []
         assert fake_client.mgmt.user.create_calls == []
         assert fake_client.mgmt.user.update_calls == []
+        assert fake_client.mgmt.user.active_password_calls == []
         assert fake_client.mgmt.user.password_calls == []
     finally:
         db.close()
@@ -371,6 +402,7 @@ def test_bind_password_rejects_existing_user_username_conflict_before_descope(
         assert fake_client.mgmt.user.load_calls == []
         assert fake_client.mgmt.user.create_calls == []
         assert fake_client.mgmt.user.update_calls == []
+        assert fake_client.mgmt.user.active_password_calls == []
         assert fake_client.mgmt.user.password_calls == []
     finally:
         db.close()
@@ -428,8 +460,63 @@ def test_bind_password_fails_when_descope_password_cannot_be_verified(monkeypatc
             == "Password binding could not be verified in authentication system"
         )
         assert fake_client.mgmt.user.load_calls == ["session-user-id", "session-user-id"]
-        assert fake_client.mgmt.user.password_calls == [
+        assert fake_client.mgmt.user.active_password_calls == [
             ("current@example.com", "Password1")
+        ]
+        assert fake_client.mgmt.user.password_calls == []
+    finally:
+        db.close()
+        User.__table__.drop(bind=engine)
+        engine.dispose()
+
+
+def test_bind_password_falls_back_when_sdk_only_exposes_set_password(monkeypatch):
+    engine, db = _make_db_session()
+    fake_client = _FakeMgmtClient(
+        existing_users={
+            "session-user-id": {
+                "loginIds": ["fallback@example.com"],
+                "email": "fallback@example.com",
+                "password": False,
+                "activePassword": False,
+            }
+        },
+        has_set_active_password=False,
+    )
+
+    _configure_bind_password_test(
+        monkeypatch,
+        fake_client,
+        {
+            "userId": "session-user-id",
+            "loginIds": ["fallback@example.com"],
+        },
+    )
+
+    db.add(
+        User(
+            descope_user_id="session-user-id",
+            email="fallback@example.com",
+            username="fallbackuser",
+        )
+    )
+    db.commit()
+
+    payload = BindPasswordData(
+        email="fallback@example.com",
+        password="Password1",
+        username="fallbackuser",
+        country="United States",
+        date_of_birth=date(2000, 1, 1),
+    )
+
+    try:
+        response = auth_service.bind_password(_make_request(), payload, db)
+
+        assert response["success"] is True
+        assert fake_client.mgmt.user.active_password_calls == []
+        assert fake_client.mgmt.user.password_calls == [
+            ("fallback@example.com", "Password1")
         ]
     finally:
         db.close()
