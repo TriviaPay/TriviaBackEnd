@@ -318,6 +318,132 @@ def _set_descope_active_password(email: str, password: str) -> None:
     )
 
 
+def _extract_descope_session_jwt(response: Any) -> str:
+    session_jwt = None
+
+    if hasattr(response, "session_jwt"):
+        session_jwt = response.session_jwt
+    elif hasattr(response, "sessionJwt"):
+        session_jwt = response.sessionJwt
+    elif isinstance(response, dict):
+        nested_data = response.get("data")
+        if isinstance(nested_data, dict):
+            session_jwt = (
+                nested_data.get("sessionJwt")
+                or nested_data.get("session_jwt")
+                or nested_data.get("jwt")
+                or nested_data.get("token")
+                or nested_data.get("session_token")
+            )
+
+        if not session_jwt and "sessionToken" in response and isinstance(
+            response["sessionToken"], dict
+        ):
+            session_jwt = response["sessionToken"].get("jwt")
+
+        if not session_jwt:
+            session_jwt = (
+                response.get("sessionJwt")
+                or response.get("session_jwt")
+                or response.get("jwt")
+                or response.get("token")
+                or response.get("session_token")
+            )
+    elif hasattr(response, "__dict__"):
+        resp_dict = response.__dict__
+        session_jwt = (
+            resp_dict.get("sessionJwt")
+            or resp_dict.get("session_jwt")
+            or resp_dict.get("jwt")
+            or resp_dict.get("token")
+            or resp_dict.get("session_token")
+        )
+
+    if not session_jwt:
+        resp_str = str(response)
+        if len(resp_str) > 50 and resp_str.startswith("eyJ"):
+            session_jwt = resp_str
+
+    if not session_jwt:
+        logging.error(
+            "No session JWT found in Descope sign-in response. Response type: %s, Response: %s",
+            type(response),
+            response,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"No session JWT found in response. Response type: {type(response)}",
+        )
+
+    return session_jwt
+
+
+def _descope_password_sign_in(email: str, password: str) -> str:
+    project_id = os.getenv("DESCOPE_PROJECT_ID", DESCOPE_PROJECT_ID)
+    if not project_id:
+        raise HTTPException(status_code=500, detail="Descope project ID not configured")
+
+    client = DescopeClient(
+        project_id=project_id, jwt_validation_leeway=DESCOPE_JWT_LEEWAY
+    )
+
+    try:
+        response = client.password.sign_in(email, password)
+    except AttributeError:
+        try:
+            response = client.auth.sign_in(email, password)
+        except AttributeError:
+            try:
+                response = client.password.sign_in(login_id=email, password=password)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Descope SDK method not found. Available methods: {dir(client)}. Error: {str(e)}",
+                )
+
+    logging.debug(f"Sign-in response type: {type(response)}")
+    logging.debug(f"Sign-in response: {response}")
+    return _extract_descope_session_jwt(response)
+
+
+def _should_verify_descope_password_signin_after_bind() -> bool:
+    default_value = (
+        "true" if os.getenv("ENVIRONMENT", "development") == "development" else "false"
+    )
+    raw_value = os.getenv("VERIFY_PASSWORD_SIGNIN_AFTER_BIND", default_value)
+    return raw_value.lower() == "true"
+
+
+def _verify_descope_password_signin_after_bind(email: str, password: str) -> None:
+    if not _should_verify_descope_password_signin_after_bind():
+        return
+
+    last_error: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            _descope_password_sign_in(email, password)
+            logging.info(
+                "[PASSWORD_BINDING] Immediate sign-in smoke check passed - LoginId: '%s', Attempt: %s",
+                email,
+                attempt + 1,
+            )
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(0.25)
+
+    logging.error(
+        "[PASSWORD_BINDING] ❌ Immediate sign-in smoke check failed - LoginId: '%s', Error: %s",
+        email,
+        last_error,
+    )
+    raise HTTPException(
+        status_code=500,
+        detail="Password binding passed state checks but failed immediate sign-in verification",
+    )
+
+
 def _validate_password_strength(password: str):
     if len(password) < 8:
         raise HTTPException(
@@ -662,6 +788,9 @@ def bind_password(request: Request, data, db: Session):
                         user_id=resolved_descope_user_id,
                         email=email,
                     )
+                    _verify_descope_password_signin_after_bind(
+                        email=email, password=data.password
+                    )
                 except HTTPException:
                     raise
                 except Exception:
@@ -715,6 +844,9 @@ def bind_password(request: Request, data, db: Session):
                         _verify_descope_password_binding(
                             user_id=resolved_descope_user_id,
                             email=email,
+                        )
+                        _verify_descope_password_signin_after_bind(
+                            email=email, password=data.password
                         )
                     except HTTPException:
                         raise
@@ -995,77 +1127,7 @@ def dev_sign_in(email: str, password: str, db: Session):
         raise HTTPException(status_code=400, detail="Password is required")
 
     try:
-        project_id = os.getenv("DESCOPE_PROJECT_ID", DESCOPE_PROJECT_ID)
-        if not project_id:
-            raise HTTPException(
-                status_code=500, detail="Descope project ID not configured"
-            )
-
-        client = DescopeClient(
-            project_id=project_id, jwt_validation_leeway=DESCOPE_JWT_LEEWAY
-        )
-
-        try:
-            response = client.password.sign_in(email, password)
-        except AttributeError:
-            try:
-                response = client.auth.sign_in(email, password)
-            except AttributeError:
-                try:
-                    response = client.password.sign_in(
-                        login_id=email, password=password
-                    )
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Descope SDK method not found. Available methods: {dir(client)}. Error: {str(e)}",
-                    )
-
-        session_jwt = None
-        logging.debug(f"Sign-in response type: {type(response)}")
-        logging.debug(f"Sign-in response: {response}")
-
-        if hasattr(response, "session_jwt"):
-            session_jwt = response.session_jwt
-        elif hasattr(response, "sessionJwt"):
-            session_jwt = response.sessionJwt
-        elif isinstance(response, dict):
-            if "sessionToken" in response and isinstance(
-                response["sessionToken"], dict
-            ):
-                session_jwt = response["sessionToken"].get("jwt")
-
-            if not session_jwt:
-                session_jwt = (
-                    response.get("sessionJwt")
-                    or response.get("session_jwt")
-                    or response.get("jwt")
-                    or response.get("token")
-                    or response.get("session_token")
-                )
-        elif hasattr(response, "__dict__"):
-            resp_dict = response.__dict__
-            session_jwt = (
-                resp_dict.get("sessionJwt")
-                or resp_dict.get("session_jwt")
-                or resp_dict.get("jwt")
-                or resp_dict.get("token")
-                or resp_dict.get("session_token")
-            )
-
-        if not session_jwt:
-            resp_str = str(response)
-            if len(resp_str) > 50 and resp_str.startswith("eyJ"):
-                session_jwt = resp_str
-
-        if not session_jwt:
-            logging.error(
-                f"No session JWT found in response. Response type: {type(response)}, Response: {response}"
-            )
-            raise HTTPException(
-                status_code=502,
-                detail=f"No session JWT found in response. Response type: {type(response)}",
-            )
+        session_jwt = _descope_password_sign_in(email, password)
 
         logging.info(f"[DEV_SIGN_IN] ✅ Successfully signed in user: {email}")
         user = auth_repository.get_user_by_email_ci(db, email)

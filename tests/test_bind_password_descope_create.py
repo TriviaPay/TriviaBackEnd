@@ -180,6 +180,11 @@ def _configure_bind_password_test(monkeypatch, fake_client, jwt_payload):
     monkeypatch.setattr(auth_service, "_track_device_uuid", lambda *args, **kwargs: None)
     monkeypatch.setattr(auth_service, "get_unique_referral_code", lambda db: "REF123")
     monkeypatch.setattr(auth_service, "get_default_profile_pic_url", lambda username: None)
+    monkeypatch.setattr(
+        auth_service,
+        "_verify_descope_password_signin_after_bind",
+        lambda email, password: None,
+    )
 
 
 def test_bind_password_creates_descope_user_and_persists_returned_user_id(monkeypatch):
@@ -310,6 +315,62 @@ def test_bind_password_matches_existing_local_user_by_descope_id(monkeypatch):
         engine.dispose()
 
 
+def test_bind_password_runs_immediate_signin_smoke_check(monkeypatch):
+    engine, db = _make_db_session()
+    fake_client = _FakeMgmtClient(
+        existing_users={
+            "session-user-id": {
+                "loginIds": ["smoke@example.com"],
+                "email": "smoke@example.com",
+                "password": False,
+                "activePassword": False,
+            }
+        }
+    )
+
+    smoke_calls = []
+    _configure_bind_password_test(
+        monkeypatch,
+        fake_client,
+        {
+            "userId": "session-user-id",
+            "loginIds": ["smoke@example.com"],
+        },
+    )
+    monkeypatch.setattr(
+        auth_service,
+        "_verify_descope_password_signin_after_bind",
+        lambda email, password: smoke_calls.append((email, password)),
+    )
+
+    db.add(
+        User(
+            descope_user_id="session-user-id",
+            email="smoke@example.com",
+            username="smokeuser",
+        )
+    )
+    db.commit()
+
+    payload = BindPasswordData(
+        email="smoke@example.com",
+        password="Password1",
+        username="smokeuser",
+        country="United States",
+        date_of_birth=date(2000, 1, 1),
+    )
+
+    try:
+        response = auth_service.bind_password(_make_request(), payload, db)
+
+        assert response["success"] is True
+        assert smoke_calls == [("smoke@example.com", "Password1")]
+    finally:
+        db.close()
+        User.__table__.drop(bind=engine)
+        engine.dispose()
+
+
 def test_bind_password_rejects_new_user_username_conflict_before_descope(monkeypatch):
     engine, db = _make_db_session()
     fake_client = _FakeMgmtClient()
@@ -404,6 +465,70 @@ def test_bind_password_rejects_existing_user_username_conflict_before_descope(
         assert fake_client.mgmt.user.update_calls == []
         assert fake_client.mgmt.user.active_password_calls == []
         assert fake_client.mgmt.user.password_calls == []
+    finally:
+        db.close()
+        User.__table__.drop(bind=engine)
+        engine.dispose()
+
+
+def test_bind_password_fails_when_immediate_signin_smoke_check_fails(monkeypatch):
+    engine, db = _make_db_session()
+    fake_client = _FakeMgmtClient(
+        existing_users={
+            "session-user-id": {
+                "loginIds": ["current@example.com"],
+                "email": "current@example.com",
+                "password": False,
+                "activePassword": False,
+            }
+        }
+    )
+
+    _configure_bind_password_test(
+        monkeypatch,
+        fake_client,
+        {
+            "userId": "session-user-id",
+            "loginIds": ["current@example.com"],
+        },
+    )
+    monkeypatch.setattr(
+        auth_service,
+        "_verify_descope_password_signin_after_bind",
+        lambda email, password: (_ for _ in ()).throw(
+            HTTPException(
+                status_code=500,
+                detail="Password binding passed state checks but failed immediate sign-in verification",
+            )
+        ),
+    )
+
+    db.add(
+        User(
+            descope_user_id="session-user-id",
+            email="current@example.com",
+            username="currentname",
+        )
+    )
+    db.commit()
+
+    payload = BindPasswordData(
+        email="current@example.com",
+        password="Password1",
+        username="currentname",
+        country="United States",
+        date_of_birth=date(2000, 1, 1),
+    )
+
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            auth_service.bind_password(_make_request(), payload, db)
+
+        assert exc_info.value.status_code == 500
+        assert (
+            exc_info.value.detail
+            == "Password binding passed state checks but failed immediate sign-in verification"
+        )
     finally:
         db.close()
         User.__table__.drop(bind=engine)
